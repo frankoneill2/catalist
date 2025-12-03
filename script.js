@@ -1503,6 +1503,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   userSortEl = document.getElementById('user-sort');
   tableSection = document.getElementById('table-section');
   tableRoot = document.getElementById('table-root');
+  const printToggle = document.getElementById('print-mode-toggle');
+  const printBtn = document.getElementById('print-btn');
 
   bindCaseForm();
   bindTaskForm();
@@ -1514,6 +1516,15 @@ window.addEventListener('DOMContentLoaded', async () => {
     mainTabTable.addEventListener('click', () => showMainTab('table'));
     mainTabCases.addEventListener('click', () => showMainTab('cases'));
     mainTabMy.addEventListener('click', () => showMainTab('my'));
+  }
+  // Print mode toggle
+  if (printToggle) {
+    printToggle.addEventListener('change', () => {
+      document.body.classList.toggle('print-mode', !!printToggle.checked);
+    });
+  }
+  if (printBtn) {
+    printBtn.addEventListener('click', () => window.print());
   }
   backBtn.addEventListener('click', () => {
     if (backTarget === 'user' && userDetailEl) {
