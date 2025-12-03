@@ -1503,8 +1503,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   userSortEl = document.getElementById('user-sort');
   tableSection = document.getElementById('table-section');
   tableRoot = document.getElementById('table-root');
-  const printToggle = document.getElementById('print-mode-toggle');
-  const printBtn = document.getElementById('print-btn');
+  const printOpenBtn = document.getElementById('print-open-btn');
 
   bindCaseForm();
   bindTaskForm();
@@ -1517,14 +1516,16 @@ window.addEventListener('DOMContentLoaded', async () => {
     mainTabCases.addEventListener('click', () => showMainTab('cases'));
     mainTabMy.addEventListener('click', () => showMainTab('my'));
   }
-  // Print mode toggle
-  if (printToggle) {
-    printToggle.addEventListener('change', () => {
-      document.body.classList.toggle('print-mode', !!printToggle.checked);
+  // Print action: open new window in print mode and print
+  if (printOpenBtn) {
+    printOpenBtn.addEventListener('click', () => {
+      const html = `<!doctype html><html><head><meta charset="utf-8"><title>Print Table</title><link rel="stylesheet" href="style.css"></head><body class="print-mode"><section id="table-section">${tableRoot ? tableRoot.innerHTML : ''}</section><script>window.addEventListener('load',function(){ setTimeout(function(){ window.print(); }, 50); });</script></body></html>`;
+      const w = window.open('', '_blank');
+      if (!w) { showToast('Pop-up blocked. Allow pop-ups to print.'); return; }
+      w.document.open();
+      w.document.write(html);
+      w.document.close();
     });
-  }
-  if (printBtn) {
-    printBtn.addEventListener('click', () => window.print());
   }
   backBtn.addEventListener('click', () => {
     if (backTarget === 'user' && userDetailEl) {
