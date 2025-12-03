@@ -1917,6 +1917,7 @@ function startRealtimeUsers() {
   const btn = document.getElementById('users-btn');
   const locList = document.getElementById('location-list');
   const addLocBtn = document.getElementById('add-location-btn');
+  const manageTagsBtn = document.getElementById('manage-tags-btn');
   if (!list || !addBtn || !menu || !btn || !locList || !addLocBtn) return;
 
   // Toggle dropdown
@@ -1939,6 +1940,14 @@ function startRealtimeUsers() {
     if (!name) return;
     await addDoc(collection(db, 'users'), { username: name, createdAt: serverTimestamp() });
   });
+
+  if (manageTagsBtn) {
+    manageTagsBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setOpen(false);
+      openTagsManager();
+    });
+  }
 
   const q = query(collection(db, 'users'), orderBy('username'));
   if (unsubUsers) { unsubUsers(); unsubUsers = null; }
@@ -2049,6 +2058,98 @@ function startRealtimeUsers() {
     console.error('Locations listener error', err);
     showToast('Cannot access locations (permissions)');
   });
+
+  function openTagsManager() {
+    const overlay = document.createElement('div'); overlay.className='modal-overlay';
+    const modal = document.createElement('div'); modal.className='modal tags-manager'; overlay.appendChild(modal);
+    const title = document.createElement('h3'); title.textContent = 'Manage Tags'; modal.appendChild(title);
+    const tabWrap = document.createElement('div'); tabWrap.className='tabs';
+    const tabLoc = document.createElement('button'); tabLoc.className='tab active'; tabLoc.textContent='Locations'; tabWrap.appendChild(tabLoc);
+    const tabCons = document.createElement('button'); tabCons.className='tab'; tabCons.textContent='Consultants'; tabWrap.appendChild(tabCons);
+    modal.appendChild(tabWrap);
+    const content = document.createElement('div'); modal.appendChild(content);
+    const actions = document.createElement('div'); actions.className='section-actions'; modal.appendChild(actions);
+    const closeBtn = document.createElement('button'); closeBtn.className='btn'; closeBtn.textContent='Close'; actions.appendChild(closeBtn);
+    document.body.appendChild(overlay);
+
+    const setTab = (which) => { tabLoc.classList.toggle('active', which==='loc'); tabCons.classList.toggle('active', which==='cons'); render(which); };
+    tabLoc.addEventListener('click', ()=>setTab('loc'));
+    tabCons.addEventListener('click', ()=>setTab('cons'));
+    closeBtn.addEventListener('click', ()=> overlay.remove());
+
+    async function render(which) {
+      content.innerHTML = '';
+      if (which === 'cons') { renderTypeManager('consultant'); return; }
+      const grid = document.createElement('div'); grid.className='grid'; content.appendChild(grid);
+      const left = document.createElement('div'); left.className='tags-list'; grid.appendChild(left);
+      const right = document.createElement('div'); right.className='rooms-list'; grid.appendChild(right);
+      const lh = document.createElement('h4'); lh.textContent='Wards'; left.appendChild(lh);
+      const rh = document.createElement('h4'); rh.textContent='Rooms'; right.appendChild(rh);
+      const list = document.createElement('div'); left.appendChild(list);
+      const lActions = document.createElement('div'); lActions.className='section-actions'; left.appendChild(lActions);
+      const addWardBtn = document.createElement('button'); addWardBtn.textContent='Add ward'; addWardBtn.className='btn'; lActions.appendChild(addWardBtn);
+      let selected = (tagsByType.get('location')||[])[0]?.id || '';
+
+      function renderWards() {
+        list.innerHTML = '';
+        const arr = (tagsByType.get('location') || []);
+        for (let i=0;i<arr.length;i++) {
+          const t = arr[i];
+          const row = document.createElement('div'); row.className='entry';
+          const name = document.createElement('span'); name.className='name'; name.textContent = `${i+1}. ${t.name}`; row.appendChild(name);
+          row.addEventListener('click', ()=>{ selected=t.id; renderRooms(); });
+          const ra = document.createElement('div'); ra.className='row-actions';
+          const up=document.createElement('button'); up.textContent='↑'; up.addEventListener('click', ()=> moveTag('location', i, -1)); ra.appendChild(up);
+          const down=document.createElement('button'); down.textContent='↓'; down.addEventListener('click', ()=> moveTag('location', i, +1)); ra.appendChild(down);
+          const edit=document.createElement('button'); edit.textContent='Edit'; edit.addEventListener('click', ()=> editTagName(t.id, t.name)); ra.appendChild(edit);
+          const del=document.createElement('button'); del.textContent='Delete'; del.addEventListener('click', ()=> deleteTag('location', t.id)); ra.appendChild(del);
+          row.appendChild(ra); list.appendChild(row);
+        }
+      }
+      renderWards();
+      addWardBtn.addEventListener('click', ()=> addTag('location'));
+
+      async function renderRooms() {
+        right.innerHTML = ''; const rh2=document.createElement('h4'); rh2.textContent='Rooms'; right.appendChild(rh2);
+        const cont=document.createElement('div'); right.appendChild(cont);
+        const rooms = await loadSubtagsFor(selected);
+        for (let i=0;i<rooms.length;i++) {
+          const r=rooms[i];
+          const row=document.createElement('div'); row.className='entry';
+          const name=document.createElement('span'); name.className='name'; name.textContent=`${i+1}. ${r.name}`; row.appendChild(name);
+          const ra=document.createElement('div'); ra.className='row-actions';
+          const up=document.createElement('button'); up.textContent='↑'; up.addEventListener('click', ()=> moveRoom(selected, i, -1)); ra.appendChild(up);
+          const down=document.createElement('button'); down.textContent='↓'; down.addEventListener('click', ()=> moveRoom(selected, i, +1)); ra.appendChild(down);
+          const edit=document.createElement('button'); edit.textContent='Edit'; edit.addEventListener('click', ()=> editRoomName(selected, r.id, r.name)); ra.appendChild(edit);
+          const del=document.createElement('button'); del.textContent='Delete'; del.addEventListener('click', ()=> deleteRoom(selected, r.id)); ra.appendChild(del);
+          row.appendChild(ra); cont.appendChild(row);
+        }
+        const rAct=document.createElement('div'); rAct.className='section-actions'; right.appendChild(rAct);
+        const addRoomBtn=document.createElement('button'); addRoomBtn.className='btn'; addRoomBtn.textContent='Add room'; addRoomBtn.addEventListener('click', ()=> addRoom(selected)); rAct.appendChild(addRoomBtn);
+      }
+      renderRooms();
+    }
+
+    function renderTypeManager(type) {
+      content.innerHTML='';
+      const box=document.createElement('div'); box.className='tags-list'; content.appendChild(box);
+      const h=document.createElement('h4'); h.textContent= type==='consultant'?'Consultants': type; box.appendChild(h);
+      const list=document.createElement('div'); box.appendChild(list);
+      const arr=(tagsByType.get(type)||[]);
+      for (let i=0;i<arr.length;i++) {
+        const t=arr[i]; const row=document.createElement('div'); row.className='entry';
+        const name=document.createElement('span'); name.className='name'; name.textContent=`${i+1}. ${t.name}`; row.appendChild(name);
+        const ra=document.createElement('div'); ra.className='row-actions';
+        const up=document.createElement('button'); up.textContent='↑'; up.addEventListener('click', ()=> moveTag(type, i, -1)); ra.appendChild(up);
+        const down=document.createElement('button'); down.textContent='↓'; down.addEventListener('click', ()=> moveTag(type, i, +1)); ra.appendChild(down);
+        const edit=document.createElement('button'); edit.textContent='Edit'; edit.addEventListener('click', ()=> editTagName(t.id, t.name)); ra.appendChild(edit);
+        const del=document.createElement('button'); del.textContent='Delete'; del.addEventListener('click', ()=> deleteTag(type, t.id)); ra.appendChild(del);
+        row.appendChild(ra); list.appendChild(row);
+      }
+      const act=document.createElement('div'); act.className='section-actions'; box.appendChild(act);
+      const addBtn=document.createElement('button'); addBtn.className='btn'; addBtn.textContent='Add'; addBtn.addEventListener('click', ()=> addTag(type)); act.appendChild(addBtn);
+    }
+  }
 
   // Add location
   addLocBtn.addEventListener('click', async (e) => {

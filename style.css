@@ -794,6 +794,18 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
 .btn.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
 .comment-count { margin-left: 0.15rem; }
 
+/* Tags manager modal */
+.tags-manager { width: min(92vw, 820px); }
+.tags-manager .tabs { grid-template-columns: 1fr 1fr; margin-bottom: 8px; }
+.tags-manager .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.tags-list, .rooms-list { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; max-height: 360px; overflow-y: auto; }
+.tags-list h4, .rooms-list h4 { margin: 0 0 6px; font-size: 14px; }
+.entry { display: flex; align-items: center; justify-content: space-between; gap: 6px; border: 1px solid #f3f4f6; border-radius: 6px; padding: 4px 6px; margin-bottom: 6px; }
+.entry .name { font-size: 13px; }
+.entry .row-actions { display: inline-flex; gap: 4px; }
+.entry .row-actions button { font-size: 12px; padding: 2px 6px; border: 1px solid #e5e7eb; border-radius: 6px; background: #fff; }
+.section-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+
 /* Overflow-safe comments */
 .comments li { align-items: flex-start; }
 .comments li > span { line-height: 1.45; }
