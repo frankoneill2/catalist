@@ -421,28 +421,26 @@ function startRealtimeCases() {
 
 // --- Tags: encrypted catalogs with subtags (rooms under locations)
 function startRealtimeTags() {
-  // Load top-level tags by type
-  const q = query(collection(db, 'tags'), orderBy('type'), orderBy('order'));
-  onSnapshot(q, async (snap) => {
-    const byType = new Map();
-    for (const d of snap.docs) {
-      const dat = d.data();
-      const type = dat.type;
-      let name = '';
-      try { name = await decryptText(dat.nameCipher, dat.nameIv); } catch {}
-      const item = { id: d.id, name, order: typeof dat.order === 'number' ? dat.order : 0, type };
-      if (!byType.has(type)) byType.set(type, []);
-      byType.get(type).push(item);
-    }
-    for (const [t, arr] of byType) { arr.sort((a,b)=> a.order - b.order || a.name.localeCompare(b.name)); }
-    tagsByType = byType;
-    tagsReady = true;
-    // Populate filters
-    fillTagFilters();
-    // Notify UIs (e.g., Tags Manager) to re-render
-    document.dispatchEvent(new CustomEvent('tags:updated'));
-    // Preload rooms for selected location tags on demand
-  });
+  // Avoid composite index by listening per type
+  const attach = (type) => {
+    const qType = query(collection(db, 'tags'), where('type', '==', type), orderBy('order'));
+    onSnapshot(qType, async (snap) => {
+      const arr = [];
+      for (const d of snap.docs) {
+        const dat = d.data();
+        let name = '';
+        try { name = await decryptText(dat.nameCipher, dat.nameIv); } catch {}
+        arr.push({ id: d.id, name, order: typeof dat.order === 'number' ? dat.order : 0, type });
+      }
+      arr.sort((a,b)=> a.order - b.order || a.name.localeCompare(b.name));
+      tagsByType.set(type, arr);
+      tagsReady = true;
+      fillTagFilters();
+      document.dispatchEvent(new CustomEvent('tags:updated', { detail: { type } }));
+    }, (err) => console.error('Tags listener error', type, err));
+  };
+  attach('location');
+  attach('consultant');
 }
 
 function loadSubtagsFor(parentId) {
@@ -1370,6 +1368,7 @@ function openTagPanelForCase(caseId, anchorTd) {
   const title = document.createElement('h4'); title.textContent = 'Edit tags'; panel.appendChild(title);
   const row = document.createElement('div'); row.className='row'; panel.appendChild(row);
   // Location select
+  const locWrap = document.createElement('div'); locWrap.style.display='flex'; locWrap.style.gap='6px';
   const locSel = document.createElement('select');
   const addOpts = (sel, items, includeUnassigned=true) => {
     sel.innerHTML = '';
@@ -1377,15 +1376,23 @@ function openTagPanelForCase(caseId, anchorTd) {
     for (const t of items) { const o=document.createElement('option'); o.value=t.id; o.textContent=t.name; sel.appendChild(o);} 
   };
   addOpts(locSel, tagsByType.get('location') || []);
-  row.appendChild(locSel);
+  const addWard = document.createElement('button'); addWard.type='button'; addWard.textContent='+'; addWard.className='icon-btn small';
+  addWard.title='Add ward'; addWard.addEventListener('click', async ()=>{ await addTag('location'); });
+  locWrap.appendChild(locSel); locWrap.appendChild(addWard); row.appendChild(locWrap);
   // Room select (depends on location)
+  const roomWrap = document.createElement('div'); roomWrap.style.display='flex'; roomWrap.style.gap='6px';
   const roomSel = document.createElement('select');
   addOpts(roomSel, [], true);
-  row.appendChild(roomSel);
+  const addRoomBtn = document.createElement('button'); addRoomBtn.type='button'; addRoomBtn.textContent='+'; addRoomBtn.className='icon-btn small'; addRoomBtn.title='Add room';
+  addRoomBtn.addEventListener('click', async ()=>{ const loc=locSel.value||''; if (!loc) { showToast('Pick a ward first'); return; } await addRoom(loc); });
+  roomWrap.appendChild(roomSel); roomWrap.appendChild(addRoomBtn); row.appendChild(roomWrap);
   // Consultant select
+  const consWrap = document.createElement('div'); consWrap.style.display='flex'; consWrap.style.gap='6px';
   const consSel = document.createElement('select');
   addOpts(consSel, tagsByType.get('consultant') || []);
-  row.appendChild(consSel);
+  const addCons = document.createElement('button'); addCons.type='button'; addCons.textContent='+'; addCons.className='icon-btn small'; addCons.title='Add consultant';
+  addCons.addEventListener('click', async ()=>{ await addTag('consultant'); });
+  consWrap.appendChild(consSel); consWrap.appendChild(addCons); row.appendChild(consWrap);
   const actions = document.createElement('div'); actions.className='actions'; panel.appendChild(actions);
   const cancel = document.createElement('button'); cancel.className='icon-btn small'; cancel.textContent='Cancel'; actions.appendChild(cancel);
   const save = document.createElement('button'); save.className='icon-btn small'; save.textContent='Save'; actions.appendChild(save);
