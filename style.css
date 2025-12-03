@@ -595,6 +595,26 @@ button:focus-visible {
 .patient-link { background: none; border: none; color: var(--primary); cursor: pointer; font-weight: 600; padding: 0; }
 .patient-link:hover { text-decoration: underline; }
 
+/* Make only the Table section full-width on desktop */
+@media (min-width: 900px) {
+  #table-section {
+    position: relative;
+    left: 50%;
+    right: 50%;
+    margin-left: -50vw;
+    margin-right: -50vw;
+    width: 100vw;
+    border-left: none;
+    border-right: none;
+    border-radius: 0;
+  }
+  #table-section .table-root {
+    max-width: 1320px; /* content width inside full-bleed section */
+    margin: 0 auto;
+    padding: 0 16px;
+  }
+}
+
 /* Flash highlight for focused task */
 @keyframes flash-highlight {
   0% { box-shadow: 0 0 0 0 rgba(59,130,246,0.0); background-color: inherit; }

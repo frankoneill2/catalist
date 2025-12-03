@@ -1068,11 +1068,19 @@ function startRealtimeTable() {
       try { title = await decryptText(data.titleCipher, data.titleIv); } catch {}
       const tr = document.createElement('tr');
       // Patient cell
+      // Skip rows with no title
+      if (!title || !title.trim()) {
+        continue;
+      }
       const tdName = document.createElement('td');
       const btn = document.createElement('button');
       btn.className = 'patient-link';
-      btn.textContent = title || '(Untitled)';
-      btn.addEventListener('click', () => openCase(d.id, title || '(Untitled)', 'list', 'notes'));
+      btn.textContent = title;
+      btn.addEventListener('click', () => {
+        // Switch to Cases view then open Notes for this case
+        showMainTab('cases');
+        openCase(d.id, title, 'list', 'notes');
+      });
       tdName.appendChild(btn);
       tr.appendChild(tdName);
       // Columns A–F
@@ -1091,12 +1099,32 @@ function startRealtimeTable() {
           if (v !== last) { last = v; saveCaseColumn(d.id, letter, v); }
         });
         input.addEventListener('keydown', (e) => {
+          const cellIndex = td.cellIndex; // 0=patient, 1..6=A..F
           if (e.key === 'Enter') {
-            e.preventDefault(); input.blur();
-            const cellIndex = td.cellIndex;
+            e.preventDefault();
+            input.blur();
             const nextRow = tr.nextElementSibling;
             if (nextRow && nextRow.children[cellIndex]) {
               const n = nextRow.children[cellIndex].querySelector('input');
+              if (n) n.focus();
+            }
+          } else if (e.key === 'Tab') {
+            e.preventDefault();
+            const dir = e.shiftKey ? -1 : 1;
+            let targetCol = cellIndex + dir; // move between data columns; patient col is 0
+            let targetRow = tr;
+            if (targetCol < 1) {
+              // move to previous row's last data column
+              const prev = tr.previousElementSibling;
+              if (prev) { targetRow = prev; targetCol = 6; } else { return; }
+            } else if (targetCol > 6) {
+              // move to next row's first data column
+              const next = tr.nextElementSibling;
+              if (next) { targetRow = next; targetCol = 1; } else { return; }
+            }
+            const targetCell = targetRow.children[targetCol];
+            if (targetCell) {
+              const n = targetCell.querySelector('input');
               if (n) n.focus();
             }
           }
