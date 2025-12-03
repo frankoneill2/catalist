@@ -1091,10 +1091,9 @@ function startRealtimeTable() {
         if (letter === 'F') {
           const wrap = document.createElement('div'); wrap.className = 'cell-tasks';
           const ul = document.createElement('ul'); wrap.appendChild(ul);
-          const form = document.createElement('form'); form.className = 'composer';
-          const inp = document.createElement('input'); inp.placeholder = 'Add a task…'; inp.setAttribute('aria-label','Task description');
-          const add = document.createElement('button'); add.type='submit'; add.className='primary'; add.textContent='Add';
-          form.appendChild(inp); form.appendChild(add);
+          const form = document.createElement('form'); form.className = 'composer compact';
+          const inp = document.createElement('input'); inp.placeholder = 'Add task…'; inp.setAttribute('aria-label','Task description');
+          form.appendChild(inp);
           form.addEventListener('submit', async (e) => { e.preventDefault(); const t=(inp.value||'').trim(); if(!t) return; const { cipher: textCipher, iv: textIv } = await encryptText(t); const { cipher: statusCipher, iv: statusIv } = await encryptText('open'); await addDoc(collection(db,'cases',d.id,'tasks'), { textCipher, textIv, statusCipher, statusIv, createdAt: serverTimestamp(), username: username || null, assignee: null, priority: null }); inp.value=''; });
           td.appendChild(wrap); td.appendChild(form);
           if (tableTaskUnsubs.has(d.id)) { try { tableTaskUnsubs.get(d.id)(); } catch {} tableTaskUnsubs.delete(d.id); }
@@ -1134,7 +1133,7 @@ function startRealtimeTable() {
 }
 
 // Attach realtime compact tasks list to a UL
-function attachTasksListRealtime(caseId, ul) {
+function attachTasksListRealtime(caseId, ul, opts = {}) {
   const q = query(collection(db, 'cases', caseId, 'tasks'), orderBy('createdAt', 'desc'));
   let taskOrder = null;
   const unsub = onSnapshot(q, async (snap) => {
@@ -1163,12 +1162,12 @@ function attachTasksListRealtime(caseId, ul) {
     }
     const idx = new Map(taskOrder.map((id,i)=>[id,i]));
     items.sort((a,b) => (idx.get(a.id) ?? 999999) - (idx.get(b.id) ?? 999999));
-    for (const it of items) ul.appendChild(buildCompactTaskRow(caseId, it));
+    for (const it of items) ul.appendChild(buildCompactTaskRow(caseId, it, opts));
   }, (err) => console.error('Tasks cell listener error', err));
   return () => { try { unsub(); } catch {} };
 }
 
-function buildCompactTaskRow(caseId, it) {
+function buildCompactTaskRow(caseId, it, opts = {}) {
   const li = document.createElement('li');
   const statusCls = it.status === 'in progress' ? 's-inprogress' : (it.status === 'complete' ? 's-complete' : 's-open');
   li.className = 'case-task ' + statusCls;
@@ -1185,9 +1184,18 @@ function buildCompactTaskRow(caseId, it) {
   });
   const text = document.createElement('span'); text.className='task-text'; text.textContent = it.text;
   li.appendChild(statusBtn); li.appendChild(text);
-  if (it.data && it.data.priority) { const pri=document.createElement('span'); pri.className='mini-chip'; pri.textContent=it.data.priority; li.appendChild(pri); }
+  if (it.data && it.data.priority) {
+    if (opts.compact) {
+      const pri=document.createElement('span'); pri.style.fontSize='11px'; pri.style.color='#6b7280'; pri.title='Priority';
+      const p = (it.data.priority||'').toLowerCase();
+      pri.textContent = p === 'high' ? 'H' : p === 'medium' ? 'M' : p === 'low' ? 'L' : '';
+      if (pri.textContent) li.appendChild(pri);
+    } else {
+      const pri=document.createElement('span'); pri.className='mini-chip'; pri.textContent=it.data.priority; li.appendChild(pri);
+    }
+  }
   const av=document.createElement('span'); av.className='mini-avatar'; const initials = it.data && it.data.assignee ? it.data.assignee.split(/\s+/).map(s=>s[0]).join('').slice(0,2).toUpperCase() : ''; av.textContent=initials||''; const col=colorForName((it.data && it.data.assignee)||''); av.style.background=col.bg; av.style.color=col.color; av.style.border=`1px solid ${col.border}`;
-  av.addEventListener('click',(e)=>{ e.stopPropagation(); const existing=document.querySelector('.assignee-panel'); if(existing) existing.remove(); const panel=document.createElement('div'); panel.className='assignee-panel'; panel.style.position='fixed'; panel.style.zIndex='2147483646'; const addOpt=(label,value)=>{ const b=document.createElement('button'); b.type='button'; b.className='assignee-option'; b.textContent=label; b.addEventListener('click', async (ev)=>{ ev.stopPropagation(); try{ await updateDoc(doc(db,'cases',caseId,'tasks',it.id),{ assignee:value }); } catch(err){ console.error('Failed to reassign',err); showToast('Failed to reassign'); } finally { panel.remove(); } }); panel.appendChild(b); }; addOpt('Unassigned', null); for (const u of usersCache) addOpt(u.username, u.username); document.body.appendChild(panel); const r=av.getBoundingClientRect(); requestAnimationFrame(()=>{ const w=panel.offsetWidth||180; const left=Math.min(Math.max(8, r.right-w), window.innerWidth - w - 8); const top=Math.min(window.innerHeight - panel.offsetHeight - 8, r.bottom + 6); panel.style.left=`${Math.round(left)}px`; panel.style.top=`${Math.round(top)}px`; }); const onDocClick=(evt)=>{ if(!panel || panel.contains(evt.target) || evt.target===av) return; panel.remove(); document.removeEventListener('click', onDocClick, true); }; setTimeout(()=>document.addEventListener('click', onDocClick, true),0); });
+  av.addEventListener('click',(e)=>{ e.stopPropagation(); const existing=document.querySelector('.assignee-panel'); if(existing) existing.remove(); const panel=document.createElement('div'); panel.className='assignee-panel'; panel.style.position='fixed'; panel.style.zIndex='2147483646'; const addOpt=(label,value)=>{ const b=document.createElement('button'); b.type='button'; b.className='assignee-option'; b.textContent=label; b.addEventListener('click', async (ev)=>{ ev.stopPropagation(); try{ await updateDoc(doc(db,'cases',caseId,'tasks',it.id),{ assignee:value }); } catch(err){ console.error('Failed to reassign',err); showToast('Failed to reassign'); } finally { panel.remove(); } }); panel.appendChild(b); }; addOpt('Unassigned', null); for (const u of usersCache) addOpt(u.username, u.username); document.body.appendChild(panel); const r=av.getBoundingClientRect(); requestAnimationFrame(()=>{ const w=panel.offsetWidth||160; const left=Math.min(Math.max(8, r.right-w), window.innerWidth - w - 8); const top=Math.min(window.innerHeight - panel.offsetHeight - 8, r.bottom + 6); panel.style.left=`${Math.round(left)}px`; panel.style.top=`${Math.round(top)}px`; }); const onDocClick=(evt)=>{ if(!panel || panel.contains(evt.target) || evt.target===av) return; panel.remove(); document.removeEventListener('click', onDocClick, true); }; setTimeout(()=>document.addEventListener('click', onDocClick, true),0); });
   li.appendChild(av);
   return li;
 }

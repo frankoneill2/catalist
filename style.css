@@ -621,15 +621,33 @@ button:focus-visible {
   max-height: 320px; /* ~8 rows visible */
   overflow-y: auto;
   display: block;
-  padding: 4px 0;
+  padding: 2px 0;
 }
-.cell-tasks ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.cell-tasks .case-task { padding: 6px 8px; }
-.cell-tasks .status-btn { width: 28px; height: 28px; font-size: 18px; }
-.cell-tasks .mini-avatar { width: 20px; height: 20px; font-size: 11px; }
-.cell-tasks .composer { display: flex; gap: 6px; margin-top: 8px; }
-.cell-tasks .composer input { flex: 1; padding: 6px 8px; height: 32px; border-radius: 8px; }
-.cell-tasks .composer button { height: 32px; border-radius: 8px; }
+.cell-tasks ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.cell-tasks .case-task { padding: 4px 6px; border-radius: 4px; }
+.cell-tasks .status-btn { width: 16px; height: 16px; font-size: 14px; padding: 0; }
+.cell-tasks .mini-avatar { width: 16px; height: 16px; font-size: 10px; }
+.cell-tasks .composer { display: grid; grid-template-columns: 1fr; gap: 4px; margin-top: 6px; }
+.cell-tasks .composer input { flex: 1; padding: 4px 8px 4px 18px; height: 26px; border-radius: 4px; font-size: 13px; }
+.cell-tasks .composer.compact { position: relative; }
+.cell-tasks .composer.compact::before {
+  content: '+';
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #6b7280;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+/* Compact professional look only in table section */
+#table-section { font-size: 13px; line-height: 1.35; }
+#table-section .data-table th, #table-section .data-table td { padding: 4px 6px; }
+#table-section .cell-editable, #table-section .cell-tasks .composer input { border-radius: 4px; }
+#table-section .cell-editable:focus { box-shadow: 0 0 0 2px rgba(59,130,246,0.18); }
+#table-section .data-table tbody tr:nth-child(even) td { background: #fafafa; }
+#table-section .data-table th { font-size: 13px; font-weight: 600; }
 
 /* Make only the Table section full-width on desktop */
 @media (min-width: 900px) {
