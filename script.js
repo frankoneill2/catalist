@@ -31,6 +31,8 @@ let caseDetailEl, caseTitleEl, backBtn;
 let taskForm, taskInput, taskListEl;
 let taskAssigneeEl, taskPriorityEl, composerOptsEl;
 let noteForm, noteInput, notesListEl;
+let colAInput, colBInput, colCInput, colDInput, colEInput, colFInput; // A–F fields
+let tableSection, tableRoot; // Table view
 let tabTasksBtn, tabNotesBtn;
 let userDetailEl, userTitleEl, userTaskListEl, userBackBtn;
 let brandHome;
@@ -41,6 +43,8 @@ let backTarget = 'list'; // 'list' or 'user'
 let currentUserPageName = null;
 let unsubTasks = null;
 let unsubNotes = null;
+let unsubCaseDoc = null;
+let unsubTable = null;
 let unsubUsers = null;
 let unsubLocations = null;
 let usersCache = [];
@@ -134,7 +138,7 @@ async function openCase(id, title, source = 'list', initialTab = 'notes') {
   userDetailEl.hidden = true;
   caseDetailEl.hidden = false;
   startRealtimeTasks(id);
-  startRealtimeNotes(id);
+  startRealtimeCaseFields(id);
   // Open chosen tab
   showTab(initialTab);
 }
@@ -142,28 +146,40 @@ async function openCase(id, title, source = 'list', initialTab = 'notes') {
 
 // Top-level tabs between Cases and My Tasks
 function showMainTab(which) {
+  const mainTabTable = document.getElementById('tab-table');
   const mainTabCases = document.getElementById('tab-cases');
   const mainTabMy = document.getElementById('tab-my');
-  const onCases = which === 'cases';
-  // Toggle active classes
-  if (mainTabCases && mainTabMy) {
-    mainTabCases.classList.toggle('active', onCases);
-    mainTabCases.setAttribute('aria-selected', String(onCases));
-    mainTabMy.classList.toggle('active', !onCases);
-    mainTabMy.setAttribute('aria-selected', String(!onCases));
+  const isTable = which === 'table';
+  const isCases = which === 'cases';
+  const isMy = which === 'my';
+  if (mainTabTable && mainTabCases && mainTabMy) {
+    mainTabTable.classList.toggle('active', isTable);
+    mainTabTable.setAttribute('aria-selected', String(isTable));
+    mainTabCases.classList.toggle('active', isCases);
+    mainTabCases.setAttribute('aria-selected', String(isCases));
+    mainTabMy.classList.toggle('active', isMy);
+    mainTabMy.setAttribute('aria-selected', String(isMy));
   }
-  if (onCases) {
-    // Show cases list or detail, hide user detail
+  if (isTable) {
+    if (caseListSection) caseListSection.style.display = 'none';
+    caseDetailEl.hidden = true;
     userDetailEl.hidden = true;
-    if (currentCaseId) {
-      caseDetailEl.hidden = false;
-      if (caseListSection) caseListSection.style.display = 'none';
-    } else {
-      showCaseList();
-    }
+    if (tableSection) tableSection.hidden = false;
+    if (!unsubTable) startRealtimeTable();
   } else {
-    // Show current user's tasks
-    openUser(username);
+    if (tableSection) tableSection.hidden = true;
+    if (unsubTable) { unsubTable(); unsubTable = null; }
+    if (isCases) {
+      userDetailEl.hidden = true;
+      if (currentCaseId) {
+        caseDetailEl.hidden = false;
+        if (caseListSection) caseListSection.style.display = 'none';
+      } else {
+        showCaseList();
+      }
+    } else if (isMy) {
+      openUser(username);
+    }
   }
 }
 
@@ -1000,6 +1016,138 @@ function startRealtimeNotes(caseId) {
   });
 }
 
+// --- A–F case fields stored on the case doc
+function fieldNames(letter) {
+  return { c: `col${letter}Cipher`, iv: `col${letter}Iv` };
+}
+
+async function saveCaseColumn(caseId, letter, value) {
+  const { c, iv } = fieldNames(letter);
+  const text = (value || '').trim();
+  if (!caseId) return;
+  try {
+    if (!text) {
+      await updateDoc(doc(db, 'cases', caseId), { [c]: null, [iv]: null });
+    } else {
+      const e = await encryptText(text);
+      await updateDoc(doc(db, 'cases', caseId), { [c]: e.cipher, [iv]: e.iv });
+    }
+  } catch (err) {
+    console.error('Failed to save column', letter, err);
+    showToast('Failed to save');
+  }
+}
+
+function buildTableSkeleton() {
+  if (!tableRoot) return null;
+  const table = document.createElement('table');
+  table.className = 'data-table';
+  const thead = document.createElement('thead');
+  const tr = document.createElement('tr');
+  const headers = ['Patient', 'Column A', 'Column B', 'Column C', 'Column D', 'Column E', 'Column F'];
+  for (const h of headers) { const th = document.createElement('th'); th.textContent = h; tr.appendChild(th); }
+  thead.appendChild(tr);
+  const tbody = document.createElement('tbody');
+  table.appendChild(thead);
+  table.appendChild(tbody);
+  tableRoot.innerHTML = '';
+  tableRoot.appendChild(table);
+  return tbody;
+}
+
+function startRealtimeTable() {
+  const q = query(collection(db, 'cases'), orderBy('createdAt', 'desc'));
+  let tbody = buildTableSkeleton();
+  unsubTable = onSnapshot(q, async snap => {
+    if (!tbody) tbody = buildTableSkeleton();
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    for (const d of snap.docs) {
+      const data = d.data();
+      let title = '';
+      try { title = await decryptText(data.titleCipher, data.titleIv); } catch {}
+      const tr = document.createElement('tr');
+      // Patient cell
+      const tdName = document.createElement('td');
+      const btn = document.createElement('button');
+      btn.className = 'patient-link';
+      btn.textContent = title || '(Untitled)';
+      btn.addEventListener('click', () => openCase(d.id, title || '(Untitled)', 'list', 'notes'));
+      tdName.appendChild(btn);
+      tr.appendChild(tdName);
+      // Columns A–F
+      for (const letter of ['A','B','C','D','E','F']) {
+        const td = document.createElement('td');
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'cell-edit';
+        const { c, iv } = fieldNames(letter);
+        let val = '';
+        try { if (data[c] && data[iv]) val = await decryptText(data[c], data[iv]); } catch {}
+        input.value = val;
+        let last = val;
+        input.addEventListener('blur', () => {
+          const v = input.value;
+          if (v !== last) { last = v; saveCaseColumn(d.id, letter, v); }
+        });
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault(); input.blur();
+            const cellIndex = td.cellIndex;
+            const nextRow = tr.nextElementSibling;
+            if (nextRow && nextRow.children[cellIndex]) {
+              const n = nextRow.children[cellIndex].querySelector('input');
+              if (n) n.focus();
+            }
+          }
+        });
+        td.appendChild(input);
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+  });
+}
+
+function bindNotesFields() {
+  const map = [
+    { el: colAInput, L: 'A' },
+    { el: colBInput, L: 'B' },
+    { el: colCInput, L: 'C' },
+    { el: colDInput, L: 'D' },
+    { el: colEInput, L: 'E' },
+    { el: colFInput, L: 'F' },
+  ];
+  for (const { el, L } of map) {
+    if (!el) continue;
+    el.addEventListener('blur', () => { if (currentCaseId != null) saveCaseColumn(currentCaseId, L, el.value); });
+  }
+}
+
+function startRealtimeCaseFields(caseId) {
+  if (unsubCaseDoc) { unsubCaseDoc(); unsubCaseDoc = null; }
+  const ref = doc(db, 'cases', caseId);
+  unsubCaseDoc = onSnapshot(ref, async (snap) => {
+    if (!snap.exists()) return;
+    const data = snap.data();
+    const fill = async (el, L) => {
+      if (!el) return;
+      const { c, iv } = fieldNames(L);
+      let val = '';
+      try { if (data[c] && data[iv]) val = await decryptText(data[c], data[iv]); } catch {}
+      el.value = val;
+    };
+    await Promise.all([
+      fill(colAInput, 'A'),
+      fill(colBInput, 'B'),
+      fill(colCInput, 'C'),
+      fill(colDInput, 'D'),
+      fill(colEInput, 'E'),
+      fill(colFInput, 'F'),
+    ]);
+  });
+}
+
 // --- Form bindings
 function bindTabs() {
   tabTasksBtn.addEventListener('click', () => showTab('tasks'));
@@ -1206,6 +1354,7 @@ function populateComposerAssignees() {
 }
 
 function bindNoteForm() {
+  if (!noteForm) return;
   noteForm.addEventListener('submit', async e => {
     e.preventDefault();
     if (!currentCaseId) return;
@@ -1235,12 +1384,17 @@ window.addEventListener('DOMContentLoaded', async () => {
   taskAssigneeEl = document.getElementById('task-assignee');
   taskPriorityEl = document.getElementById('task-priority');
   composerOptsEl = document.getElementById('composer-opts');
-  noteForm = document.getElementById('note-form');
-  noteInput = document.getElementById('note-input');
-  notesListEl = document.getElementById('notes-list');
+  // A–F inputs in Notes tab
+  colAInput = document.getElementById('colA-input');
+  colBInput = document.getElementById('colB-input');
+  colCInput = document.getElementById('colC-input');
+  colDInput = document.getElementById('colD-input');
+  colEInput = document.getElementById('colE-input');
+  colFInput = document.getElementById('colF-input');
   tabTasksBtn = document.getElementById('tab-tasks');
   tabNotesBtn = document.getElementById('tab-notes');
   // Main tabs
+  const mainTabTable = document.getElementById('tab-table');
   const mainTabCases = document.getElementById('tab-cases');
   const mainTabMy = document.getElementById('tab-my');
   userDetailEl = document.getElementById('user-detail');
@@ -1252,13 +1406,17 @@ window.addEventListener('DOMContentLoaded', async () => {
   userStatusEls = Array.from(document.querySelectorAll('.user-status'));
   userPriorityFilterEl = document.getElementById('user-priority-filter');
   userSortEl = document.getElementById('user-sort');
+  tableSection = document.getElementById('table-section');
+  tableRoot = document.getElementById('table-root');
 
   bindCaseForm();
   bindTaskForm();
   bindNoteForm();
+  bindNotesFields();
   bindTabs();
   // Main tab bindings
-  if (mainTabCases && mainTabMy) {
+  if (mainTabTable && mainTabCases && mainTabMy) {
+    mainTabTable.addEventListener('click', () => showMainTab('table'));
     mainTabCases.addEventListener('click', () => showMainTab('cases'));
     mainTabMy.addEventListener('click', () => showMainTab('my'));
   }
@@ -1267,6 +1425,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       // Leave case view, return to user page
       if (unsubTasks) { unsubTasks(); unsubTasks = null; }
       if (unsubNotes) { unsubNotes(); unsubNotes = null; }
+      if (unsubCaseDoc) { unsubCaseDoc(); unsubCaseDoc = null; }
       currentCaseId = null;
       caseDetailEl.hidden = true;
       userDetailEl.hidden = false;

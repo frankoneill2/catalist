@@ -34,9 +34,14 @@
   </header>
   <main class="app">
     <div id="main-tabs" class="tabs">
+      <button id="tab-table" class="tab" role="tab" aria-selected="false" aria-controls="table-section">Table</button>
       <button id="tab-cases" class="tab active" role="tab" aria-selected="true" aria-controls="case-list-section">Cases</button>
       <button id="tab-my" class="tab" role="tab" aria-selected="false" aria-controls="user-detail">My Tasks</button>
     </div>
+
+    <section id="table-section" class="card" hidden>
+      <div id="table-root" class="table-root" aria-label="Cases table view"></div>
+    </section>
     <section id="case-list-section" class="card">
       <div class="controls-row">
         <div class="controls-group">
@@ -91,11 +96,32 @@
 
       <section id="notes" role="tabpanel" aria-labelledby="tab-notes" hidden>
         <h3><span class="emoji" aria-hidden="true">📝</span> Notes</h3>
-        <form id="note-form" class="stack">
-          <textarea id="note-input" placeholder="Add note..." aria-label="Note text"></textarea>
-          <button type="submit" class="primary" aria-label="Add note">➕ Add Note</button>
-        </form>
-        <ul id="notes-list"></ul>
+        <div class="stack" id="af-fields">
+          <label>
+            A
+            <input id="colA-input" type="text" placeholder="Enter A" aria-label="A" />
+          </label>
+          <label>
+            B
+            <input id="colB-input" type="text" placeholder="Enter B" aria-label="B" />
+          </label>
+          <label>
+            C
+            <input id="colC-input" type="text" placeholder="Enter C" aria-label="C" />
+          </label>
+          <label>
+            D
+            <input id="colD-input" type="text" placeholder="Enter D" aria-label="D" />
+          </label>
+          <label>
+            E
+            <input id="colE-input" type="text" placeholder="Enter E" aria-label="E" />
+          </label>
+          <label>
+            F
+            <input id="colF-input" type="text" placeholder="Enter F" aria-label="F" />
+          </label>
+        </div>
       </section>
     </section>
 

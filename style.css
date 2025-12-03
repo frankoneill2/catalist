@@ -422,7 +422,7 @@ button:focus-visible {
 }
 
 /* Tabs */
-.tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin-bottom: 0.75rem; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden; }
+.tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; margin-bottom: 0.75rem; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden; }
 .tab { height: 44px; display: flex; align-items: center; justify-content: center; background: #fff; color: #374151; border-right: 1px solid #e5e7eb; }
 .tab:last-child { border-right: none; }
 .tab.active { background: var(--primary); color: #fff; }
@@ -584,6 +584,16 @@ button:focus-visible {
   gap: 0.5rem;
   z-index: 1000;
 }
+
+/* Table view */
+.table-root { overflow-x: auto; }
+.data-table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 720px; }
+.data-table th, .data-table td { border: 1px solid #e5e7eb; padding: 8px; background: #fff; }
+.data-table th { background: #f9fafb; text-align: left; font-weight: 600; }
+.data-table td .cell-edit { width: 100%; min-width: 120px; border: 1px solid transparent; border-radius: 8px; padding: 6px 8px; }
+.data-table td .cell-edit:focus { outline: none; border-color: #bfdbfe; box-shadow: 0 0 0 3px rgba(59,130,246,0.2); }
+.patient-link { background: none; border: none; color: var(--primary); cursor: pointer; font-weight: 600; padding: 0; }
+.patient-link:hover { text-decoration: underline; }
 
 /* Flash highlight for focused task */
 @keyframes flash-highlight {
