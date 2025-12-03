@@ -439,6 +439,8 @@ function startRealtimeTags() {
     tagsReady = true;
     // Populate filters
     fillTagFilters();
+    // Notify UIs (e.g., Tags Manager) to re-render
+    document.dispatchEvent(new CustomEvent('tags:updated'));
     // Preload rooms for selected location tags on demand
   });
 }
@@ -458,6 +460,7 @@ function loadSubtagsFor(parentId) {
       }
       items.sort((a,b)=> a.order - b.order || a.name.localeCompare(b.name));
       subtagsByParent.set(parentId, items);
+      document.dispatchEvent(new CustomEvent('subtags:updated', { detail: { parentId } }));
       resolve(items);
     });
   });
@@ -2076,6 +2079,27 @@ function startRealtimeUsers() {
     tabLoc.addEventListener('click', ()=>setTab('loc'));
     tabCons.addEventListener('click', ()=>setTab('cons'));
     closeBtn.addEventListener('click', ()=> overlay.remove());
+
+    // Re-render on tag/subtag changes
+    const onTags = () => {
+      const active = tabLoc.classList.contains('active') ? 'loc' : 'cons';
+      render(active);
+    };
+    const onRooms = (e) => {
+      if (!tabLoc.classList.contains('active')) return;
+      // When rooms change, simply re-render current selection
+      render('loc');
+    };
+    document.addEventListener('tags:updated', onTags);
+    document.addEventListener('subtags:updated', onRooms);
+    const cleanup = () => {
+      document.removeEventListener('tags:updated', onTags);
+      document.removeEventListener('subtags:updated', onRooms);
+    };
+    closeBtn.addEventListener('click', cleanup, { once: true });
+
+    // Initial render
+    setTab('loc');
 
     async function render(which) {
       content.innerHTML = '';
