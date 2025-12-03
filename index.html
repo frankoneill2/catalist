@@ -15,20 +15,23 @@
       <span class="logo" aria-hidden="true">✤</span>
       <span class="title">Catalist</span>
     </div>
-    <div class="users-dropdown">
-      <button id="users-btn" class="icon-btn" aria-haspopup="true" aria-expanded="false" aria-controls="users-menu">Settings ▾</button>
-      <div id="users-menu" class="users-menu" role="menu" hidden>
-        <div class="users-menu-header">
-          <span>Users</span>
-          <button id="add-user-btn" class="icon-btn small" aria-label="Add user">➕</button>
+    <div class="header-right">
+      <button id="print-open-btn" class="icon-btn small" type="button" aria-label="Print">Print</button>
+      <div class="users-dropdown">
+        <button id="users-btn" class="icon-btn" aria-haspopup="true" aria-expanded="false" aria-controls="users-menu">Settings ▾</button>
+        <div id="users-menu" class="users-menu" role="menu" hidden>
+          <div class="users-menu-header">
+            <span>Users</span>
+            <button id="add-user-btn" class="icon-btn small" aria-label="Add user">➕</button>
+          </div>
+          <ul id="user-list" class="user-list" aria-label="Users"></ul>
+          <hr style="border:none;border-top:1px solid #e5e7eb;margin:6px 0;">
+          <div class="users-menu-header">
+            <span>Locations</span>
+            <button id="add-location-btn" class="icon-btn small" aria-label="Add location">➕</button>
+          </div>
+          <ul id="location-list" class="user-list" aria-label="Locations"></ul>
         </div>
-        <ul id="user-list" class="user-list" aria-label="Users"></ul>
-        <hr style="border:none;border-top:1px solid #e5e7eb;margin:6px 0;">
-        <div class="users-menu-header">
-          <span>Locations</span>
-          <button id="add-location-btn" class="icon-btn small" aria-label="Add location">➕</button>
-        </div>
-        <ul id="location-list" class="user-list" aria-label="Locations"></ul>
       </div>
     </div>
   </header>

@@ -1516,6 +1516,18 @@ window.addEventListener('DOMContentLoaded', async () => {
     mainTabCases.addEventListener('click', () => showMainTab('cases'));
     mainTabMy.addEventListener('click', () => showMainTab('my'));
   }
+  // Print action in header
+  if (printOpenBtn) {
+    printOpenBtn.addEventListener('click', () => {
+      const ts = new Date().toLocaleString(undefined, { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+      const html = `<!doctype html><html><head><meta charset=\"utf-8\"><title>Print Table</title><link rel=\"stylesheet\" href=\"style.css\"></head><body class=\"print-mode\"><div class=\"print-header\">Printed ${ts}</div><section id=\"table-section\">${tableRoot ? tableRoot.innerHTML : ''}</section><script>window.addEventListener('load',function(){ setTimeout(function(){ window.print(); }, 50); });</script></body></html>`;
+      const w = window.open('', '_blank');
+      if (!w) { showToast('Pop-up blocked. Allow pop-ups to print.'); return; }
+      w.document.open();
+      w.document.write(html);
+      w.document.close();
+    });
+  }
   // Print action: open new window in print mode and print
   if (printOpenBtn) {
     printOpenBtn.addEventListener('click', () => {

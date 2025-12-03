@@ -823,3 +823,9 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
 @media (max-width: 600px) {
   .case-actions .icon-btn { width: 44px; height: 44px; font-size: 20px; }
 }
+/* Header right controls */
+.header-right { display: flex; align-items: center; gap: 8px; }
+.icon-btn.small { font-size: 12px; padding: 4px 8px; border: 1px solid #e5e7eb; border-radius: 6px; }
+
+/* Print header inside print window */
+.print-header { font-size: 12px; color: #111827; margin: 8px 0 6px; padding-bottom: 4px; border-bottom: 1px solid #e5e7eb; }
