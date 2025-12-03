@@ -2183,6 +2183,86 @@ function populateCaseLocationSelect() {
   sel.value = prev || '';
 }
 
+// --- Tag catalog helpers (used by Tags Manager)
+async function addTag(type) {
+  try {
+    const name = (prompt(`Add ${type}`) || '').trim();
+    if (!name) return;
+    const { cipher, iv } = await encryptText(name);
+    const arr = (tagsByType.get(type) || []);
+    await addDoc(collection(db, 'tags'), { type, order: arr.length, nameCipher: cipher, nameIv: iv });
+  } catch (err) {
+    console.error('Failed to add tag', err); showToast('Failed to add tag');
+  }
+}
+
+async function editTagName(tagId, current) {
+  try {
+    const name = (prompt('Rename', current) || '').trim();
+    if (!name) return;
+    const { cipher, iv } = await encryptText(name);
+    await updateDoc(doc(db, 'tags', tagId), { nameCipher: cipher, nameIv: iv });
+  } catch (err) { console.error('Failed to rename tag', err); showToast('Failed to rename'); }
+}
+
+async function deleteTag(type, tagId) {
+  try {
+    if (!confirm('Delete tag and its rooms (if any)?')) return;
+    const subs = await getDocs(collection(db, 'tags', tagId, 'subtags'));
+    for (const s of subs.docs) await deleteDoc(doc(db, 'tags', tagId, 'subtags', s.id));
+    await deleteDoc(doc(db, 'tags', tagId));
+  } catch (err) { console.error('Failed to delete tag', err); showToast('Failed to delete'); }
+}
+
+async function moveTag(type, index, delta) {
+  try {
+    const arr = (tagsByType.get(type) || []).slice();
+    const j = index + delta; if (j < 0 || j >= arr.length) return;
+    const a = arr[index], b = arr[j];
+    await Promise.all([
+      updateDoc(doc(db, 'tags', a.id), { order: j }),
+      updateDoc(doc(db, 'tags', b.id), { order: index }),
+    ]);
+  } catch (err) { console.error('Failed to reorder', err); showToast('Failed to reorder'); }
+}
+
+async function addRoom(parentId) {
+  try {
+    if (!parentId) return;
+    const name = (prompt('Add room') || '').trim(); if (!name) return;
+    const { cipher, iv } = await encryptText(name);
+    const arr = (subtagsByParent.get(parentId) || []);
+    await addDoc(collection(db, 'tags', parentId, 'subtags'), { type: 'room', order: arr.length, nameCipher: cipher, nameIv: iv });
+  } catch (err) { console.error('Failed to add room', err); showToast('Failed to add room'); }
+}
+
+async function editRoomName(parentId, roomId, current) {
+  try {
+    const name = (prompt('Rename room', current) || '').trim(); if (!name) return;
+    const { cipher, iv } = await encryptText(name);
+    await updateDoc(doc(db, 'tags', parentId, 'subtags', roomId), { nameCipher: cipher, nameIv: iv });
+  } catch (err) { console.error('Failed to rename room', err); showToast('Failed to rename room'); }
+}
+
+async function deleteRoom(parentId, roomId) {
+  try {
+    if (!confirm('Delete this room?')) return;
+    await deleteDoc(doc(db, 'tags', parentId, 'subtags', roomId));
+  } catch (err) { console.error('Failed to delete room', err); showToast('Failed to delete room'); }
+}
+
+async function moveRoom(parentId, index, delta) {
+  try {
+    const arr = (subtagsByParent.get(parentId) || []).slice();
+    const j = index + delta; if (j < 0 || j >= arr.length) return;
+    const a = arr[index], b = arr[j];
+    await Promise.all([
+      updateDoc(doc(db, 'tags', parentId, 'subtags', a.id), { order: j }),
+      updateDoc(doc(db, 'tags', parentId, 'subtags', b.id), { order: index }),
+    ]);
+  } catch (err) { console.error('Failed to reorder room', err); showToast('Failed to reorder room'); }
+}
+
 function openUser(name) {
   currentUserPageName = name;
   // Title with inline change link
