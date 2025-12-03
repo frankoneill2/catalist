@@ -1041,7 +1041,7 @@ async function saveCaseColumn(caseId, letter, value) {
 }
 
 function buildTableSkeleton() {
-  if (!tableRoot) return null;
+  if (!tableRoot) return { table: null, tbody: null };
   const table = document.createElement('table');
   table.className = 'data-table';
   const thead = document.createElement('thead');
@@ -1052,43 +1052,33 @@ function buildTableSkeleton() {
   const tbody = document.createElement('tbody');
   table.appendChild(thead);
   table.appendChild(tbody);
-  tableRoot.innerHTML = '';
-  tableRoot.appendChild(table);
-  return tbody;
+  return { table, tbody };
 }
 
 function startRealtimeTable() {
   const q = query(collection(db, 'cases'), orderBy('createdAt', 'desc'));
-  let tbody = buildTableSkeleton();
 
   const renderFromSnap = async (snap) => {
-    if (!tbody) tbody = buildTableSkeleton();
-    if (!tbody) return;
     // If editing a cell, defer table rebuild to preserve caret
     const active = document.activeElement;
     if (active && active.classList && active.classList.contains('cell-editable')) {
       pendingTableSnap = snap; tableRebuildPending = true; return;
     }
-    tbody.innerHTML = '';
+    const { table, tbody } = buildTableSkeleton();
+    if (!table || !tbody || !tableRoot) return;
     for (const d of snap.docs) {
       const data = d.data();
       let title = '';
       try { title = await decryptText(data.titleCipher, data.titleIv); } catch {}
-      // Skip rows with no title
       if (!title || !title.trim()) continue;
       const tr = document.createElement('tr');
-      // Patient cell
       const tdName = document.createElement('td');
       const btn = document.createElement('button');
       btn.className = 'patient-link';
       btn.textContent = title;
-      btn.addEventListener('click', () => {
-        showMainTab('cases');
-        openCase(d.id, title, 'list', 'notes');
-      });
+      btn.addEventListener('click', () => { showMainTab('cases'); openCase(d.id, title, 'list', 'notes'); });
       tdName.appendChild(btn);
       tr.appendChild(tdName);
-      // Columns A–F
       for (const letter of ['A','B','C','D','E','F']) {
         const td = document.createElement('td');
         const ed = document.createElement('div');
@@ -1123,47 +1113,29 @@ function startRealtimeTable() {
             if (sel && sel.rangeCount) { sel.deleteFromDocument(); sel.getRangeAt(0).insertNode(document.createTextNode(text)); }
           }
         });
-        // Idle autosave while typing
-        ed.addEventListener('input', () => {
-          clearTimeout(ed._t);
-          ed._t = setTimeout(saveNow, 1000);
-        });
+        ed.addEventListener('input', () => { clearTimeout(ed._t); ed._t = setTimeout(saveNow, 1000); });
         ed.addEventListener('keydown', (e) => {
-          const cellIndex = td.cellIndex; // 0=patient, 1..6=A..F
+          const cellIndex = td.cellIndex;
           if (e.key === 'Enter' && !(e.ctrlKey || e.metaKey)) {
-            // Allow newline inside cell
-            return;
+            return; // newline inside cell
           } else if ((e.key === 'Enter') && (e.ctrlKey || e.metaKey)) {
-            e.preventDefault();
-            saveNow();
-            // Move focus down same column
+            e.preventDefault(); saveNow();
             const nextRow = tr.nextElementSibling;
             if (nextRow && nextRow.children[cellIndex]) {
               const n = nextRow.children[cellIndex].querySelector('.cell-editable');
               if (n) n.focus();
             }
           } else if (e.key === 'Tab') {
-            e.preventDefault();
-            // Save current cell before moving
-            saveNow();
+            e.preventDefault(); saveNow();
             const dir = e.shiftKey ? -1 : 1;
-            let targetCol = cellIndex + dir; // move between data columns; patient col is 0
+            let targetCol = cellIndex + dir;
             let targetRow = tr;
-            if (targetCol < 1) {
-              const prev = tr.previousElementSibling;
-              if (prev) { targetRow = prev; targetCol = 6; } else { return; }
-            } else if (targetCol > 6) {
-              const next = tr.nextElementSibling;
-              if (next) { targetRow = next; targetCol = 1; } else { return; }
-            }
+            if (targetCol < 1) { const prev = tr.previousElementSibling; if (prev) { targetRow = prev; targetCol = 6; } else { return; } }
+            else if (targetCol > 6) { const next = tr.nextElementSibling; if (next) { targetRow = next; targetCol = 1; } else { return; } }
             const targetCell = targetRow.children[targetCol];
-            if (targetCell) {
-              const n = targetCell.querySelector('.cell-editable');
-              if (n) n.focus();
-            }
+            if (targetCell) { const n = targetCell.querySelector('.cell-editable'); if (n) n.focus(); }
           } else if (e.key === 'Escape') {
-            e.preventDefault();
-            ed.textContent = last;
+            e.preventDefault(); ed.textContent = last;
           }
         });
         td.appendChild(ed);
@@ -1171,6 +1143,9 @@ function startRealtimeTable() {
       }
       tbody.appendChild(tr);
     }
+    // Atomically replace table to prevent duplicated DOM
+    tableRoot.innerHTML = '';
+    tableRoot.appendChild(table);
   };
   unsubTable = onSnapshot(q, (snap) => { renderFromSnap(snap); }, (err) => console.error('Table listener error', err));
 }
