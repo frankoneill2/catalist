@@ -616,6 +616,21 @@ button:focus-visible {
 .patient-link { background: none; border: none; color: var(--primary); cursor: pointer; font-weight: 600; padding: 0; }
 .patient-link:hover { text-decoration: underline; }
 
+/* Tasks cell inside the table */
+.cell-tasks {
+  max-height: 320px; /* ~8 rows visible */
+  overflow-y: auto;
+  display: block;
+  padding: 4px 0;
+}
+.cell-tasks ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.cell-tasks .case-task { padding: 6px 8px; }
+.cell-tasks .status-btn { width: 28px; height: 28px; font-size: 18px; }
+.cell-tasks .mini-avatar { width: 20px; height: 20px; font-size: 11px; }
+.cell-tasks .composer { display: flex; gap: 6px; margin-top: 8px; }
+.cell-tasks .composer input { flex: 1; padding: 6px 8px; height: 32px; border-radius: 8px; }
+.cell-tasks .composer button { height: 32px; border-radius: 8px; }
+
 /* Make only the Table section full-width on desktop */
 @media (min-width: 900px) {
   #table-section {

@@ -117,10 +117,16 @@
             E
             <textarea id="colE-input" placeholder="Enter E" aria-label="E"></textarea>
           </label>
-          <label>
-            F
-            <textarea id="colF-input" placeholder="Enter F" aria-label="F"></textarea>
-          </label>
+          <div>
+            <div style="font-size: 0.9rem; color: var(--muted); margin-bottom: 4px;">F — Tasks</div>
+            <div id="notes-tasks" class="cell-tasks" aria-label="Tasks in notes">
+              <ul id="notes-tasks-list"></ul>
+              <form id="notes-tasks-form" class="composer" autocomplete="off">
+                <input id="notes-tasks-input" placeholder="Add a task…" aria-label="Task description">
+                <button type="submit" class="primary" aria-label="Add task">Add</button>
+              </form>
+            </div>
+          </div>
         </div>
       </section>
     </section>

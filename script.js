@@ -32,6 +32,7 @@ let taskForm, taskInput, taskListEl;
 let taskAssigneeEl, taskPriorityEl, composerOptsEl;
 let noteForm, noteInput, notesListEl;
 let colAInput, colBInput, colCInput, colDInput, colEInput, colFInput; // A–F fields
+let notesTasksList, notesTasksForm, notesTasksInput; // Notes embedded tasks
 let tableSection, tableRoot; // Table view
 let tabTasksBtn, tabNotesBtn;
 let userDetailEl, userTitleEl, userTaskListEl, userBackBtn;
@@ -45,6 +46,7 @@ let unsubTasks = null;
 let unsubNotes = null;
 let unsubCaseDoc = null;
 let unsubTable = null;
+let tableTaskUnsubs = new Map(); // per-case tasks listeners in table
 let unsubUsers = null;
 let unsubLocations = null;
 let usersCache = [];
@@ -141,6 +143,11 @@ async function openCase(id, title, source = 'list', initialTab = 'notes') {
   caseDetailEl.hidden = false;
   startRealtimeTasks(id);
   startRealtimeCaseFields(id);
+  // Bind notes embedded tasks
+  if (unsubNotesTasks) { try { unsubNotesTasks(); } catch {} unsubNotesTasks = null; }
+  if (notesTasksList) {
+    unsubNotesTasks = attachTasksListRealtime(id, notesTasksList);
+  }
   // Open chosen tab
   showTab(initialTab);
 }
@@ -1046,7 +1053,7 @@ function buildTableSkeleton() {
   table.className = 'data-table';
   const thead = document.createElement('thead');
   const tr = document.createElement('tr');
-  const headers = ['Patient', 'Column A', 'Column B', 'Column C', 'Column D', 'Column E', 'Column F'];
+  const headers = ['Patient', 'Column A', 'Column B', 'Column C', 'Column D', 'Column E', 'Tasks'];
   for (const h of headers) { const th = document.createElement('th'); th.textContent = h; tr.appendChild(th); }
   thead.appendChild(tr);
   const tbody = document.createElement('tbody');
@@ -1081,64 +1088,37 @@ function startRealtimeTable() {
       tr.appendChild(tdName);
       for (const letter of ['A','B','C','D','E','F']) {
         const td = document.createElement('td');
-        const ed = document.createElement('div');
-        ed.className = 'cell-editable';
-        ed.setAttribute('contenteditable', 'true');
-        ed.dataset.placeholder = `Enter ${letter}`;
-        ed.dataset.caseId = d.id;
-        ed.dataset.letter = letter;
-        const { c, iv } = fieldNames(letter);
-        let val = '';
-        try { if (data[c] && data[iv]) val = await decryptText(data[c], data[iv]); } catch {}
-        ed.textContent = val;
-        let last = val;
-        const saveNow = () => {
-          const v = (ed.innerText || '').replace(/\r/g, '');
-          if (v !== last) { last = v; saveCaseColumn(d.id, letter, v); }
-        };
-        ed.addEventListener('blur', () => {
-          saveNow();
-          if (tableRebuildPending && pendingTableSnap) {
-            const snapCopy = pendingTableSnap; pendingTableSnap = null; tableRebuildPending = false;
-            renderFromSnap(snapCopy);
-          }
-        });
-        ed.addEventListener('paste', (e) => {
-          e.preventDefault();
-          const text = (e.clipboardData || window.clipboardData).getData('text');
-          if (document.queryCommandSupported && document.queryCommandSupported('insertText')) {
-            document.execCommand('insertText', false, text);
-          } else {
-            const sel = window.getSelection();
-            if (sel && sel.rangeCount) { sel.deleteFromDocument(); sel.getRangeAt(0).insertNode(document.createTextNode(text)); }
-          }
-        });
-        ed.addEventListener('input', () => { clearTimeout(ed._t); ed._t = setTimeout(saveNow, 1000); });
-        ed.addEventListener('keydown', (e) => {
-          const cellIndex = td.cellIndex;
-          if (e.key === 'Enter' && !(e.ctrlKey || e.metaKey)) {
-            return; // newline inside cell
-          } else if ((e.key === 'Enter') && (e.ctrlKey || e.metaKey)) {
-            e.preventDefault(); saveNow();
-            const nextRow = tr.nextElementSibling;
-            if (nextRow && nextRow.children[cellIndex]) {
-              const n = nextRow.children[cellIndex].querySelector('.cell-editable');
-              if (n) n.focus();
-            }
-          } else if (e.key === 'Tab') {
-            e.preventDefault(); saveNow();
-            const dir = e.shiftKey ? -1 : 1;
-            let targetCol = cellIndex + dir;
-            let targetRow = tr;
-            if (targetCol < 1) { const prev = tr.previousElementSibling; if (prev) { targetRow = prev; targetCol = 6; } else { return; } }
-            else if (targetCol > 6) { const next = tr.nextElementSibling; if (next) { targetRow = next; targetCol = 1; } else { return; } }
-            const targetCell = targetRow.children[targetCol];
-            if (targetCell) { const n = targetCell.querySelector('.cell-editable'); if (n) n.focus(); }
-          } else if (e.key === 'Escape') {
-            e.preventDefault(); ed.textContent = last;
-          }
-        });
-        td.appendChild(ed);
+        if (letter === 'F') {
+          const wrap = document.createElement('div'); wrap.className = 'cell-tasks';
+          const ul = document.createElement('ul'); wrap.appendChild(ul);
+          const form = document.createElement('form'); form.className = 'composer';
+          const inp = document.createElement('input'); inp.placeholder = 'Add a task…'; inp.setAttribute('aria-label','Task description');
+          const add = document.createElement('button'); add.type='submit'; add.className='primary'; add.textContent='Add';
+          form.appendChild(inp); form.appendChild(add);
+          form.addEventListener('submit', async (e) => { e.preventDefault(); const t=(inp.value||'').trim(); if(!t) return; const { cipher: textCipher, iv: textIv } = await encryptText(t); const { cipher: statusCipher, iv: statusIv } = await encryptText('open'); await addDoc(collection(db,'cases',d.id,'tasks'), { textCipher, textIv, statusCipher, statusIv, createdAt: serverTimestamp(), username: username || null, assignee: null, priority: null }); inp.value=''; });
+          td.appendChild(wrap); td.appendChild(form);
+          if (tableTaskUnsubs.has(d.id)) { try { tableTaskUnsubs.get(d.id)(); } catch {} tableTaskUnsubs.delete(d.id); }
+          const unsub = attachTasksListRealtime(d.id, ul);
+          tableTaskUnsubs.set(d.id, unsub);
+        } else {
+          const ed = document.createElement('div');
+          ed.className = 'cell-editable';
+          ed.setAttribute('contenteditable', 'true');
+          ed.dataset.placeholder = `Enter ${letter}`;
+          ed.dataset.caseId = d.id;
+          ed.dataset.letter = letter;
+          const { c, iv } = fieldNames(letter);
+          let val = '';
+          try { if (data[c] && data[iv]) val = await decryptText(data[c], data[iv]); } catch {}
+          ed.textContent = val;
+          let last = val;
+          const saveNow = () => { const v = (ed.innerText || '').replace(/\r/g, ''); if (v !== last) { last = v; saveCaseColumn(d.id, letter, v); } };
+          ed.addEventListener('blur', () => { saveNow(); if (tableRebuildPending && pendingTableSnap) { const snapCopy=pendingTableSnap; pendingTableSnap=null; tableRebuildPending=false; renderFromSnap(snapCopy); } });
+          ed.addEventListener('paste', (e) => { e.preventDefault(); const text=(e.clipboardData||window.clipboardData).getData('text'); if (document.queryCommandSupported && document.queryCommandSupported('insertText')) { document.execCommand('insertText', false, text); } else { const sel=window.getSelection(); if (sel && sel.rangeCount) { sel.deleteFromDocument(); sel.getRangeAt(0).insertNode(document.createTextNode(text)); } } });
+          ed.addEventListener('input', () => { clearTimeout(ed._t); ed._t = setTimeout(saveNow, 1000); });
+          ed.addEventListener('keydown', (e) => { const cellIndex=td.cellIndex; if (e.key==='Enter' && !(e.ctrlKey||e.metaKey)) { return; } else if ((e.key==='Enter') && (e.ctrlKey||e.metaKey)) { e.preventDefault(); saveNow(); const nextRow=tr.nextElementSibling; if (nextRow && nextRow.children[cellIndex]) { const n=nextRow.children[cellIndex].querySelector('.cell-editable'); if (n) n.focus(); } } else if (e.key==='Tab') { e.preventDefault(); saveNow(); const dir=e.shiftKey?-1:1; let targetCol=cellIndex+dir; let targetRow=tr; if (targetCol<1) { const prev=tr.previousElementSibling; if (prev) { targetRow=prev; targetCol=6; } else { return; } } else if (targetCol>6) { const next=tr.nextElementSibling; if (next) { targetRow=next; targetCol=1; } else { return; } } const targetCell=targetRow.children[targetCol]; if (targetCell) { const n=targetCell.querySelector('.cell-editable'); if (n) n.focus(); } } else if (e.key==='Escape') { e.preventDefault(); ed.textContent=last; } });
+          td.appendChild(ed);
+        }
         tr.appendChild(td);
       }
       tbody.appendChild(tr);
@@ -1146,8 +1126,70 @@ function startRealtimeTable() {
     // Atomically replace table to prevent duplicated DOM
     tableRoot.innerHTML = '';
     tableRoot.appendChild(table);
+    // Clean up per-case task listeners for rows no longer present
+    const present = new Set(snap.docs.map(s=>s.id));
+    for (const [cid, un] of Array.from(tableTaskUnsubs.entries())) { if (!present.has(cid)) { try { un(); } catch {} tableTaskUnsubs.delete(cid); } }
   };
   unsubTable = onSnapshot(q, (snap) => { renderFromSnap(snap); }, (err) => console.error('Table listener error', err));
+}
+
+// Attach realtime compact tasks list to a UL
+function attachTasksListRealtime(caseId, ul) {
+  const q = query(collection(db, 'cases', caseId, 'tasks'), orderBy('createdAt', 'desc'));
+  let taskOrder = null;
+  const unsub = onSnapshot(q, async (snap) => {
+    if (!ul) return;
+    ul.innerHTML = '';
+    const items = [];
+    for (const d of snap.docs) {
+      const dat = d.data();
+      try {
+        const text = await decryptText(dat.textCipher, dat.textIv);
+        const status = await decryptText(dat.statusCipher, dat.statusIv);
+        const createdAt = (dat.createdAt && dat.createdAt.toMillis) ? dat.createdAt.toMillis() : 0;
+        items.push({ id: d.id, text, status, data: dat, createdAt });
+      } catch {}
+    }
+    if (!taskOrder) {
+      const orderVal = (s) => s === 'open' ? 0 : (s === 'in progress' ? 1 : 2);
+      const init = [...items].sort((a,b) => {
+        const byStatus = orderVal(a.status) - orderVal(b.status);
+        if (byStatus !== 0) return byStatus;
+        return b.createdAt - a.createdAt;
+      });
+      taskOrder = init.map(i => i.id);
+    } else {
+      for (const i of items) if (!taskOrder.includes(i.id)) taskOrder.unshift(i.id);
+    }
+    const idx = new Map(taskOrder.map((id,i)=>[id,i]));
+    items.sort((a,b) => (idx.get(a.id) ?? 999999) - (idx.get(b.id) ?? 999999));
+    for (const it of items) ul.appendChild(buildCompactTaskRow(caseId, it));
+  }, (err) => console.error('Tasks cell listener error', err));
+  return () => { try { unsub(); } catch {} };
+}
+
+function buildCompactTaskRow(caseId, it) {
+  const li = document.createElement('li');
+  const statusCls = it.status === 'in progress' ? 's-inprogress' : (it.status === 'complete' ? 's-complete' : 's-open');
+  li.className = 'case-task ' + statusCls;
+  // Status toggle
+  const statusBtn = document.createElement('button'); statusBtn.type='button'; statusBtn.className='status-btn';
+  const icon = (s) => s === 'complete' ? '☑' : (s === 'in progress' ? '◐' : '☐');
+  statusBtn.textContent = icon(it.status);
+  statusBtn.setAttribute('aria-label', `Task status: ${it.status}`);
+  statusBtn.addEventListener('click', async (e)=>{
+    e.stopPropagation();
+    const order = ['open','in progress','complete'];
+    const next = order[(order.indexOf(it.status)+1)%order.length];
+    try { const { cipher, iv } = await encryptText(next); await updateDoc(doc(db,'cases',caseId,'tasks',it.id),{ statusCipher:cipher, statusIv:iv }); it.status=next; statusBtn.textContent=icon(next); statusBtn.setAttribute('aria-label',`Task status: ${next}`); li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')); } catch(err){ console.error('Failed to update status',err); showToast('Failed to update status'); }
+  });
+  const text = document.createElement('span'); text.className='task-text'; text.textContent = it.text;
+  li.appendChild(statusBtn); li.appendChild(text);
+  if (it.data && it.data.priority) { const pri=document.createElement('span'); pri.className='mini-chip'; pri.textContent=it.data.priority; li.appendChild(pri); }
+  const av=document.createElement('span'); av.className='mini-avatar'; const initials = it.data && it.data.assignee ? it.data.assignee.split(/\s+/).map(s=>s[0]).join('').slice(0,2).toUpperCase() : ''; av.textContent=initials||''; const col=colorForName((it.data && it.data.assignee)||''); av.style.background=col.bg; av.style.color=col.color; av.style.border=`1px solid ${col.border}`;
+  av.addEventListener('click',(e)=>{ e.stopPropagation(); const existing=document.querySelector('.assignee-panel'); if(existing) existing.remove(); const panel=document.createElement('div'); panel.className='assignee-panel'; panel.style.position='fixed'; panel.style.zIndex='2147483646'; const addOpt=(label,value)=>{ const b=document.createElement('button'); b.type='button'; b.className='assignee-option'; b.textContent=label; b.addEventListener('click', async (ev)=>{ ev.stopPropagation(); try{ await updateDoc(doc(db,'cases',caseId,'tasks',it.id),{ assignee:value }); } catch(err){ console.error('Failed to reassign',err); showToast('Failed to reassign'); } finally { panel.remove(); } }); panel.appendChild(b); }; addOpt('Unassigned', null); for (const u of usersCache) addOpt(u.username, u.username); document.body.appendChild(panel); const r=av.getBoundingClientRect(); requestAnimationFrame(()=>{ const w=panel.offsetWidth||180; const left=Math.min(Math.max(8, r.right-w), window.innerWidth - w - 8); const top=Math.min(window.innerHeight - panel.offsetHeight - 8, r.bottom + 6); panel.style.left=`${Math.round(left)}px`; panel.style.top=`${Math.round(top)}px`; }); const onDocClick=(evt)=>{ if(!panel || panel.contains(evt.target) || evt.target===av) return; panel.remove(); document.removeEventListener('click', onDocClick, true); }; setTimeout(()=>document.addEventListener('click', onDocClick, true),0); });
+  li.appendChild(av);
+  return li;
 }
 
 function bindNotesFields() {
@@ -1432,6 +1474,10 @@ window.addEventListener('DOMContentLoaded', async () => {
   colDInput = document.getElementById('colD-input');
   colEInput = document.getElementById('colE-input');
   colFInput = document.getElementById('colF-input');
+  // Notes embedded tasks
+  notesTasksList = document.getElementById('notes-tasks-list');
+  notesTasksForm = document.getElementById('notes-tasks-form');
+  notesTasksInput = document.getElementById('notes-tasks-input');
   tabTasksBtn = document.getElementById('tab-tasks');
   tabNotesBtn = document.getElementById('tab-notes');
   // Main tabs
@@ -1489,6 +1535,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       for (const u of unsubUserTasks) try { u(); } catch {}
       unsubUserTasks = [];
     }
+    if (unsubNotesTasks) { try { unsubNotesTasks(); } catch {} unsubNotesTasks = null; }
   });
   if (brandHome) {
     brandHome.addEventListener('click', () => {
