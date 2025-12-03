@@ -50,6 +50,8 @@ let unsubLocations = null;
 let usersCache = [];
 let locationsCache = [];
 let unsubUserTasks = [];
+let pendingTableSnap = null; // defer table rerender while editing
+let tableRebuildPending = false;
 let pendingFocusTaskId = null; // when navigating from case list to a specific task
 // In-session compact order for case list preview: caseId -> [taskIds]
 let compactOrderByCase = new Map();
@@ -1058,26 +1060,29 @@ function buildTableSkeleton() {
 function startRealtimeTable() {
   const q = query(collection(db, 'cases'), orderBy('createdAt', 'desc'));
   let tbody = buildTableSkeleton();
-  unsubTable = onSnapshot(q, async snap => {
+
+  const renderFromSnap = async (snap) => {
     if (!tbody) tbody = buildTableSkeleton();
     if (!tbody) return;
+    // If editing a cell, defer table rebuild to preserve caret
+    const active = document.activeElement;
+    if (active && active.classList && active.classList.contains('cell-editable')) {
+      pendingTableSnap = snap; tableRebuildPending = true; return;
+    }
     tbody.innerHTML = '';
     for (const d of snap.docs) {
       const data = d.data();
       let title = '';
       try { title = await decryptText(data.titleCipher, data.titleIv); } catch {}
+      // Skip rows with no title
+      if (!title || !title.trim()) continue;
       const tr = document.createElement('tr');
       // Patient cell
-      // Skip rows with no title
-      if (!title || !title.trim()) {
-        continue;
-      }
       const tdName = document.createElement('td');
       const btn = document.createElement('button');
       btn.className = 'patient-link';
       btn.textContent = title;
       btn.addEventListener('click', () => {
-        // Switch to Cases view then open Notes for this case
         showMainTab('cases');
         openCase(d.id, title, 'list', 'notes');
       });
@@ -1086,55 +1091,88 @@ function startRealtimeTable() {
       // Columns A–F
       for (const letter of ['A','B','C','D','E','F']) {
         const td = document.createElement('td');
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.className = 'cell-edit';
+        const ed = document.createElement('div');
+        ed.className = 'cell-editable';
+        ed.setAttribute('contenteditable', 'true');
+        ed.dataset.placeholder = `Enter ${letter}`;
+        ed.dataset.caseId = d.id;
+        ed.dataset.letter = letter;
         const { c, iv } = fieldNames(letter);
         let val = '';
         try { if (data[c] && data[iv]) val = await decryptText(data[c], data[iv]); } catch {}
-        input.value = val;
+        ed.textContent = val;
         let last = val;
-        input.addEventListener('blur', () => {
-          const v = input.value;
+        const saveNow = () => {
+          const v = (ed.innerText || '').replace(/\r/g, '');
           if (v !== last) { last = v; saveCaseColumn(d.id, letter, v); }
+        };
+        ed.addEventListener('blur', () => {
+          saveNow();
+          if (tableRebuildPending && pendingTableSnap) {
+            const snapCopy = pendingTableSnap; pendingTableSnap = null; tableRebuildPending = false;
+            renderFromSnap(snapCopy);
+          }
         });
-        input.addEventListener('keydown', (e) => {
+        ed.addEventListener('paste', (e) => {
+          e.preventDefault();
+          const text = (e.clipboardData || window.clipboardData).getData('text');
+          if (document.queryCommandSupported && document.queryCommandSupported('insertText')) {
+            document.execCommand('insertText', false, text);
+          } else {
+            const sel = window.getSelection();
+            if (sel && sel.rangeCount) { sel.deleteFromDocument(); sel.getRangeAt(0).insertNode(document.createTextNode(text)); }
+          }
+        });
+        // Idle autosave while typing
+        ed.addEventListener('input', () => {
+          clearTimeout(ed._t);
+          ed._t = setTimeout(saveNow, 1000);
+        });
+        ed.addEventListener('keydown', (e) => {
           const cellIndex = td.cellIndex; // 0=patient, 1..6=A..F
-          if (e.key === 'Enter') {
+          if (e.key === 'Enter' && !(e.ctrlKey || e.metaKey)) {
+            // Allow newline inside cell
+            return;
+          } else if ((e.key === 'Enter') && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
-            input.blur();
+            saveNow();
+            // Move focus down same column
             const nextRow = tr.nextElementSibling;
             if (nextRow && nextRow.children[cellIndex]) {
-              const n = nextRow.children[cellIndex].querySelector('input');
+              const n = nextRow.children[cellIndex].querySelector('.cell-editable');
               if (n) n.focus();
             }
           } else if (e.key === 'Tab') {
             e.preventDefault();
+            // Save current cell before moving
+            saveNow();
             const dir = e.shiftKey ? -1 : 1;
             let targetCol = cellIndex + dir; // move between data columns; patient col is 0
             let targetRow = tr;
             if (targetCol < 1) {
-              // move to previous row's last data column
               const prev = tr.previousElementSibling;
               if (prev) { targetRow = prev; targetCol = 6; } else { return; }
             } else if (targetCol > 6) {
-              // move to next row's first data column
               const next = tr.nextElementSibling;
               if (next) { targetRow = next; targetCol = 1; } else { return; }
             }
             const targetCell = targetRow.children[targetCol];
             if (targetCell) {
-              const n = targetCell.querySelector('input');
+              const n = targetCell.querySelector('.cell-editable');
               if (n) n.focus();
             }
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            ed.textContent = last;
           }
         });
-        td.appendChild(input);
+        td.appendChild(ed);
         tr.appendChild(td);
       }
       tbody.appendChild(tr);
     }
-  });
+  };
+  unsubTable = onSnapshot(q, (snap) => { renderFromSnap(snap); }, (err) => console.error('Table listener error', err));
 }
 
 function bindNotesFields() {
