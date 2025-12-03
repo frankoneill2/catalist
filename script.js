@@ -34,6 +34,8 @@ let noteForm, noteInput, notesListEl;
 let colAInput, colBInput, colCInput, colDInput, colEInput, colFInput; // A–F fields
 let notesTasksList, notesTasksForm, notesTasksInput; // Notes embedded tasks
 let tableSection, tableRoot; // Table view
+// Tag controls
+let filterLocationSel, filterConsultantSel, sortByTagSel, clearTagFiltersBtn;
 let tabTasksBtn, tabNotesBtn;
 let userDetailEl, userTitleEl, userTaskListEl, userBackBtn;
 let brandHome;
@@ -76,6 +78,13 @@ let currentUserSearch = '';
 let userStatusEls = [];
 let userPriorityFilterEl, userSortEl;
 let userFilterByName = new Map(); // username -> { statuses: [...], priority: 'all'|'high'|'medium'|'low', sort: 'none'|'pri-asc'|'pri-desc' }
+
+// Tags caches
+let tagsByType = new Map(); // type -> [{id, name, order}]
+let subtagsByParent = new Map(); // parentTagId -> [{id, name, order, type}]
+let tagsReady = false;
+let activeTagFilters = { location: new Set(), consultant: new Set(), room: new Set() };
+let activeTagSort = 'none';
 
 // Utility: assign a consistent color to a name for avatar badges
 function colorForName(name) {
@@ -408,6 +417,100 @@ function startRealtimeCases() {
       caseListEl.appendChild(li);
     }
   });
+}
+
+// --- Tags: encrypted catalogs with subtags (rooms under locations)
+function startRealtimeTags() {
+  // Load top-level tags by type
+  const q = query(collection(db, 'tags'), orderBy('type'), orderBy('order'));
+  onSnapshot(q, async (snap) => {
+    const byType = new Map();
+    for (const d of snap.docs) {
+      const dat = d.data();
+      const type = dat.type;
+      let name = '';
+      try { name = await decryptText(dat.nameCipher, dat.nameIv); } catch {}
+      const item = { id: d.id, name, order: typeof dat.order === 'number' ? dat.order : 0, type };
+      if (!byType.has(type)) byType.set(type, []);
+      byType.get(type).push(item);
+    }
+    for (const [t, arr] of byType) { arr.sort((a,b)=> a.order - b.order || a.name.localeCompare(b.name)); }
+    tagsByType = byType;
+    tagsReady = true;
+    // Populate filters
+    fillTagFilters();
+    // Preload rooms for selected location tags on demand
+  });
+}
+
+function loadSubtagsFor(parentId) {
+  if (!parentId) return Promise.resolve([]);
+  if (subtagsByParent.has(parentId)) return Promise.resolve(subtagsByParent.get(parentId));
+  return new Promise((resolve) => {
+    const q = query(collection(db, 'tags', parentId, 'subtags'), orderBy('order'));
+    onSnapshot(q, async (snap) => {
+      const items = [];
+      for (const d of snap.docs) {
+        const dat = d.data();
+        let name = '';
+        try { name = await decryptText(dat.nameCipher, dat.nameIv); } catch {}
+        items.push({ id: d.id, name, order: typeof dat.order === 'number' ? dat.order : 0, type: dat.type || 'room' });
+      }
+      items.sort((a,b)=> a.order - b.order || a.name.localeCompare(b.name));
+      subtagsByParent.set(parentId, items);
+      resolve(items);
+    });
+  });
+}
+
+function fillTagFilters() {
+  if (filterLocationSel) {
+    fillSelectWithTags(filterLocationSel, tagsByType.get('location') || []);
+  }
+  if (filterConsultantSel) {
+    fillSelectWithTags(filterConsultantSel, tagsByType.get('consultant') || []);
+  }
+}
+
+function fillSelectWithTags(sel, arr) {
+  const prev = new Set(Array.from(sel.selectedOptions || []).map(o=>o.value));
+  sel.innerHTML = '';
+  for (const t of arr) {
+    const opt = document.createElement('option'); opt.value = t.id; opt.textContent = t.name; sel.appendChild(opt);
+  }
+  for (const c of Array.from(sel.options)) if (prev.has(c.value)) c.selected = true;
+}
+
+function bindTagControls() {
+  const onFilterChange = () => {
+    activeTagFilters.location = new Set(Array.from(filterLocationSel?.selectedOptions || []).map(o=>o.value));
+    activeTagFilters.consultant = new Set(Array.from(filterConsultantSel?.selectedOptions || []).map(o=>o.value));
+    // Re-render table via snapshot listener rerun – simplest is to trigger startRealtimeTable rebuild
+    // Force re-run by calling startRealtimeTable if active
+    if (tableSection && !tableSection.hidden) startRealtimeTable();
+  };
+  if (filterLocationSel) filterLocationSel.addEventListener('change', onFilterChange);
+  if (filterConsultantSel) filterConsultantSel.addEventListener('change', onFilterChange);
+  if (sortByTagSel) sortByTagSel.addEventListener('change', () => { activeTagSort = sortByTagSel.value || 'none'; if (tableSection && !tableSection.hidden) startRealtimeTable(); });
+  if (clearTagFiltersBtn) clearTagFiltersBtn.addEventListener('click', () => {
+    activeTagFilters.location.clear(); activeTagFilters.consultant.clear(); activeTagFilters.room?.clear?.();
+    if (filterLocationSel) Array.from(filterLocationSel.options).forEach(o=>o.selected=false);
+    if (filterConsultantSel) Array.from(filterConsultantSel.options).forEach(o=>o.selected=false);
+    if (sortByTagSel) sortByTagSel.value = 'none'; activeTagSort = 'none';
+    if (tableSection && !tableSection.hidden) startRealtimeTable();
+  });
+}
+
+function caseMatchesTagFilters(caseTags) {
+  // AND across types; OR within a type
+  for (const type of ['location','consultant']) {
+    const set = activeTagFilters[type];
+    if (set && set.size) {
+      const v = caseTags && caseTags[type];
+      if (!v || !set.has(v)) return false;
+    }
+  }
+  return true;
 }
 
 async function loadCompactTasks(caseId, caseTitle, ul, moreBtn) {
@@ -1073,18 +1176,71 @@ function startRealtimeTable() {
     }
     const { table, tbody } = buildTableSkeleton();
     if (!table || !tbody || !tableRoot) return;
-    for (const d of snap.docs) {
+    // Optionally sort by tag
+    let docs = snap.docs;
+    if (activeTagSort && activeTagSort !== 'none') {
+      const scored = [];
+      for (const d of docs) {
+        const dat = d.data();
+        const ct = dat.caseTags || {};
+        let score = 999999;
+        if (activeTagSort === 'location') {
+          const arr = tagsByType.get('location') || [];
+          const idx = arr.findIndex(t=>t.id === ct.location);
+          score = idx === -1 ? 999999 : idx;
+        } else if (activeTagSort === 'consultant') {
+          const arr = tagsByType.get('consultant') || [];
+          const idx = arr.findIndex(t=>t.id === ct.consultant);
+          score = idx === -1 ? 999999 : idx;
+        } else if (activeTagSort === 'room') {
+          const arr = subtagsByParent.get(ct.location) || [];
+          const idx = arr.findIndex(t=>t.id === ct.room);
+          score = idx === -1 ? 999999 : idx;
+        }
+        scored.push({ d, score, title: '' });
+      }
+      // Need titles as tiebreaker
+      for (const s of scored) { try { const dat = s.d.data(); s.title = await decryptText(dat.titleCipher, dat.titleIv); } catch {} }
+      scored.sort((a,b)=> a.score - b.score || a.title.localeCompare(b.title));
+      docs = scored.map(s=>s.d);
+    }
+
+    for (const d of docs) {
       const data = d.data();
       let title = '';
       try { title = await decryptText(data.titleCipher, data.titleIv); } catch {}
       if (!title || !title.trim()) continue;
       const tr = document.createElement('tr');
       const tdName = document.createElement('td');
+      const nameWrap = document.createElement('div'); nameWrap.className = 'name-cell';
+      const nameRow = document.createElement('div'); nameRow.className = 'name-row';
       const btn = document.createElement('button');
-      btn.className = 'patient-link';
-      btn.textContent = title;
+      btn.className = 'patient-link'; btn.textContent = title;
       btn.addEventListener('click', () => { showMainTab('cases'); openCase(d.id, title, 'list', 'notes'); });
-      tdName.appendChild(btn);
+      nameRow.appendChild(btn);
+      const editBtn = document.createElement('button'); editBtn.type='button'; editBtn.className='edit-tags-btn'; editBtn.textContent='Tags';
+      editBtn.addEventListener('click', (e) => { e.stopPropagation(); openTagPanelForCase(d.id, tdName); });
+      nameRow.appendChild(editBtn);
+      nameWrap.appendChild(nameRow);
+      // Render tag chips (location/room/consultant)
+      const chips = document.createElement('div'); chips.className = 'tag-chips';
+      const caseTags = (data.caseTags || {});
+      const mkChip = (label, type, id) => {
+        if (!id) return;
+        const list = type === 'room' ? (subtagsByParent.get(caseTags.location) || []) : (tagsByType.get(type) || []);
+        const idx = list.findIndex(t => t.id === id);
+        if (idx === -1) return;
+        const tag = list[idx];
+        const chip = document.createElement('span'); chip.className='tag-chip';
+        const o = document.createElement('span'); o.className='tag-order'; o.textContent = String(idx+1)+'.'; chip.appendChild(o);
+        const t = document.createElement('span'); t.textContent = tag.name; chip.appendChild(t);
+        chips.appendChild(chip);
+      };
+      mkChip('Location', 'location', caseTags.location || null);
+      if (caseTags.room && caseTags.location) mkChip('Room', 'room', caseTags.room);
+      mkChip('Consultant', 'consultant', caseTags.consultant || null);
+      nameWrap.appendChild(chips);
+      tdName.appendChild(nameWrap);
       tr.appendChild(tdName);
       for (const letter of ['A','B','C','D','E','F']) {
         const td = document.createElement('td');
@@ -1120,7 +1276,12 @@ function startRealtimeTable() {
         }
         tr.appendChild(td);
       }
-      tbody.appendChild(tr);
+      // Apply tag filters: skip row if filters active and case doesn't match
+      if (!caseMatchesTagFilters(data.caseTags || {})) {
+        // skip
+      } else {
+        tbody.appendChild(tr);
+      }
     }
     // Atomically replace table to prevent duplicated DOM
     tableRoot.innerHTML = '';
@@ -1198,6 +1359,68 @@ function buildCompactTaskRow(caseId, it, opts = {}) {
   av.addEventListener('click',(e)=>{ e.stopPropagation(); const existing=document.querySelector('.assignee-panel'); if(existing) existing.remove(); const panel=document.createElement('div'); panel.className='assignee-panel'; panel.style.position='fixed'; panel.style.zIndex='2147483646'; const addOpt=(label,value)=>{ const b=document.createElement('button'); b.type='button'; b.className='assignee-option'; b.textContent=label; b.addEventListener('click', async (ev)=>{ ev.stopPropagation(); try{ await updateDoc(doc(db,'cases',caseId,'tasks',it.id),{ assignee:value }); } catch(err){ console.error('Failed to reassign',err); showToast('Failed to reassign'); } finally { panel.remove(); } }); panel.appendChild(b); }; addOpt('Unassigned', null); for (const u of usersCache) addOpt(u.username, u.username); document.body.appendChild(panel); const r=av.getBoundingClientRect(); requestAnimationFrame(()=>{ const w=panel.offsetWidth||160; const left=Math.min(Math.max(8, r.right-w), window.innerWidth - w - 8); const top=Math.min(window.innerHeight - panel.offsetHeight - 8, r.bottom + 6); panel.style.left=`${Math.round(left)}px`; panel.style.top=`${Math.round(top)}px`; }); const onDocClick=(evt)=>{ if(!panel || panel.contains(evt.target) || evt.target===av) return; panel.remove(); document.removeEventListener('click', onDocClick, true); }; setTimeout(()=>document.addEventListener('click', onDocClick, true),0); });
   li.appendChild(av);
   return li;
+}
+
+// --- Inline tag editor for a case
+function openTagPanelForCase(caseId, anchorTd) {
+  const panel = document.createElement('div'); panel.className='tag-panel';
+  const title = document.createElement('h4'); title.textContent = 'Edit tags'; panel.appendChild(title);
+  const row = document.createElement('div'); row.className='row'; panel.appendChild(row);
+  // Location select
+  const locSel = document.createElement('select');
+  const addOpts = (sel, items, includeUnassigned=true) => {
+    sel.innerHTML = '';
+    if (includeUnassigned) { const o=document.createElement('option'); o.value=''; o.textContent='Unassigned'; sel.appendChild(o);} 
+    for (const t of items) { const o=document.createElement('option'); o.value=t.id; o.textContent=t.name; sel.appendChild(o);} 
+  };
+  addOpts(locSel, tagsByType.get('location') || []);
+  row.appendChild(locSel);
+  // Room select (depends on location)
+  const roomSel = document.createElement('select');
+  addOpts(roomSel, [], true);
+  row.appendChild(roomSel);
+  // Consultant select
+  const consSel = document.createElement('select');
+  addOpts(consSel, tagsByType.get('consultant') || []);
+  row.appendChild(consSel);
+  const actions = document.createElement('div'); actions.className='actions'; panel.appendChild(actions);
+  const cancel = document.createElement('button'); cancel.className='icon-btn small'; cancel.textContent='Cancel'; actions.appendChild(cancel);
+  const save = document.createElement('button'); save.className='icon-btn small'; save.textContent='Save'; actions.appendChild(save);
+
+  // Prefill current values
+  (async () => {
+    const ref = doc(db,'cases',caseId); const snap = await getDoc(ref);
+    const ct = (snap.exists() && snap.data().caseTags) || {};
+    if (ct.location) locSel.value = ct.location; else locSel.value = '';
+    await refreshRooms(); if (ct.room) roomSel.value = ct.room; else roomSel.value='';
+    if (ct.consultant) consSel.value = ct.consultant; else consSel.value='';
+  })();
+
+  async function refreshRooms() {
+    const loc = locSel.value || null;
+    if (loc) { const rooms = await loadSubtagsFor(loc); addOpts(roomSel, rooms, true); } else { addOpts(roomSel, [], true); }
+  }
+  locSel.addEventListener('change', async ()=>{ await refreshRooms(); roomSel.value=''; });
+
+  cancel.addEventListener('click', ()=>{ panel.remove(); document.removeEventListener('click', onDocClick, true); });
+  save.addEventListener('click', async ()=>{
+    try {
+      const loc = locSel.value || null; const room = roomSel.value || null; const cons = consSel.value || null;
+      const ct = { location: loc, consultant: cons };
+      if (loc && room) ct.room = room; else ct.room = null;
+      await updateDoc(doc(db,'cases',caseId), { caseTags: ct });
+      panel.remove(); document.removeEventListener('click', onDocClick, true);
+    } catch (err) { console.error('Failed to update tags', err); showToast('Failed to update tags'); }
+  });
+
+  document.body.appendChild(panel);
+  const r = anchorTd.getBoundingClientRect(); requestAnimationFrame(()=>{
+    const left = Math.min(window.innerWidth - panel.offsetWidth - 8, r.left);
+    const top = Math.min(window.innerHeight - panel.offsetHeight - 8, r.bottom + 6);
+    panel.style.left = `${Math.max(8,left)}px`; panel.style.top = `${Math.max(8,top)}px`;
+  });
+  const onDocClick = (e)=>{ if (!panel || panel.contains(e.target)) return; panel.remove(); document.removeEventListener('click', onDocClick, true); };
+  setTimeout(()=>document.addEventListener('click', onDocClick, true),0);
 }
 
 function bindNotesFields() {
@@ -1504,6 +1727,11 @@ window.addEventListener('DOMContentLoaded', async () => {
   tableSection = document.getElementById('table-section');
   tableRoot = document.getElementById('table-root');
   const printOpenBtn = document.getElementById('print-open-btn');
+  // Tag controls
+  filterLocationSel = document.getElementById('filter-location');
+  filterConsultantSel = document.getElementById('filter-consultant');
+  sortByTagSel = document.getElementById('sort-by-tag');
+  clearTagFiltersBtn = document.getElementById('clear-tag-filters');
 
   bindCaseForm();
   bindTaskForm();
@@ -1599,6 +1827,10 @@ window.addEventListener('DOMContentLoaded', async () => {
     toolbarSearch = '';
     renderCaseTasks();
   });
+
+  // Start tags realtime
+  startRealtimeTags();
+  bindTagControls();
 }
   // React User toolbar events
   document.addEventListener('userToolbar:status', (e) => {

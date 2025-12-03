@@ -43,6 +43,30 @@
     </div>
 
     <section id="table-section" class="card" hidden>
+      <div id="table-tags-controls" class="tags-controls" aria-label="Tag filters and sort">
+        <div class="left">
+          <label class="ctrl">
+            Location
+            <select id="filter-location" multiple size="1" title="Filter by ward"></select>
+          </label>
+          <label class="ctrl">
+            Consultant
+            <select id="filter-consultant" multiple size="1" title="Filter by consultant"></select>
+          </label>
+        </div>
+        <div class="right">
+          <label class="ctrl">
+            Sort by
+            <select id="sort-by-tag">
+              <option value="none">None</option>
+              <option value="location">Location</option>
+              <option value="room">Room</option>
+              <option value="consultant">Consultant</option>
+            </select>
+          </label>
+          <button id="clear-tag-filters" class="icon-btn small" type="button">Clear</button>
+        </div>
+      </div>
       <div id="table-root" class="table-root" aria-label="Cases table view"></div>
     </section>
     <section id="case-list-section" class="card">
