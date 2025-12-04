@@ -650,7 +650,7 @@ button:focus-visible {
 #table-section .data-table th { font-size: 13px; font-weight: 600; }
 
 /* Tag controls bar */
-.tags-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.tags-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; padding: 6px 8px; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 8px; }
 .tags-controls .left, .tags-controls .right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tags-controls .ctrl { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #374151; }
 .tags-controls select { min-width: 140px; height: 28px; padding: 2px 6px; border-radius: 4px; border: 1px solid #e5e7eb; background: #fff; font-size: 12px; }
@@ -665,6 +665,9 @@ button:focus-visible {
 .tag-panel .row { display: grid; gap: 6px; margin-bottom: 6px; }
 .tag-panel select { width: 100%; height: 32px; border-radius: 6px; border: 1px solid #e5e7eb; }
 .tag-panel .actions { display: flex; justify-content: flex-end; gap: 6px; }
+
+/* Show/Hide filters control */
+.show-filters-btn { position: absolute; top: 6px; right: 8px; font-size: 12px; padding: 4px 8px; border: 1px solid #e5e7eb; border-radius: 6px; background: #fff; }
 
 /* Table controls */
 /* Print action button inline with card header area */

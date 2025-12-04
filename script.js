@@ -421,26 +421,25 @@ function startRealtimeCases() {
 
 // --- Tags: encrypted catalogs with subtags (rooms under locations)
 function startRealtimeTags() {
-  // Avoid composite index by listening per type
-  const attach = (type) => {
-    const qType = query(collection(db, 'tags'), where('type', '==', type), orderBy('order'));
-    onSnapshot(qType, async (snap) => {
-      const arr = [];
-      for (const d of snap.docs) {
-        const dat = d.data();
-        let name = '';
-        try { name = await decryptText(dat.nameCipher, dat.nameIv); } catch {}
-        arr.push({ id: d.id, name, order: typeof dat.order === 'number' ? dat.order : 0, type });
-      }
-      arr.sort((a,b)=> a.order - b.order || a.name.localeCompare(b.name));
-      tagsByType.set(type, arr);
-      tagsReady = true;
-      fillTagFilters();
-      document.dispatchEvent(new CustomEvent('tags:updated', { detail: { type } }));
-    }, (err) => console.error('Tags listener error', type, err));
-  };
-  attach('location');
-  attach('consultant');
+  // Single listener on all tags ordered by 'order' only (no composite index needed)
+  const qAll = query(collection(db, 'tags'), orderBy('order'));
+  onSnapshot(qAll, async (snap) => {
+    const byType = new Map();
+    for (const d of snap.docs) {
+      const dat = d.data();
+      const type = dat.type || '';
+      let name = '';
+      try { name = await decryptText(dat.nameCipher, dat.nameIv); } catch {}
+      const item = { id: d.id, name, order: typeof dat.order === 'number' ? dat.order : 0, type };
+      if (!byType.has(type)) byType.set(type, []);
+      byType.get(type).push(item);
+    }
+    for (const [t, arr] of byType) arr.sort((a,b)=> a.order - b.order || a.name.localeCompare(b.name));
+    tagsByType = byType;
+    tagsReady = true;
+    fillTagFilters();
+    document.dispatchEvent(new CustomEvent('tags:updated'));
+  }, (err) => console.error('Tags listener error', err));
 }
 
 function loadSubtagsFor(parentId) {
@@ -1736,6 +1735,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   userSortEl = document.getElementById('user-sort');
   tableSection = document.getElementById('table-section');
   tableRoot = document.getElementById('table-root');
+  const hideFiltersBtn = document.getElementById('hide-filters-btn');
+  const showFiltersBtn = document.getElementById('show-filters-btn');
   const printOpenBtn = document.getElementById('print-open-btn');
   // Tag controls
   filterLocationSel = document.getElementById('filter-location');
@@ -1754,6 +1755,23 @@ window.addEventListener('DOMContentLoaded', async () => {
     mainTabCases.addEventListener('click', () => showMainTab('cases'));
     mainTabMy.addEventListener('click', () => showMainTab('my'));
   }
+  // Filters show/hide
+  const filtersKey = 'tableFiltersHidden';
+  const setFiltersHidden = (hidden) => {
+    const bar = document.getElementById('table-tags-controls');
+    if (!bar) return;
+    if (hidden) {
+      bar.style.display = 'none';
+      if (showFiltersBtn) showFiltersBtn.hidden = false;
+    } else {
+      bar.style.display = '';
+      if (showFiltersBtn) showFiltersBtn.hidden = true;
+    }
+    try { localStorage.setItem(filtersKey, hidden ? '1' : '0'); } catch {}
+  };
+  if (hideFiltersBtn) hideFiltersBtn.addEventListener('click', () => setFiltersHidden(true));
+  if (showFiltersBtn) showFiltersBtn.addEventListener('click', () => setFiltersHidden(false));
+  try { const hidden = localStorage.getItem(filtersKey) === '1'; setFiltersHidden(hidden); } catch {}
   // Print action in header
   if (printOpenBtn) {
     printOpenBtn.addEventListener('click', () => {
