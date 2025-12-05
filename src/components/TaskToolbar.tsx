@@ -58,91 +58,94 @@ export const TaskToolbar: React.FC<TaskToolbarProps> = ({
   })();
 
   return (
-    <div className="c-toolbar" role="region" aria-label="Task filters">
-      {/* Status multi-select dropdown */}
-      <div className="c-field" ref={statusRef} aria-label="Status">
-        <div className="c-select c-select--multi">
-          <button
-            type="button"
-            className="c-select-btn"
-            aria-haspopup="listbox"
-            aria-expanded={statusOpen}
-            onClick={() => setStatusOpen(o => !o)}
-          >
-            Status: {statusSummary}
-            <svg aria-hidden className="c-caret" width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><path d="M5.23 7.21a.75.75 0 011.06.02L10 11.207l3.71-3.976a.75.75 0 111.1 1.02l-4.25 4.55a.75.75 0 01-1.1 0l-4.25-4.55a.75.75 0 01.02-1.06z"/></svg>
-          </button>
-          {statusOpen && (
-            <div role="listbox" className="c-menu">
-              {statusDefs.map(s => {
-                const checked = selectedStatuses.has(s.key);
-                return (
-                  <label key={s.key} className="c-menu-item">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => onToggleStatus(s.key)}
-                    />
-                    <span>{s.label}</span>
-                  </label>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Priority select */}
-      <label className="c-field" aria-label="Priority">
-        <span className="sr-only sm:not-sr-only">Priority</span>
-        <div className="c-select">
-          <select value={priority} onChange={(e) => onPriorityChange(e.target.value as Priority)}>
-            <option value="all">All</option>
-            <option value="high">High</option>
-            <option value="medium">Medium</option>
-            <option value="low">Low</option>
-          </select>
-          <svg aria-hidden className="c-caret" width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><path d="M5.23 7.21a.75.75 0 011.06.02L10 11.207l3.71-3.976a.75.75 0 111.1 1.02l-4.25 4.55a.75.75 0 01-1.1 0l-4.25-4.55a.75.75 0 01.02-1.06z"/></svg>
-        </div>
-      </label>
-
-      {/* Sort select */}
-      <label className="c-field" aria-label="Sort">
-        <span className="sr-only sm:not-sr-only">Sort</span>
-        <div className="c-select c-select--wide">
-          <select value={sort} onChange={(e) => onSortChange(e.target.value as Sort)}>
-            <option value="none">None</option>
-            <option value="pri-desc">Priority high → low</option>
-            <option value="pri-asc">Priority low → high</option>
-          </select>
-          <svg aria-hidden className="c-caret" width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><path d="M5.23 7.21a.75.75 0 011.06.02L10 11.207l3.71-3.976a.75.75 0 111.1 1.02l-4.25 4.55a.75.75 0 01-1.1 0l-4.25-4.55a.75.75 0 01.02-1.06z"/></svg>
-        </div>
-      </label>
-
-      {/* Search */}
-      {onSearchChange && (
-        <label className="c-field c-field--grow" aria-label="Search tasks">
-          <span className="sr-only">Search</span>
-          <div className="c-search">
-            <input
-              type="search"
-              value={search}
-              onChange={(e) => onSearchChange(e.target.value)}
-              placeholder="Search…"
-              className="c-input c-input--search"
-            />
-            {!!search && (
-              <button
-                type="button"
-                aria-label="Clear search"
-                className="c-clear"
-                onClick={() => onSearchChange('')}
-              >
-                ×
-              </button>
+    <div className="c-toolbar c-toolbar--stack" role="region" aria-label="Task filters">
+      <div className="c-row">
+        {/* Status multi-select dropdown */}
+        <div className="c-field" ref={statusRef} aria-label="Status">
+          <div className="c-select c-select--multi">
+            <button
+              type="button"
+              className="c-select-btn"
+              aria-haspopup="listbox"
+              aria-expanded={statusOpen}
+              onClick={() => setStatusOpen(o => !o)}
+            >
+              Status: {statusSummary}
+              <svg aria-hidden className="c-caret" width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><path d="M5.23 7.21a.75.75 0 011.06.02L10 11.207l3.71-3.976a.75.75 0 111.1 1.02l-4.25 4.55a.75.75 0 01-1.1 0l-4.25-4.55a.75.75 0 01.02-1.06z"/></svg>
+            </button>
+            {statusOpen && (
+              <div role="listbox" className="c-menu">
+                {statusDefs.map(s => {
+                  const checked = selectedStatuses.has(s.key);
+                  return (
+                    <label key={s.key} className="c-menu-item">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => onToggleStatus(s.key)}
+                      />
+                      <span>{s.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
             )}
           </div>
+        </div>
+
+        {/* Priority select */}
+        <label className="c-field" aria-label="Priority">
+          <span className="sr-only sm:not-sr-only">Priority</span>
+          <div className="c-select">
+            <select value={priority} onChange={(e) => onPriorityChange(e.target.value as Priority)}>
+              <option value="all">All</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+            <svg aria-hidden className="c-caret" width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><path d="M5.23 7.21a.75.75 0 011.06.02L10 11.207l3.71-3.976a.75.75 0 111.1 1.02l-4.25 4.55a.75.75 0 01-1.1 0l-4.25-4.55a.75.75 0 01.02-1.06z"/></svg>
+          </div>
         </label>
+
+        {/* Sort select */}
+        <label className="c-field" aria-label="Sort">
+          <span className="sr-only sm:not-sr-only">Sort</span>
+          <div className="c-select c-select--wide">
+            <select value={sort} onChange={(e) => onSortChange(e.target.value as Sort)}>
+              <option value="none">None</option>
+              <option value="pri-desc">Priority high → low</option>
+              <option value="pri-asc">Priority low → high</option>
+            </select>
+            <svg aria-hidden className="c-caret" width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><path d="M5.23 7.21a.75.75 0 011.06.02L10 11.207l3.71-3.976a.75.75 0 111.1 1.02l-4.25 4.55a.75.75 0 01-1.1 0l-4.25-4.55a.75.75 0 01.02-1.06z"/></svg>
+          </div>
+        </label>
+      </div>
+
+      {onSearchChange && (
+        <div className="c-row">
+          <label className="c-field c-field--grow" aria-label="Search tasks">
+            <span className="sr-only">Search</span>
+            <div className="c-search">
+              <input
+                type="search"
+                value={search}
+                onChange={(e) => onSearchChange(e.target.value)}
+                placeholder="Search…"
+                className="c-input c-input--search"
+              />
+              {!!search && (
+                <button
+                  type="button"
+                  aria-label="Clear search"
+                  className="c-clear"
+                  onClick={() => onSearchChange('')}
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          </label>
+        </div>
       )}
     </div>
   );
