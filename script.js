@@ -142,6 +142,31 @@ function loadTagFilterState() {
   } catch {}
 }
 
+// Global helper to hide/show the filters bar and align the Show button
+function setTableFiltersHidden(hidden) {
+  const bar = document.getElementById('table-tags-controls');
+  const root = document.getElementById('table-section');
+  const showBtn = document.getElementById('show-filters-btn');
+  if (!bar || !root || !showBtn) return;
+  let ph = document.getElementById('filters-placeholder');
+  if (hidden) {
+    bar.style.display = 'none';
+    if (!ph) {
+      ph = document.createElement('div'); ph.id = 'filters-placeholder'; ph.className = 'filters-placeholder';
+      root.insertBefore(ph, document.getElementById('table-root'));
+    }
+    showBtn.hidden = false;
+    ph.innerHTML = '';
+    ph.appendChild(showBtn);
+    try { localStorage.setItem('tableFiltersHidden', '1'); } catch {}
+  } else {
+    bar.style.display = '';
+    if (ph) ph.remove();
+    showBtn.hidden = true;
+    try { localStorage.setItem('tableFiltersHidden', '0'); } catch {}
+  }
+}
+
 // Utility: assign a consistent color to a name for avatar badges
 function colorForName(name) {
   if (!name) return { bg: '#e5e7eb', border: '#d1d5db', color: '#374151' };
@@ -1403,7 +1428,7 @@ function setupTableFilterUI() {
   seg.appendChild(segNone); const s1=document.createElement('div'); s1.className='sep'; seg.appendChild(s1); seg.appendChild(segLoc); const s2=document.createElement('div'); s2.className='sep'; seg.appendChild(s2); seg.appendChild(segRoom); const s3=document.createElement('div'); s3.className='sep'; seg.appendChild(s3); seg.appendChild(segCons);
   const dirBtn = document.createElement('button'); dirBtn.type='button'; dirBtn.className='sort-dir'; dirBtn.textContent='↑'; dirBtn.title='Toggle sort direction'; dirBtn.addEventListener('click', ()=>{ activeTagSortDir = activeTagSortDir==='asc'?'desc':'asc'; dirBtn.textContent = activeTagSortDir==='asc'?'↑':'↓'; saveTagFilterState(); if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs); });
   const clearBtn = document.createElement('button'); clearBtn.type='button'; clearBtn.className='icon-btn small'; clearBtn.textContent='Clear'; clearBtn.addEventListener('click', ()=>{ activeTagFilters.location.clear(); activeTagFilters.consultant.clear(); activeTagFilters.room.clear(); saveTagFilterState(); updateFilterPills(); if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs); });
-  const hideBtn = document.createElement('button'); hideBtn.type='button'; hideBtn.className='icon-btn small'; hideBtn.textContent='Hide'; hideBtn.addEventListener('click', ()=>{ setFiltersHidden(true); });
+  const hideBtn = document.createElement('button'); hideBtn.type='button'; hideBtn.className='icon-btn small'; hideBtn.textContent='Hide'; hideBtn.addEventListener('click', ()=>{ setTableFiltersHidden(true); });
   right.appendChild(seg); right.appendChild(dirBtn); right.appendChild(clearBtn); right.appendChild(hideBtn);
 
   // Helper: render active chips and counts on pills
@@ -2017,29 +2042,9 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
   // Filters show/hide
   const filtersKey = 'tableFiltersHidden';
-  const setFiltersHidden = (hidden) => {
-    const bar = document.getElementById('table-tags-controls');
-    if (!bar) return;
-    const root = document.getElementById('table-section');
-    let ph = document.getElementById('filters-placeholder');
-    if (hidden) {
-      bar.style.display = 'none';
-      if (!ph) {
-        ph = document.createElement('div'); ph.id = 'filters-placeholder'; ph.className = 'filters-placeholder';
-        // Place before table content to avoid overlap
-        if (root) root.insertBefore(ph, document.getElementById('table-root'));
-      }
-      if (showFiltersBtn) { showFiltersBtn.hidden = false; ph.innerHTML = ''; ph.appendChild(showFiltersBtn); }
-    } else {
-      bar.style.display = '';
-      if (ph) { ph.remove(); }
-      if (showFiltersBtn) showFiltersBtn.hidden = true;
-    }
-    try { localStorage.setItem(filtersKey, hidden ? '1' : '0'); } catch {}
-  };
-  if (hideFiltersBtn) hideFiltersBtn.addEventListener('click', () => setFiltersHidden(true));
-  if (showFiltersBtn) showFiltersBtn.addEventListener('click', () => setFiltersHidden(false));
-  try { const hidden = localStorage.getItem(filtersKey) === '1'; setFiltersHidden(hidden); } catch {}
+  if (hideFiltersBtn) hideFiltersBtn.addEventListener('click', () => setTableFiltersHidden(true));
+  if (showFiltersBtn) showFiltersBtn.addEventListener('click', () => setTableFiltersHidden(false));
+  try { const hidden = localStorage.getItem(filtersKey) === '1'; setTableFiltersHidden(hidden); } catch {}
   // Load persisted tag filter state (URL/localStorage)
   loadTagFilterState();
   // Print action in header
