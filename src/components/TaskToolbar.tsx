@@ -93,20 +93,27 @@ export const TaskToolbar: React.FC<TaskToolbarProps> = ({
       {onSearchChange && (
         <label className="c-field c-field--grow" aria-label="Search tasks">
           <span className="sr-only">Search</span>
-          <input
-            type="search"
-            value={search}
-            onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Search…"
-            className="c-input"
-          />
+          <div className="c-search">
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => onSearchChange(e.target.value)}
+              placeholder="Search…"
+              className="c-input c-input--search"
+            />
+            {!!search && (
+              <button
+                type="button"
+                aria-label="Clear search"
+                className="c-clear"
+                onClick={() => onSearchChange('')}
+              >
+                ×
+              </button>
+            )}
+          </div>
         </label>
       )}
-
-      {/* Clear */}
-      <button type="button" onClick={onClear} className="c-btn">
-        Clear
-      </button>
     </div>
   );
 };
