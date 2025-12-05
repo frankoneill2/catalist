@@ -682,7 +682,9 @@ button:focus-visible {
   padding: 2px 0;
 }
 .cell-tasks ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.cell-tasks ul { max-height: 260px; overflow-y: auto; }
 .cell-tasks .case-task { padding: 4px 6px; border-radius: 4px; }
+#table-section .cell-tasks .case-task { align-items: flex-start; }
 .cell-tasks .status-btn { width: 16px; height: 16px; font-size: 14px; padding: 0; }
 .cell-tasks .mini-avatar { width: 16px; height: 16px; font-size: 10px; }
 .cell-tasks .composer { display: grid; grid-template-columns: 1fr; gap: 4px; margin-top: 6px; }
@@ -703,6 +705,31 @@ button:focus-visible {
 #table-section { font-size: 13px; line-height: 1.35; }
 #table-section .data-table th, #table-section .data-table td { padding: 4px 6px; }
 #table-section .cell-editable, #table-section .cell-tasks .composer input { border-radius: 4px; }
+/* Allow wrapping long task text inside the Table's tasks cell */
+#table-section .cell-tasks .case-task .task-text {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.3;
+}
+/* Make the delete button in Table tasks subtle and compact */
+#table-section .cell-tasks .icon-btn.delete-btn {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+  border: none;
+  background: transparent;
+  opacity: 0.45;
+  margin-left: 4px;
+}
+#table-section .cell-tasks .icon-btn { min-height: 0; }
+#table-section .cell-tasks .case-task:hover .icon-btn.delete-btn { opacity: 0.8; }
+#table-section .cell-tasks .case-task .icon-btn.delete-btn { visibility: hidden; }
+#table-section .cell-tasks .case-task:hover .icon-btn.delete-btn { visibility: visible; }
 #table-section .cell-editable:focus { box-shadow: 0 0 0 2px rgba(59,130,246,0.18); }
 #table-section .data-table tbody tr:nth-child(even) td { background: #fafafa; }
 #table-section .data-table th { font-size: 13px; font-weight: 600; }
