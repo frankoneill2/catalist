@@ -297,16 +297,14 @@ async function openCase(id, title, source = 'list', initialTab = 'notes') {
 // Top-level tabs between Cases and My Tasks
 function showMainTab(which) {
   const mainTabTable = document.getElementById('tab-table');
-  const mainTabCases = document.getElementById('tab-cases');
   const mainTabMy = document.getElementById('tab-my');
   const isTable = which === 'table';
-  const isCases = which === 'cases';
   const isMy = which === 'my';
-  if (mainTabTable && mainTabCases && mainTabMy) {
+  if (mainTabTable) {
     mainTabTable.classList.toggle('active', isTable);
     mainTabTable.setAttribute('aria-selected', String(isTable));
-    mainTabCases.classList.toggle('active', isCases);
-    mainTabCases.setAttribute('aria-selected', String(isCases));
+  }
+  if (mainTabMy) {
     mainTabMy.classList.toggle('active', isMy);
     mainTabMy.setAttribute('aria-selected', String(isMy));
   }
