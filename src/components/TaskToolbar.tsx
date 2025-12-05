@@ -59,7 +59,7 @@ export const TaskToolbar: React.FC<TaskToolbarProps> = ({
 
   return (
     <div className="c-toolbar c-toolbar--stack" role="region" aria-label="Task filters">
-      <div className="c-row">
+      <div className="c-row c-row--center">
         {/* Status multi-select dropdown */}
         <div className="c-field" ref={statusRef} aria-label="Status">
           <div className="c-select c-select--multi">
