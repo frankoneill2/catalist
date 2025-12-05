@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 type Status = 'open' | 'in progress' | 'complete';
 type Priority = 'all' | 'low' | 'medium' | 'high';
@@ -37,29 +37,59 @@ export const TaskToolbar: React.FC<TaskToolbarProps> = ({
   search,
   onSearchChange,
 }) => {
+  const statusRef = useRef<HTMLDivElement | null>(null);
+  const [statusOpen, setStatusOpen] = useState(false);
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (!statusRef.current) return;
+      if (!statusRef.current.contains(e.target as Node)) setStatusOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc, true);
+    return () => document.removeEventListener('mousedown', onDoc, true);
+  }, []);
+
+  const statusSummary = (() => {
+    const all = ['open', 'in progress', 'complete'] as Status[];
+    const selected = all.filter(s => selectedStatuses.has(s));
+    if (selected.length === all.length) return 'All';
+    if (selected.length === 0) return 'None';
+    return selected.map(s => s === 'open' ? 'Open' : s === 'in progress' ? 'In progress' : 'Complete').join(', ');
+  })();
+
   return (
     <div className="c-toolbar" role="region" aria-label="Task filters">
-      {/* Status segmented multi-select */}
-      <div className="c-segments" role="group" aria-label="Filter by status">
-        {statusDefs.map((s, idx) => {
-          const pressed = selectedStatuses.has(s.key);
-          return (
-            <button
-              key={s.key}
-              type="button"
-              aria-pressed={pressed}
-              onClick={() => onToggleStatus(s.key)}
-              className={[
-                'c-chip',
-                pressed ? 'c-chip--active' : 'c-chip--inactive',
-                idx !== statusDefs.length - 1 ? 'c-chip--sep' : '',
-              ].join(' ')}
-            >
-              <span className="sr-only">Status:</span>
-              {s.label}
-            </button>
-          );
-        })}
+      {/* Status multi-select dropdown */}
+      <div className="c-field" ref={statusRef} aria-label="Status">
+        <div className="c-select c-select--multi">
+          <button
+            type="button"
+            className="c-select-btn"
+            aria-haspopup="listbox"
+            aria-expanded={statusOpen}
+            onClick={() => setStatusOpen(o => !o)}
+          >
+            Status: {statusSummary}
+            <svg aria-hidden className="c-caret" width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><path d="M5.23 7.21a.75.75 0 011.06.02L10 11.207l3.71-3.976a.75.75 0 111.1 1.02l-4.25 4.55a.75.75 0 01-1.1 0l-4.25-4.55a.75.75 0 01.02-1.06z"/></svg>
+          </button>
+          {statusOpen && (
+            <div role="listbox" className="c-menu">
+              {statusDefs.map(s => {
+                const checked = selectedStatuses.has(s.key);
+                return (
+                  <label key={s.key} className="c-menu-item">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => onToggleStatus(s.key)}
+                    />
+                    <span>{s.label}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Priority select */}

@@ -474,8 +474,14 @@ button:focus-visible {
 .c-field { display: flex; align-items: center; gap: 6px; color: #374151; }
 .c-select { position: relative; }
 .c-select select { height: 36px; padding: 0 28px 0 12px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; color: #111827; appearance: none; }
+.c-select-btn { height: 36px; padding: 0 28px 0 12px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; color: #111827; cursor: pointer; }
 .c-select--wide select { min-width: 180px; }
 .c-caret { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); color: #6b7280; pointer-events: none; }
+.c-select--multi .c-caret { right: 8px; }
+.c-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 40; min-width: 220px; background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; box-shadow: var(--shadow-lg); padding: 6px; }
+.c-menu-item { display: grid; grid-template-columns: 16px 1fr; align-items: center; gap: 8px; padding: 6px 4px; border-radius: 6px; font-size: 14px; cursor: pointer; }
+.c-menu-item:hover { background: #f9fafb; }
+.c-menu-item input[type="checkbox"] { width: 14px; height: 14px; }
 .c-field--grow { flex: 1 1 220px; }
 .c-input { height: 36px; width: 100%; padding: 0 12px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; color: #111827; }
 .c-input--search { padding-right: 28px; }
