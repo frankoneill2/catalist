@@ -463,6 +463,41 @@ button:focus-visible {
 .change-user-link:hover { text-decoration: underline; color: #4b5563; }
 
 /* User detail layout tweaks */
+
+/* Clean, unified toolbar styles (used by React TaskToolbar in My Tasks and Case) */
+.c-toolbar { display: flex; align-items: center; gap: 8px; padding: 8px; border: 1px solid #e5e7eb; border-radius: 12px; background: #fff; }
+.c-segments { display: inline-flex; align-items: center; border: 1px solid #e5e7eb; border-radius: 999px; overflow: hidden; }
+.c-chip { height: 36px; padding: 0 12px; font-size: 14px; border: none; cursor: pointer; }
+.c-chip--inactive { background: #f3f6fb; color: #374151; }
+.c-chip--active { background: #2563eb; color: #fff; }
+.c-chip--sep { border-right: 1px solid #e5e7eb; }
+.c-field { display: flex; align-items: center; gap: 6px; color: #374151; }
+.c-select { position: relative; }
+.c-select select { height: 36px; padding: 0 28px 0 12px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; color: #111827; appearance: none; }
+.c-select--wide select { min-width: 180px; }
+.c-caret { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); color: #6b7280; pointer-events: none; }
+.c-field--grow { flex: 1 1 220px; }
+.c-input { height: 36px; width: 100%; padding: 0 12px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; color: #111827; }
+.c-btn { height: 36px; padding: 0 12px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; color: #111827; }
+.c-btn:hover, .c-select select:hover, .c-input:hover { background: #f9fafb; }
+.c-btn:focus-visible, .c-select select:focus-visible, .c-input:focus-visible, .c-chip:focus-visible { outline: none; box-shadow: var(--ring); }
+
+/* Simplify My Tasks rows: align left [status][title], push right-side controls */
+#user-task-list .case-task { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; border: 1px solid #eee; background: #fff; }
+#user-task-list .case-task:hover { background: #f9fafb; }
+#user-task-list .case-task .mini-avatar { margin-left: auto; }
+#user-task-list .case-task .comment-toggle { margin-left: 8px; }
+#user-task-list .case-task .badge.comment-count { margin-left: 2px; }
+/* Tone down status color blocks to reduce noise */
+#user-task-list .case-task.s-open, 
+#user-task-list .case-task.s-inprogress, 
+#user-task-list .case-task.s-complete { border-left: 0; background: #fff; }
+#user-task-list .case-task.s-complete .task-text { color: #6b7280; text-decoration: line-through; }
+
+/* Remove decorative bracket effect from groups (no extra decorations) */
+#user-task-list > .user-case-card ul { margin: 0; padding-left: 0; }
+.user-case-card { border: 1px solid #e5e7eb; }
+.user-case-header { padding-bottom: 4px; }
 .user-case-card { margin-bottom: 0.75rem; }
 .user-case-header { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.25rem; }
 .user-case-header h3 { margin: 0; }
