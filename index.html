@@ -42,8 +42,7 @@
   </header>
   <main class="app">
     <div id="main-tabs" class="tabs">
-      <button id="tab-table" class="tab" role="tab" aria-selected="false" aria-controls="table-section">Table</button>
-      <button id="tab-cases" class="tab active" role="tab" aria-selected="true" aria-controls="case-list-section">Cases</button>
+      <button id="tab-table" class="tab active" role="tab" aria-selected="true" aria-controls="table-section">Table</button>
       <button id="tab-my" class="tab" role="tab" aria-selected="false" aria-controls="user-detail">My Tasks</button>
     </div>
 
@@ -76,22 +75,7 @@
       <button id="show-filters-btn" class="show-filters-btn" type="button" hidden>Show Filters</button>
       <div id="table-root" class="table-root" aria-label="Cases table view"></div>
     </section>
-    <section id="case-list-section" class="card">
-      <div class="controls-row">
-        <div class="controls-group">
-          <button id="toggle-all-comments" class="case-tasks-toggle" type="button" aria-label="Hide all comments">Hide comments</button>
-          <button id="toggle-all-tasks" class="case-tasks-toggle" type="button" aria-label="Collapse all case tasks">Collapse all</button>
-        </div>
-      </div>
-      <ul id="case-list"></ul>
-      <form id="case-form" class="stack">
-        <input id="case-input" placeholder="New case title" aria-label="New case title">
-        <select id="case-location" aria-label="Location">
-          <option value="">No location</option>
-        </select>
-        <button type="submit" class="primary" aria-label="Add case">➕ Add Case</button>
-      </form>
-    </section>
+    
 
     <section id="case-detail" class="card" hidden>
       <button id="back-btn" class="back-btn" aria-label="Back to cases">← Back</button>

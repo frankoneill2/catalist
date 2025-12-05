@@ -42,7 +42,8 @@ let brandHome;
 let currentCaseId = null;
 let collapseAll = false; // global state for compact tasks on case list
 let hideAllComments = false; // global show/hide comments on case list
-let backTarget = 'list'; // 'list' or 'user'
+let backTarget = 'list'; // 'table' | 'list' | 'user'
+let tableScrollY = 0; // restore scroll after closing case
 let currentUserPageName = null;
 let unsubTasks = null;
 let unsubNotes = null;
@@ -169,6 +170,50 @@ function setTableFiltersHidden(hidden) {
   }
 }
 
+// --- New Case modal (title + tags) and creation
+async function openNewCaseModal() {
+  const overlay = document.createElement('div'); overlay.className='modal-overlay';
+  const modal = document.createElement('div'); modal.className='modal'; overlay.appendChild(modal);
+  const title = document.createElement('h3'); title.textContent='New Case'; modal.appendChild(title);
+  const form = document.createElement('div'); form.className='stack'; modal.appendChild(form);
+  const nameWrap = document.createElement('label'); nameWrap.textContent='Title'; const nameInput = document.createElement('input'); nameInput.placeholder='Enter case title'; nameInput.setAttribute('aria-label','Case title'); nameWrap.appendChild(nameInput); form.appendChild(nameWrap);
+  // Tags: Location, Room, Consultant
+  const locWrap = document.createElement('label'); locWrap.textContent='Location'; const locSel = document.createElement('select'); locWrap.appendChild(locSel); form.appendChild(locWrap);
+  const roomWrap = document.createElement('label'); roomWrap.textContent='Room'; const roomSel = document.createElement('select'); roomWrap.appendChild(roomSel); form.appendChild(roomWrap);
+  const consWrap = document.createElement('label'); consWrap.textContent='Consultant'; const consSel = document.createElement('select'); consWrap.appendChild(consSel); form.appendChild(consWrap);
+  // Actions
+  const actions = document.createElement('div'); actions.className='actions'; const cancel=document.createElement('button'); cancel.className='btn'; cancel.textContent='Cancel'; const create=document.createElement('button'); create.className='btn primary'; create.textContent='Create'; actions.appendChild(cancel); actions.appendChild(create); modal.appendChild(actions);
+  document.body.appendChild(overlay);
+
+  const addOpts = (sel, items, includeUnassigned=true) => { sel.innerHTML=''; if (includeUnassigned) { const o=document.createElement('option'); o.value=''; o.textContent='Unassigned'; sel.appendChild(o);} for (const t of items) { const o=document.createElement('option'); o.value=t.id; o.textContent=t.name; sel.appendChild(o);} };
+  const refreshRooms = async () => { const loc=locSel.value||''; if (loc) { const rooms = await loadSubtagsFor(loc); addOpts(roomSel, rooms, true); } else { addOpts(roomSel, [], true); } };
+  // Prefill from active filters if single selections
+  addOpts(locSel, tagsByType.get('location')||[]);
+  addOpts(consSel, tagsByType.get('consultant')||[]);
+  const locCandidates = Array.from(activeTagFilters.location||[]); if (locCandidates.length===1) locSel.value = locCandidates[0];
+  const consCandidates = Array.from(activeTagFilters.consultant||[]); if (consCandidates.length===1) consSel.value = consCandidates[0];
+  await refreshRooms(); const roomCandidates = Array.from(activeTagFilters.room||[]); if (roomCandidates.length===1) roomSel.value = roomCandidates[0];
+  locSel.addEventListener('change', async ()=>{ await refreshRooms(); roomSel.value=''; });
+
+  const close = () => overlay.remove();
+  cancel.addEventListener('click', close);
+  create.addEventListener('click', async () => {
+    const t = (nameInput.value||'').trim(); if (!t) { nameInput.focus(); return; }
+    try {
+      const e = await encryptText(t);
+      const ct = { location: locSel.value||null, consultant: consSel.value||null };
+      const loc = locSel.value||null; const room = roomSel.value||null; if (loc && room) ct.room = room; else ct.room = null;
+      const ref = await addDoc(collection(db, 'cases'), { titleCipher: e.cipher, titleIv: e.iv, createdAt: serverTimestamp(), caseTags: ct });
+      close();
+      tableScrollY = window.scrollY;
+      openCase(ref.id, t, 'table', 'notes');
+    } catch (err) {
+      console.error('Failed to create case', err); showToast('Failed to create case');
+    }
+  });
+  nameInput.focus();
+}
+
 // Utility: assign a consistent color to a name for avatar badges
 function colorForName(name) {
   if (!name) return { bg: '#e5e7eb', border: '#d1d5db', color: '#374151' };
@@ -216,20 +261,21 @@ async function decryptText(cipher, iv) {
 
 // --- UI helpers
 function showCaseList() {
+  // Legacy: route to table view now
+  if (tableSection) tableSection.hidden = false;
   caseDetailEl.hidden = true;
   userDetailEl.hidden = true;
-  if (caseListSection) caseListSection.style.display = 'block';
   currentCaseId = null;
   if (unsubTasks) { unsubTasks(); unsubTasks = null; }
   if (unsubNotes) { unsubNotes(); unsubNotes = null; }
-  // Reset in-session compact orders when arriving fresh to case list
   compactOrderByCase = new Map();
 }
 
 async function openCase(id, title, source = 'list', initialTab = 'notes') {
   currentCaseId = id;
-  backTarget = source === 'user' ? 'user' : 'list';
+  backTarget = source === 'user' ? 'user' : (source === 'table' ? 'table' : 'list');
   caseTitleEl.textContent = title;
+  if (tableSection) tableSection.hidden = true;
   if (caseListSection) caseListSection.style.display = 'none';
   userDetailEl.hidden = true;
   caseDetailEl.hidden = false;
@@ -242,6 +288,10 @@ async function openCase(id, title, source = 'list', initialTab = 'notes') {
   }
   // Open chosen tab
   showTab(initialTab);
+  // Update URL for deep link
+  try {
+    const url = new URL(window.location.href); url.searchParams.set('case', id); window.history.pushState({ caseId: id }, '', url.toString());
+  } catch {}
 }
 
 
@@ -270,15 +320,7 @@ function showMainTab(which) {
   } else {
     if (tableSection) tableSection.hidden = true;
     if (unsubTable) { unsubTable(); unsubTable = null; }
-    if (isCases) {
-      userDetailEl.hidden = true;
-      if (currentCaseId) {
-        caseDetailEl.hidden = false;
-        if (caseListSection) caseListSection.style.display = 'none';
-      } else {
-        showCaseList();
-      }
-    } else if (isMy) {
+    if (isMy) {
       openUser(username);
     }
   }
@@ -1306,7 +1348,7 @@ function startRealtimeTable() {
       const nameRow = document.createElement('div'); nameRow.className = 'name-row';
       const btn = document.createElement('button');
       btn.className = 'patient-link'; btn.textContent = title;
-      btn.addEventListener('click', () => { showMainTab('cases'); openCase(d.id, title, 'list', 'notes'); });
+      btn.addEventListener('click', () => { tableScrollY = window.scrollY; openCase(d.id, title, 'table', 'notes'); });
       nameRow.appendChild(btn);
       const editBtn = document.createElement('button'); editBtn.type='button'; editBtn.className='edit-tags-btn'; editBtn.textContent='Tags';
       editBtn.addEventListener('click', (e) => { e.stopPropagation(); openTagPanelForCase(d.id, tdName); });
@@ -1430,8 +1472,9 @@ function setupTableFilterUI() {
   seg.appendChild(segNone); const s1=document.createElement('div'); s1.className='sep'; seg.appendChild(s1); seg.appendChild(segLoc); const s2=document.createElement('div'); s2.className='sep'; seg.appendChild(s2); seg.appendChild(segRoom); const s3=document.createElement('div'); s3.className='sep'; seg.appendChild(s3); seg.appendChild(segCons);
   const dirBtn = document.createElement('button'); dirBtn.type='button'; dirBtn.className='sort-dir'; dirBtn.textContent='↑'; dirBtn.title='Toggle sort direction'; dirBtn.addEventListener('click', ()=>{ activeTagSortDir = activeTagSortDir==='asc'?'desc':'asc'; dirBtn.textContent = activeTagSortDir==='asc'?'↑':'↓'; saveTagFilterState(); if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs); });
   const clearBtn = document.createElement('button'); clearBtn.type='button'; clearBtn.className='icon-btn small'; clearBtn.textContent='Clear'; clearBtn.addEventListener('click', ()=>{ activeTagFilters.location.clear(); activeTagFilters.consultant.clear(); activeTagFilters.room.clear(); saveTagFilterState(); updateFilterPills(); if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs); });
+  const newCaseBtn = document.createElement('button'); newCaseBtn.type='button'; newCaseBtn.className='btn primary'; newCaseBtn.textContent='➕ New Case'; newCaseBtn.addEventListener('click', openNewCaseModal);
   const hideBtn = document.createElement('button'); hideBtn.type='button'; hideBtn.className='icon-btn small'; hideBtn.textContent='Hide'; hideBtn.addEventListener('click', ()=>{ setTableFiltersHidden(true); });
-  right.appendChild(seg); right.appendChild(dirBtn); right.appendChild(clearBtn); right.appendChild(hideBtn);
+  right.appendChild(seg); right.appendChild(dirBtn); right.appendChild(clearBtn); right.appendChild(newCaseBtn); right.appendChild(hideBtn);
 
   // Helper: render active chips and counts on pills
   function renderActiveChips() {
@@ -1573,7 +1616,11 @@ function setupTableFilterUI() {
     const updateSeg = () => { saveTagFilterState(); };
     sortWrap.appendChild(mk('None','none')); const sA=document.createElement('div'); sA.className='sep'; sortWrap.appendChild(sA); sortWrap.appendChild(mk('Location','location')); const sB=document.createElement('div'); sB.className='sep'; sortWrap.appendChild(sB); sortWrap.appendChild(mk('Room','room')); const sC=document.createElement('div'); sC.className='sep'; sortWrap.appendChild(sC); sortWrap.appendChild(mk('Consultant','consultant'));
     sSort.appendChild(sortWrap);
-    const actions = document.createElement('div'); actions.className='actions'; const clear=document.createElement('button'); clear.className='btn'; clear.textContent='Clear'; clear.addEventListener('click',()=>{ activeTagFilters.location.clear(); activeTagFilters.room.clear(); activeTagFilters.consultant.clear(); }); const apply=document.createElement('button'); apply.className='btn primary'; apply.textContent='Apply'; apply.addEventListener('click',()=>{ saveTagFilterState(); updateFilterPills(); if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs); overlay.remove(); }); actions.appendChild(clear); actions.appendChild(apply); sheet.appendChild(actions);
+    const actions = document.createElement('div'); actions.className='actions';
+    const clear=document.createElement('button'); clear.className='btn'; clear.textContent='Clear'; clear.addEventListener('click',()=>{ activeTagFilters.location.clear(); activeTagFilters.room.clear(); activeTagFilters.consultant.clear(); });
+    const apply=document.createElement('button'); apply.className='btn primary'; apply.textContent='Apply'; apply.addEventListener('click',()=>{ saveTagFilterState(); updateFilterPills(); if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs); overlay.remove(); });
+    const create=document.createElement('button'); create.className='btn primary'; create.textContent='New Case'; create.addEventListener('click',()=>{ overlay.remove(); openNewCaseModal(); });
+    actions.appendChild(clear); actions.appendChild(apply); actions.appendChild(create); sheet.appendChild(actions);
     overlay.addEventListener('click',(e)=>{ if (e.target===overlay) overlay.remove(); });
     document.body.appendChild(overlay);
   }
@@ -2084,7 +2131,15 @@ window.addEventListener('DOMContentLoaded', async () => {
       if (caseListSection) caseListSection.style.display = 'none';
       backTarget = 'list';
     } else {
-      showCaseList();
+      // Return to table
+      if (unsubTasks) { unsubTasks(); unsubTasks = null; }
+      if (unsubNotes) { unsubNotes(); unsubNotes = null; }
+      if (unsubCaseDoc) { unsubCaseDoc(); unsubCaseDoc = null; }
+      currentCaseId = null;
+      caseDetailEl.hidden = true;
+      if (tableSection) tableSection.hidden = false;
+      // Restore scroll and clear URL param
+      try { window.scrollTo(0, tableScrollY || 0); const url = new URL(window.location.href); url.searchParams.delete('case'); window.history.pushState({}, '', url.toString()); } catch {}
     }
   });
   userBackBtn.addEventListener('click', () => {
@@ -2104,7 +2159,10 @@ window.addEventListener('DOMContentLoaded', async () => {
   });
   if (brandHome) {
     brandHome.addEventListener('click', () => {
-      showCaseList();
+      // Go to table
+      if (tableSection) tableSection.hidden = false;
+      caseDetailEl.hidden = true;
+      userDetailEl.hidden = true;
     });
   
   // React toolbar events -> filter/sort case tasks
@@ -2194,11 +2252,35 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Then pick a user from dropdown modal fed by live users list
   username = await showUserSelectModal();
   if (!username) return;
-  startRealtimeCases();
+  // Removed: startRealtimeCases(); now table is the primary index
   // Start settings (users + locations)
   startRealtimeUsers();
   // Default tab
-  showMainTab('cases');
+  showMainTab('table');
+  // URL deep link: open case if ?case=
+  try {
+    const url = new URL(window.location.href);
+    const caseId = url.searchParams.get('case');
+    if (caseId) {
+      // Title is unknown without decrypt; open with placeholder
+      openCase(caseId, 'Case', 'table', 'notes');
+    }
+  } catch {}
+  // Handle browser back/forward between table and case
+  window.addEventListener('popstate', () => {
+    try {
+      const url = new URL(window.location.href);
+      const cid = url.searchParams.get('case');
+      if (cid) {
+        // If already on this case, ignore; else open
+        if (currentCaseId !== cid) openCase(cid, 'Case', 'table', 'notes');
+      } else {
+        // Show table
+        caseDetailEl.hidden = true;
+        if (tableSection) tableSection.hidden = false;
+      }
+    } catch {}
+  });
 });
 
 // Toast utility
