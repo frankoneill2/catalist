@@ -1945,6 +1945,7 @@ function buildTaskListItem(item, opts = {}) {
   return li;
 }
 function bindCaseForm() {
+  if (!caseForm) return;
   caseForm.addEventListener('submit', async e => {
     e.preventDefault();
     const title = caseInput.value.trim();
