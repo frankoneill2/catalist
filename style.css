@@ -663,13 +663,26 @@ button:focus-visible {
 .filter-chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 999px; border: 1px solid #e5e7eb; background: #fff; font-size: 12px; }
 .filter-chip .x { cursor: pointer; color: #6b7280; }
 
-.filter-popover { position: absolute; z-index: 50; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: var(--shadow-lg); width: 260px; padding: 6px; }
+.filter-popover { position: absolute; z-index: 50; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: var(--shadow-lg); width: min(320px, 92vw); padding: 6px; }
 .filter-popover .search { width: 100%; height: 28px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 2px 8px; font-size: 12px; margin-bottom: 6px; }
 .filter-popover .list { max-height: 260px; overflow: auto; display: grid; gap: 2px; }
-.filter-popover .opt { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
+.filter-popover .opt { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
 .filter-popover .opt:hover { background: #f9fafb; }
-.filter-popover .opt .label { display: inline-flex; align-items: center; gap: 6px; }
-.filter-popover .opt .opt-count { color: #6b7280; font-variant-numeric: tabular-nums; }
+.filter-popover .opt .label { display: inline-flex; align-items: center; gap: 8px; margin: 0; flex: 1 1 auto; min-width: 0; }
+.filter-popover .opt .label span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.filter-popover .opt .opt-count { color: #6b7280; font-variant-numeric: tabular-nums; min-width: 2ch; text-align: right; }
+
+/* Reset generic input styles for checkboxes inside popovers/sheets */
+.filter-popover input[type="checkbox"],
+.sheet input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid #9ca3af;
+  border-radius: 3px;
+  background: #fff;
+  box-shadow: none;
+}
 
 /* Segmented sort */
 .segmented { display: inline-flex; border: 1px solid #e5e7eb; border-radius: 999px; overflow: hidden; }
