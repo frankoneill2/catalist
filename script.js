@@ -2196,7 +2196,6 @@ window.addEventListener('DOMContentLoaded', async () => {
   bindTagControls();
   // Build modern table filter UI
   setupTableFilterUI();
-  document.addEventListener('filters:updated', () => updateFilterPills());
   // After controls bind, reflect persisted state in native selects for initial render
   if (filterLocationSel) {
     Array.from(filterLocationSel.options).forEach(o => { o.selected = activeTagFilters.location.has(o.value); });
