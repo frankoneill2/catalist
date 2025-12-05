@@ -78,6 +78,8 @@ let userFilterEl; // legacy single-select (no longer used)
 let currentUserStatusSet = new Set(['open', 'in progress', 'complete']);
 let currentUserPriorityFilter = 'all';
 let currentUserSort = 'none';
+// Cache user tasks per username to reuse between tab switches
+let userTasksCacheByName = new Map(); // name -> { perCase: Map, titles: Map }
 let currentUserSearch = '';
 let userStatusEls = [];
 let userPriorityFilterEl, userSortEl;
@@ -2771,6 +2773,16 @@ function openUser(name) {
     sort: currentUserSort,
     search: currentUserSearch,
   }}));
+  // If we have cached data for this user, render it immediately for snappy UX
+  const cached = userTasksCacheByName.get(name);
+  if (cached && cached.perCase && cached.titles) {
+    userPerCase = new Map(cached.perCase);
+    userCaseTitles = new Map(cached.titles);
+    renderUserTasks();
+  } else {
+    // Show a lightweight loading indicator while first load happens
+    if (userTaskListEl) { userTaskListEl.innerHTML = '<li style="list-style:none;color:var(--muted);padding:8px 0;">Loading…</li>'; }
+  }
   startRealtimeUserTasks(name);
 }
 
@@ -2784,34 +2796,79 @@ function saveUserFilterState() {
 }
 
 async function startRealtimeUserTasks(name) {
-  // Clear any previous data and build a fresh snapshot for filtering
-  userPerCase = new Map();
-  userCaseTitles = new Map();
-  userTaskListEl.innerHTML = '';
-
-  const casesSnap = await getDocs(collection(db, 'cases'));
-  for (const c of casesSnap.docs) {
-    const caseId = c.id;
-    try {
-      const cd = c.data();
-      const title = await decryptText(cd.titleCipher, cd.titleIv);
-      userCaseTitles.set(caseId, title);
-    } catch { userCaseTitles.set(caseId, '(case)'); }
-
-    const tasksSnap = await getDocs(query(collection(db, 'cases', caseId, 'tasks'), where('assignee', '==', name)));
-    const items = [];
-    for (const d of tasksSnap.docs) {
-      const dat = d.data();
-      try {
-        const text = await decryptText(dat.textCipher, dat.textIv);
-        const status = await decryptText(dat.statusCipher, dat.statusIv);
-        items.push({ taskId: d.id, text, status, assignee: dat.assignee || null, priority: dat.priority || null, caseId });
-      } catch (err) { console.error('Skipping task (decrypt) in user view', err); }
-    }
-    userPerCase.set(caseId, items);
+  // Clean up any prior listeners
+  if (Array.isArray(unsubUserTasks)) {
+    for (const u of unsubUserTasks) { try { u(); } catch {} }
+    unsubUserTasks = [];
   }
+  // Prepare current maps; keep existing titles (cache) where possible
+  if (!userCaseTitles) userCaseTitles = new Map();
+  if (!userPerCase) userPerCase = new Map();
 
-  renderUserTasks();
+  const q = query(collectionGroup(db, 'tasks'), where('assignee', '==', name));
+  const unsub = onSnapshot(q, async (snap) => {
+    try {
+      // Build items list with parallel decryption
+      const docs = snap.docs;
+      const perCase = new Map();
+      const decryptPromises = [];
+      const rawItems = [];
+      const neededCaseIds = new Set();
+
+      for (const d of docs) {
+        const dat = d.data();
+        // Extract caseId from the task path: /cases/{caseId}/tasks/{taskId}
+        const caseRef = d.ref.parent && d.ref.parent.parent;
+        const caseId = caseRef ? caseRef.id : null;
+        if (!caseId) continue;
+        neededCaseIds.add(caseId);
+        const item = { taskId: d.id, caseId, assignee: dat.assignee || null, priority: dat.priority || null, text: null, status: null };
+        rawItems.push(item);
+        decryptPromises.push(
+          Promise.all([
+            decryptText(dat.textCipher, dat.textIv),
+            decryptText(dat.statusCipher, dat.statusIv),
+          ]).then(([text, status]) => { item.text = text; item.status = status; }).catch((err) => { console.error('Decrypt task failed', err); })
+        );
+      }
+
+      await Promise.all(decryptPromises);
+
+      // Group by case
+      for (const it of rawItems) {
+        if (!it || !it.caseId || !it.text) continue;
+        if (!perCase.has(it.caseId)) perCase.set(it.caseId, []);
+        perCase.get(it.caseId).push(it);
+      }
+
+      // Ensure we have titles for the cases we actually need; reuse cache for known ones
+      const titleFetches = [];
+      for (const cid of neededCaseIds) {
+        if (!userCaseTitles.has(cid)) {
+          titleFetches.push(
+            getDoc(doc(db, 'cases', cid)).then(async (cd) => {
+              if (cd.exists()) {
+                const cdat = cd.data();
+                try { const title = await decryptText(cdat.titleCipher, cdat.titleIv); userCaseTitles.set(cid, title); }
+                catch { userCaseTitles.set(cid, '(case)'); }
+              } else {
+                userCaseTitles.set(cid, '(case)');
+              }
+            }).catch(() => { userCaseTitles.set(cid, '(case)'); })
+          );
+        }
+      }
+      await Promise.all(titleFetches);
+
+      // Update state and cache, then render
+      userPerCase = perCase;
+      userTasksCacheByName.set(name, { perCase: new Map(perCase), titles: new Map(userCaseTitles) });
+      renderUserTasks();
+    } catch (err) {
+      console.error('Failed to build user tasks view', err);
+    }
+  });
+  unsubUserTasks.push(unsub);
 }
 
 function renderUserTasks() {
