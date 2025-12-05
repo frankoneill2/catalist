@@ -1352,6 +1352,28 @@ function startRealtimeTable() {
       const editBtn = document.createElement('button'); editBtn.type='button'; editBtn.className='edit-tags-btn'; editBtn.textContent='Tags';
       editBtn.addEventListener('click', (e) => { e.stopPropagation(); openTagPanelForCase(d.id, tdName); });
       nameRow.appendChild(editBtn);
+      // Delete case button in table row
+      const delBtn = document.createElement('button'); delBtn.type='button'; delBtn.className='icon-btn delete-btn'; delBtn.textContent='🗑'; delBtn.title='Delete case';
+      delBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!confirm('Delete this case and all its items?')) return;
+        try {
+          await deleteCaseDeep(d.id);
+          if (currentCaseId === d.id) {
+            if (unsubTasks) { try { unsubTasks(); } catch {} unsubTasks = null; }
+            if (unsubNotes) { try { unsubNotes(); } catch {} unsubNotes = null; }
+            if (unsubCaseDoc) { try { unsubCaseDoc(); } catch {} unsubCaseDoc = null; }
+            currentCaseId = null;
+            caseDetailEl.hidden = true;
+            if (tableSection) tableSection.hidden = false;
+          }
+          showToast('Case deleted');
+        } catch (err) {
+          console.error('Failed to delete case', err);
+          showToast('Failed to delete case');
+        }
+      });
+      nameRow.appendChild(delBtn);
       nameWrap.appendChild(nameRow);
       // Render tag chips (location/room/consultant)
       const chips = document.createElement('div'); chips.className = 'tag-chips';
@@ -2074,6 +2096,29 @@ window.addEventListener('DOMContentLoaded', async () => {
   userTaskListEl = document.getElementById('user-task-list');
   userBackBtn = document.getElementById('user-back-btn');
   brandHome = document.getElementById('brand-home');
+  // Add a Delete Case button next to the case title if not present
+  if (caseTitleEl && !document.getElementById('case-delete-btn')) {
+    const del = document.createElement('button');
+    del.id = 'case-delete-btn';
+    del.className = 'icon-btn delete-btn';
+    del.textContent = 'Delete';
+    del.style.marginLeft = '8px';
+    del.addEventListener('click', async () => {
+      if (!currentCaseId) return;
+      if (!confirm('Delete this case and all its items?')) return;
+      try {
+        await deleteCaseDeep(currentCaseId);
+        currentCaseId = null;
+        caseDetailEl.hidden = true;
+        if (tableSection) tableSection.hidden = false;
+        showToast('Case deleted');
+      } catch (err) {
+        console.error('Failed to delete case', err);
+        showToast('Failed to delete case');
+      }
+    });
+    caseTitleEl.insertAdjacentElement('afterend', del);
+  }
   userFilterEl = document.getElementById('user-filter');
   userStatusEls = Array.from(document.querySelectorAll('.user-status'));
   userPriorityFilterEl = document.getElementById('user-priority-filter');
