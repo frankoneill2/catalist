@@ -646,6 +646,7 @@ button:focus-visible {
 /* Table view */
 .table-root { overflow-x: auto; }
 .data-table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 720px; }
+.data-table { table-layout: fixed; }
 .data-table th, .data-table td { border: 1px solid #e5e7eb; padding: 8px; background: #fff; }
 .data-table th { background: #f9fafb; text-align: left; font-weight: 600; }
 .data-table td .cell-edit { width: 100%; min-width: 140px; border: 1px solid transparent; border-radius: 8px; padding: 8px 10px; }
@@ -704,6 +705,20 @@ button:focus-visible {
 /* Compact professional look only in table section */
 #table-section { font-size: 13px; line-height: 1.35; }
 #table-section .data-table th, #table-section .data-table td { padding: 4px 6px; }
+#table-section .data-table th:nth-child(1),
+#table-section .data-table td:nth-child(1) { width: clamp(220px, 30%, 360px); }
+#table-section .data-table th:nth-child(2),
+#table-section .data-table td:nth-child(2),
+#table-section .data-table th:nth-child(3),
+#table-section .data-table td:nth-child(3),
+#table-section .data-table th:nth-child(4),
+#table-section .data-table td:nth-child(4),
+#table-section .data-table th:nth-child(5),
+#table-section .data-table td:nth-child(5),
+#table-section .data-table th:nth-child(6),
+#table-section .data-table td:nth-child(6) { width: 120px; }
+#table-section .data-table th:nth-child(7),
+#table-section .data-table td:nth-child(7) { width: clamp(260px, 40%, 520px); }
 #table-section .cell-editable, #table-section .cell-tasks .composer input { border-radius: 4px; }
 /* Allow wrapping long task text inside the Table's tasks cell */
 #table-section .cell-tasks .case-task .task-text {
