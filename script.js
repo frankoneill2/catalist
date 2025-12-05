@@ -1362,19 +1362,26 @@ function startRealtimeTable() {
         const idx = list.findIndex(t => t.id === id);
         if (idx === -1) return;
         const tag = list[idx];
-        const chip = document.createElement('span'); chip.className='tag-chip'; chip.setAttribute('role','button'); chip.setAttribute('tabindex','0'); chip.title = `Filter by ${label}`;
+        const chip = document.createElement('span'); chip.className='tag-chip'; chip.setAttribute('role','button'); chip.setAttribute('tabindex','0');
         const o = document.createElement('span'); o.className='tag-order'; o.textContent = String(idx+1)+'.'; chip.appendChild(o);
         const t = document.createElement('span'); t.textContent = tag.name; chip.appendChild(t);
-        const toggle = () => {
-          const set = activeTagFilters[type];
-          if (set.has(id)) set.delete(id); else set.add(id);
-          saveTagFilterState();
-          if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs);
-          // Also update pills if present
-          const evt = new CustomEvent('filters:updated'); document.dispatchEvent(evt);
-        };
-        chip.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
-        chip.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+        if (type === 'location') {
+          chip.title = 'Edit tags';
+          const openEditor = () => { openTagPanelForCase(d.id, tdName); };
+          chip.addEventListener('click', (e) => { e.stopPropagation(); openEditor(); });
+          chip.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEditor(); } });
+        } else {
+          chip.title = `Filter by ${label}`;
+          const toggle = () => {
+            const set = activeTagFilters[type];
+            if (set.has(id)) set.delete(id); else set.add(id);
+            saveTagFilterState();
+            if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs);
+            const evt = new CustomEvent('filters:updated'); document.dispatchEvent(evt);
+          };
+          chip.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
+          chip.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+        }
         chips.appendChild(chip);
       };
       mkChip('Location', 'location', caseTags.location || null);
