@@ -1663,9 +1663,26 @@ function setupTableFilterUI() {
 function attachTasksListRealtime(caseId, ul, opts = {}) {
   const q = query(collection(db, 'cases', caseId, 'tasks'), orderBy('createdAt', 'desc'));
   let taskOrder = null;
-  const unsub = onSnapshot(q, async (snap) => {
+  let taskRebuildPending = false;
+  let pendingItems = null;
+
+  const renderItems = (items) => {
     if (!ul) return;
     ul.innerHTML = '';
+    for (const it of items) ul.appendChild(buildCompactTaskRow(caseId, it, { ...opts, _onEditStart, _onEditEnd }));
+  };
+
+  const _onEditStart = () => { ul.dataset.editing = '1'; };
+  const _onEditEnd = () => {
+    delete ul.dataset.editing;
+    if (taskRebuildPending && pendingItems) {
+      const items = pendingItems; pendingItems = null; taskRebuildPending = false;
+      renderItems(items);
+    }
+  };
+
+  const unsub = onSnapshot(q, async (snap) => {
+    if (!ul) return;
     const items = [];
     for (const d of snap.docs) {
       const dat = d.data();
@@ -1689,7 +1706,12 @@ function attachTasksListRealtime(caseId, ul, opts = {}) {
     }
     const idx = new Map(taskOrder.map((id,i)=>[id,i]));
     items.sort((a,b) => (idx.get(a.id) ?? 999999) - (idx.get(b.id) ?? 999999));
-    for (const it of items) ul.appendChild(buildCompactTaskRow(caseId, it, opts));
+
+    // If an edit is in progress, defer the rebuild
+    if (ul.dataset.editing === '1') {
+      pendingItems = items; taskRebuildPending = true; return;
+    }
+    renderItems(items);
   }, (err) => console.error('Tasks cell listener error', err));
   return () => { try { unsub(); } catch {} };
 }
@@ -1710,6 +1732,39 @@ function buildCompactTaskRow(caseId, it, opts = {}) {
     try { const { cipher, iv } = await encryptText(next); await updateDoc(doc(db,'cases',caseId,'tasks',it.id),{ statusCipher:cipher, statusIv:iv }); it.status=next; statusBtn.textContent=icon(next); statusBtn.setAttribute('aria-label',`Task status: ${next}`); li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')); } catch(err){ console.error('Failed to update status',err); showToast('Failed to update status'); }
   });
   const text = document.createElement('span'); text.className='task-text'; text.textContent = it.text;
+  // Inline edit behavior: click to turn into a contenteditable field
+  text.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (typeof opts._onEditStart === 'function') opts._onEditStart();
+    const ed = document.createElement('div');
+    ed.className = 'cell-editable';
+    ed.setAttribute('contenteditable', 'true');
+    ed.style.minWidth = '120px';
+    ed.textContent = it.text;
+    let last = it.text;
+    const saveNow = async () => {
+      const v = (ed.innerText || '').replace(/\r/g, '');
+      if (v === last) { cancel(); return; }
+      try {
+        const { cipher: textCipher, iv: textIv } = await encryptText(v);
+        await updateDoc(doc(db, 'cases', caseId, 'tasks', it.id), { textCipher, textIv });
+        last = v; it.text = v; text.textContent = v;
+        cleanup();
+      } catch (err) { console.error('Failed to update task text', err); showToast('Failed to update task'); cleanup(); }
+    };
+    const cancel = () => { cleanup(); };
+    const cleanup = () => {
+      try { ed.remove(); } catch {}
+      text.style.display = '';
+      if (typeof opts._onEditEnd === 'function') opts._onEditEnd();
+    };
+    ed.addEventListener('paste', (ev) => { ev.preventDefault(); const t=(ev.clipboardData||window.clipboardData).getData('text'); if (document.queryCommandSupported && document.queryCommandSupported('insertText')) { document.execCommand('insertText', false, t); } else { const sel=window.getSelection(); if (sel && sel.rangeCount) { sel.deleteFromDocument(); sel.getRangeAt(0).insertNode(document.createTextNode(t)); } } });
+    ed.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && !(ev.ctrlKey||ev.metaKey)) { ev.preventDefault(); saveNow(); } else if (ev.key === 'Escape') { ev.preventDefault(); cancel(); } });
+    ed.addEventListener('blur', () => { saveNow(); });
+    text.insertAdjacentElement('afterend', ed);
+    text.style.display = 'none';
+    ed.focus();
+  });
   li.appendChild(statusBtn); li.appendChild(text);
   if (it.data && it.data.priority) {
     if (opts.compact) {
