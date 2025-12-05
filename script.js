@@ -80,6 +80,11 @@ let currentUserPriorityFilter = 'all';
 let currentUserSort = 'none';
 // Cache user tasks per username to reuse between tab switches
 let userTasksCacheByName = new Map(); // name -> { perCase: Map, titles: Map }
+// Edit locks to prevent list rerenders while typing
+let caseTasksEditing = false;
+let caseTasksRebuildPending = false;
+let userTasksEditing = false;
+let userTasksRebuildPending = false;
 let currentUserSearch = '';
 let userStatusEls = [];
 let userPriorityFilterEl, userSortEl;
@@ -1916,6 +1921,7 @@ function showTab(which) {
 
 // Apply toolbar filters to current case tasks and render
 function renderCaseTasks() {
+  if (caseTasksEditing) { caseTasksRebuildPending = true; return; }
   if (!taskListEl) return;
   const priVal = (p) => (p === 'high' ? 3 : p === 'medium' ? 2 : p === 'low' ? 1 : 0);
   let visible = currentCaseTasks.filter(it => {
@@ -1984,6 +1990,38 @@ function buildTaskListItem(item, opts = {}) {
   const titleSpan = document.createElement('span');
   titleSpan.className = 'task-text';
   titleSpan.textContent = text;
+  // Inline edit on title click
+  titleSpan.addEventListener('click', (e) => {
+    e.stopPropagation();
+    caseTasksEditing = true;
+    const ed = document.createElement('div');
+    ed.className = 'cell-editable';
+    ed.setAttribute('contenteditable', 'true');
+    ed.textContent = text;
+    let last = text;
+    const endEdit = () => {
+      try { ed.remove(); } catch {}
+      titleSpan.style.display = '';
+      caseTasksEditing = false;
+      if (caseTasksRebuildPending) { caseTasksRebuildPending = false; renderCaseTasks(); }
+    };
+    const saveNow = async () => {
+      const v = (ed.innerText || '').replace(/\r/g, '');
+      if (v === last) { endEdit(); return; }
+      try {
+        const { cipher: textCipher, iv: textIv } = await encryptText(v);
+        await updateDoc(doc(db, 'cases', caseId, 'tasks', taskId), { textCipher, textIv });
+        last = v; titleSpan.textContent = v;
+      } catch (err) { console.error('Failed to update task', err); showToast('Failed to update task'); }
+      endEdit();
+    };
+    ed.addEventListener('paste', (ev) => { ev.preventDefault(); const t=(ev.clipboardData||window.clipboardData).getData('text'); if (document.queryCommandSupported && document.queryCommandSupported('insertText')) { document.execCommand('insertText', false, t); } else { const sel=window.getSelection(); if (sel && sel.rangeCount) { sel.deleteFromDocument(); sel.getRangeAt(0).insertNode(document.createTextNode(t)); } } });
+    ed.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && !(ev.ctrlKey||ev.metaKey)) { ev.preventDefault(); saveNow(); } else if (ev.key === 'Escape') { ev.preventDefault(); endEdit(); } });
+    ed.addEventListener('blur', () => { saveNow(); });
+    titleSpan.insertAdjacentElement('afterend', ed);
+    titleSpan.style.display = 'none';
+    ed.focus();
+  });
   li.appendChild(statusBtn);
   li.appendChild(titleSpan);
   // Priority chip
@@ -2923,6 +2961,7 @@ async function startRealtimeUserTasks(name) {
       // Update state and cache, then render
       userPerCase = perCase;
       userTasksCacheByName.set(name, { perCase: new Map(perCase), titles: new Map(userCaseTitles) });
+      if (userTasksEditing) { userTasksRebuildPending = true; return; }
       renderUserTasks();
     } catch (err) {
       console.error('Failed to build user tasks view', err);
@@ -2980,6 +3019,19 @@ function renderUserTasks() {
       statusBtn.setAttribute('aria-label', `Task status: ${it.status}`);
       statusBtn.addEventListener('click', async (e)=>{ e.stopPropagation(); const order=['open','in progress','complete']; const next=order[(order.indexOf(it.status)+1)%order.length]; try{ const {cipher, iv}= await encryptText(next); await updateDoc(doc(db,'cases',caseId,'tasks',it.taskId),{ statusCipher:cipher, statusIv:iv }); it.status=next; statusBtn.textContent=icon(next); statusBtn.setAttribute('aria-label',`Task status: ${next}`); li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')); } catch(err){ console.error('Failed to update status',err); showToast('Failed to update status'); } });
       const titleSpan = document.createElement('span'); titleSpan.className='task-text'; titleSpan.textContent=it.text;
+      // Inline edit on My Tasks title
+      titleSpan.addEventListener('click', (e) => {
+        e.stopPropagation();
+        userTasksEditing = true;
+        const ed = document.createElement('div'); ed.className='cell-editable'; ed.setAttribute('contenteditable','true'); ed.textContent = it.text;
+        let last = it.text;
+        const endEdit = () => { try{ ed.remove(); }catch{} titleSpan.style.display=''; userTasksEditing=false; if (userTasksRebuildPending) { userTasksRebuildPending=false; renderUserTasks(); } };
+        const saveNow = async () => { const v=(ed.innerText||'').replace(/\r/g,''); if (v===last) { endEdit(); return; } try{ const {cipher:textCipher, iv:textIv}= await encryptText(v); await updateDoc(doc(db,'cases',caseId,'tasks',it.taskId),{ textCipher, textIv }); last=v; titleSpan.textContent=v; } catch(err){ console.error('Failed to update task',err); showToast('Failed to update task'); } endEdit(); };
+        ed.addEventListener('paste',(ev)=>{ ev.preventDefault(); const t=(ev.clipboardData||window.clipboardData).getData('text'); if (document.queryCommandSupported && document.queryCommandSupported('insertText')) { document.execCommand('insertText', false, t); } else { const sel=window.getSelection(); if (sel && sel.rangeCount) { sel.deleteFromDocument(); sel.getRangeAt(0).insertNode(document.createTextNode(t)); } } });
+        ed.addEventListener('keydown',(ev)=>{ if (ev.key==='Enter' && !(ev.ctrlKey||ev.metaKey)) { ev.preventDefault(); saveNow(); } else if (ev.key==='Escape') { ev.preventDefault(); endEdit(); } });
+        ed.addEventListener('blur', () => { saveNow(); });
+        titleSpan.insertAdjacentElement('afterend', ed); titleSpan.style.display='none'; ed.focus();
+      });
       li.appendChild(statusBtn); li.appendChild(titleSpan);
       if (it.priority) { const pri=document.createElement('span'); pri.className='mini-chip'; pri.textContent=it.priority; li.appendChild(pri); }
       // Assignee avatar
