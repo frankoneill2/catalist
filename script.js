@@ -2792,6 +2792,7 @@ function saveUserFilterState() {
     statuses: Array.from(currentUserStatusSet),
     priority: currentUserPriorityFilter,
     sort: currentUserSort,
+    search: currentUserSearch,
   });
 }
 
@@ -2879,6 +2880,10 @@ function renderUserTasks() {
     let items = userPerCase.get(caseId) || [];
     if (currentUserStatusSet && currentUserStatusSet.size) items = items.filter(i => currentUserStatusSet.has(i.status));
     if (currentUserPriorityFilter !== 'all') items = items.filter(i => (i.priority || '') === currentUserPriorityFilter);
+    if (currentUserSearch && currentUserSearch.trim()) {
+      const q = currentUserSearch.toLowerCase();
+      items = items.filter(i => (i.text || '').toLowerCase().includes(q));
+    }
     if (items.length === 0) continue;
     const title = userCaseTitles.get(caseId) || '(case)';
 
