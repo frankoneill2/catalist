@@ -660,6 +660,7 @@ button:focus-visible {
 .filter-pill[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; }
 .filter-pill .count { color: #6b7280; }
 .filter-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.section-label { color: #6b7280; font-size: 12px; margin-right: 6px; }
 .filter-chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 999px; border: 1px solid #e5e7eb; background: #fff; font-size: 12px; }
 .filter-chip .x { cursor: pointer; color: #6b7280; }
 
@@ -721,11 +722,12 @@ button:focus-visible {
 .tag-panel .actions { display: flex; justify-content: flex-end; gap: 6px; }
 
 /* Show/Hide filters control */
-.show-filters-btn { position: absolute; top: 6px; right: 8px; font-size: 12px; padding: 4px 8px; border: 1px solid #e5e7eb; border-radius: 6px; background: #fff; }
+.show-filters-btn { font-size: 12px; padding: 4px 8px; border: 1px solid #e5e7eb; border-radius: 6px; background: #fff; }
 
 /* Table controls */
 /* Print action button inline with card header area */
 #table-section { position: relative; }
+.filters-placeholder { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-bottom: 6px; padding: 6px 8px; }
 .print-action { position: absolute; top: 6px; right: 8px; font-size: 12px; padding: 4px 8px; border: 1px solid #e5e7eb; border-radius: 6px; background: #fff; }
 
 /* Print mode (screen) */

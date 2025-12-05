@@ -1382,6 +1382,8 @@ function setupTableFilterUI() {
 
   // Active chips area
   const chipsWrap = document.createElement('div'); chipsWrap.className = 'filter-chips'; left.appendChild(chipsWrap);
+  // Section label for filters
+  const filtersLabel = document.createElement('span'); filtersLabel.className = 'section-label'; filtersLabel.textContent = 'Filters'; left.appendChild(filtersLabel);
 
   // Pills
   const pillsWrap = document.createElement('div'); pillsWrap.className = 'pills-wrap'; left.appendChild(pillsWrap);
@@ -1391,6 +1393,7 @@ function setupTableFilterUI() {
   const mobileBtn = document.createElement('button'); mobileBtn.type='button'; mobileBtn.className='mobile-filters-btn'; mobileBtn.textContent='Filters'; right.appendChild(mobileBtn);
 
   // Segmented sort and clear
+  const sortLabel = document.createElement('span'); sortLabel.className = 'section-label'; sortLabel.textContent = 'Sort'; right.appendChild(sortLabel);
   const seg = document.createElement('div'); seg.className='segmented';
   const mkSegBtn = (label, key) => { const b=document.createElement('button'); b.type='button'; b.textContent=label; b.dataset.key=key; b.addEventListener('click',()=>{ activeTagSort = key; saveTagFilterState(); updateSegmented(); if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs); }); return b; };
   const segNone = mkSegBtn('None','none');
@@ -1400,7 +1403,7 @@ function setupTableFilterUI() {
   seg.appendChild(segNone); const s1=document.createElement('div'); s1.className='sep'; seg.appendChild(s1); seg.appendChild(segLoc); const s2=document.createElement('div'); s2.className='sep'; seg.appendChild(s2); seg.appendChild(segRoom); const s3=document.createElement('div'); s3.className='sep'; seg.appendChild(s3); seg.appendChild(segCons);
   const dirBtn = document.createElement('button'); dirBtn.type='button'; dirBtn.className='sort-dir'; dirBtn.textContent='↑'; dirBtn.title='Toggle sort direction'; dirBtn.addEventListener('click', ()=>{ activeTagSortDir = activeTagSortDir==='asc'?'desc':'asc'; dirBtn.textContent = activeTagSortDir==='asc'?'↑':'↓'; saveTagFilterState(); if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs); });
   const clearBtn = document.createElement('button'); clearBtn.type='button'; clearBtn.className='icon-btn small'; clearBtn.textContent='Clear'; clearBtn.addEventListener('click', ()=>{ activeTagFilters.location.clear(); activeTagFilters.consultant.clear(); activeTagFilters.room.clear(); saveTagFilterState(); updateFilterPills(); if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs); });
-  const hideBtn = document.createElement('button'); hideBtn.type='button'; hideBtn.className='icon-btn small'; hideBtn.textContent='Hide'; hideBtn.addEventListener('click', ()=>{ const bar = document.getElementById('table-tags-controls'); const showBtn = document.getElementById('show-filters-btn'); if (bar) bar.style.display='none'; if (showBtn) showBtn.hidden=false; });
+  const hideBtn = document.createElement('button'); hideBtn.type='button'; hideBtn.className='icon-btn small'; hideBtn.textContent='Hide'; hideBtn.addEventListener('click', ()=>{ setFiltersHidden(true); });
   right.appendChild(seg); right.appendChild(dirBtn); right.appendChild(clearBtn); right.appendChild(hideBtn);
 
   // Helper: render active chips and counts on pills
@@ -1432,6 +1435,19 @@ function setupTableFilterUI() {
     dirBtn.textContent = activeTagSortDir==='asc' ? '↑' : '↓';
   }
 
+  // Track current popover for toggle behavior
+  let activePopoverAnchor = null;
+  function togglePopover(anchorBtn, type) {
+    const existing = document.querySelector('.filter-popover');
+    const isOpenOnThis = existing && activePopoverAnchor === anchorBtn;
+    if (isOpenOnThis) {
+      existing.remove();
+      anchorBtn.setAttribute('aria-expanded','false');
+      activePopoverAnchor = null;
+      return;
+    }
+    openPopover(anchorBtn, type);
+  }
   // Popover builder
   function openPopover(anchorBtn, type) {
     if (anchorBtn.getAttribute('aria-disabled') === 'true') return;
@@ -1475,9 +1491,10 @@ function setupTableFilterUI() {
     search.addEventListener('input', () => { clearTimeout(search._t); search._t = setTimeout(renderList, 120); });
 
     // Outside click to close
-    const onDocClick = (e) => { if (!pop.contains(e.target) && e.target !== anchorBtn) { pop.remove(); document.removeEventListener('click', onDocClick, true); anchorBtn.setAttribute('aria-expanded','false'); } };
+    const onDocClick = (e) => { if (!pop.contains(e.target) && e.target !== anchorBtn) { pop.remove(); document.removeEventListener('click', onDocClick, true); anchorBtn.setAttribute('aria-expanded','false'); activePopoverAnchor = null; } };
     setTimeout(()=> document.addEventListener('click', onDocClick, true), 0);
     anchorBtn.setAttribute('aria-expanded','true');
+    activePopoverAnchor = anchorBtn;
     search.focus();
   }
 
@@ -1499,9 +1516,9 @@ function setupTableFilterUI() {
   }
 
   // Wire pills
-  locPill.addEventListener('click', () => openPopover(locPill, 'location'));
-  consPill.addEventListener('click', () => openPopover(consPill, 'consultant'));
-  roomPill.addEventListener('click', () => openPopover(roomPill, 'room'));
+  locPill.addEventListener('click', () => togglePopover(locPill, 'location'));
+  consPill.addEventListener('click', () => togglePopover(consPill, 'consultant'));
+  roomPill.addEventListener('click', () => togglePopover(roomPill, 'room'));
 
   updateSegmented();
   updateFilterPills();
@@ -2003,11 +2020,19 @@ window.addEventListener('DOMContentLoaded', async () => {
   const setFiltersHidden = (hidden) => {
     const bar = document.getElementById('table-tags-controls');
     if (!bar) return;
+    const root = document.getElementById('table-section');
+    let ph = document.getElementById('filters-placeholder');
     if (hidden) {
       bar.style.display = 'none';
-      if (showFiltersBtn) showFiltersBtn.hidden = false;
+      if (!ph) {
+        ph = document.createElement('div'); ph.id = 'filters-placeholder'; ph.className = 'filters-placeholder';
+        // Place before table content to avoid overlap
+        if (root) root.insertBefore(ph, document.getElementById('table-root'));
+      }
+      if (showFiltersBtn) { showFiltersBtn.hidden = false; ph.innerHTML = ''; ph.appendChild(showFiltersBtn); }
     } else {
       bar.style.display = '';
+      if (ph) { ph.remove(); }
       if (showFiltersBtn) showFiltersBtn.hidden = true;
     }
     try { localStorage.setItem(filtersKey, hidden ? '1' : '0'); } catch {}
