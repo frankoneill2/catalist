@@ -427,6 +427,11 @@ button:focus-visible {
 .tab:last-child { border-right: none; }
 .tab.active { background: var(--primary); color: #fff; }
 
+/* Center main tabs (Table/My Tasks) */
+#main-tabs { display: flex; justify-content: center; gap: 8px; border: none; }
+#main-tabs .tab { border: 1px solid #e5e7eb; border-right: none; border-radius: 999px; padding: 0 14px; height: 40px; }
+#main-tabs .tab.active { background: var(--primary); color: #fff; }
+
 /* More compact task row on wider screens */
 .task-main { grid-column: 1 / 2; }
 .task-actions {
@@ -709,6 +714,9 @@ button:focus-visible {
 .sheet h4 { margin: 6px 0; font-size: 14px; }
 .sheet .section { margin-bottom: 10px; }
 .sheet .actions { display: flex; justify-content: space-between; gap: 8px; }
+
+/* New case footer at bottom of table */
+.new-case-footer { display: flex; justify-content: center; padding: 10px 8px; }
 .name-cell { display: flex; flex-direction: column; gap: 2px; }
 .name-row { display: flex; align-items: center; gap: 6px; }
 .tag-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; color: #374151; }

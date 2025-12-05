@@ -203,10 +203,9 @@ async function openNewCaseModal() {
       const e = await encryptText(t);
       const ct = { location: locSel.value||null, consultant: consSel.value||null };
       const loc = locSel.value||null; const room = roomSel.value||null; if (loc && room) ct.room = room; else ct.room = null;
-      const ref = await addDoc(collection(db, 'cases'), { titleCipher: e.cipher, titleIv: e.iv, createdAt: serverTimestamp(), caseTags: ct });
+      await addDoc(collection(db, 'cases'), { titleCipher: e.cipher, titleIv: e.iv, createdAt: serverTimestamp(), caseTags: ct });
       close();
-      tableScrollY = window.scrollY;
-      openCase(ref.id, t, 'table', 'notes');
+      showToast('Case created');
     } catch (err) {
       console.error('Failed to create case', err); showToast('Failed to create case');
     }
@@ -1425,9 +1424,14 @@ function startRealtimeTable() {
         tbody.appendChild(tr);
       }
     }
-    // Atomically replace table to prevent duplicated DOM
-    tableRoot.innerHTML = '';
-    tableRoot.appendChild(table);
+  // Atomically replace table to prevent duplicated DOM
+  tableRoot.innerHTML = '';
+  tableRoot.appendChild(table);
+  // Footer new case button at bottom of table
+  const footer = document.createElement('div'); footer.className='new-case-footer';
+  const addBtn = document.createElement('button'); addBtn.type='button'; addBtn.className='btn primary'; addBtn.textContent='➕ New Case'; addBtn.addEventListener('click', openNewCaseModal);
+  footer.appendChild(addBtn);
+  tableRoot.appendChild(footer);
     // Clean up per-case task listeners for rows no longer present
     const present = new Set(docsInput.map(s=>s.id));
     for (const [cid, un] of Array.from(tableTaskUnsubs.entries())) { if (!present.has(cid)) { try { un(); } catch {} tableTaskUnsubs.delete(cid); } }
@@ -1472,9 +1476,8 @@ function setupTableFilterUI() {
   seg.appendChild(segNone); const s1=document.createElement('div'); s1.className='sep'; seg.appendChild(s1); seg.appendChild(segLoc); const s2=document.createElement('div'); s2.className='sep'; seg.appendChild(s2); seg.appendChild(segRoom); const s3=document.createElement('div'); s3.className='sep'; seg.appendChild(s3); seg.appendChild(segCons);
   const dirBtn = document.createElement('button'); dirBtn.type='button'; dirBtn.className='sort-dir'; dirBtn.textContent='↑'; dirBtn.title='Toggle sort direction'; dirBtn.addEventListener('click', ()=>{ activeTagSortDir = activeTagSortDir==='asc'?'desc':'asc'; dirBtn.textContent = activeTagSortDir==='asc'?'↑':'↓'; saveTagFilterState(); if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs); });
   const clearBtn = document.createElement('button'); clearBtn.type='button'; clearBtn.className='icon-btn small'; clearBtn.textContent='Clear'; clearBtn.addEventListener('click', ()=>{ activeTagFilters.location.clear(); activeTagFilters.consultant.clear(); activeTagFilters.room.clear(); saveTagFilterState(); updateFilterPills(); if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs); });
-  const newCaseBtn = document.createElement('button'); newCaseBtn.type='button'; newCaseBtn.className='btn primary'; newCaseBtn.textContent='➕ New Case'; newCaseBtn.addEventListener('click', openNewCaseModal);
   const hideBtn = document.createElement('button'); hideBtn.type='button'; hideBtn.className='icon-btn small'; hideBtn.textContent='Hide'; hideBtn.addEventListener('click', ()=>{ setTableFiltersHidden(true); });
-  right.appendChild(seg); right.appendChild(dirBtn); right.appendChild(clearBtn); right.appendChild(newCaseBtn); right.appendChild(hideBtn);
+  right.appendChild(seg); right.appendChild(dirBtn); right.appendChild(clearBtn); right.appendChild(hideBtn);
 
   // Helper: render active chips and counts on pills
   function renderActiveChips() {
@@ -2085,11 +2088,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   bindNotesFields();
   bindTabs();
   // Main tab bindings
-  if (mainTabTable && mainTabCases && mainTabMy) {
-    mainTabTable.addEventListener('click', () => showMainTab('table'));
-    mainTabCases.addEventListener('click', () => showMainTab('cases'));
-    mainTabMy.addEventListener('click', () => showMainTab('my'));
-  }
+  if (mainTabTable) mainTabTable.addEventListener('click', () => showMainTab('table'));
+  if (mainTabMy) mainTabMy.addEventListener('click', () => showMainTab('my'));
   // Filters show/hide
   const filtersKey = 'tableFiltersHidden';
   if (hideFiltersBtn) hideFiltersBtn.addEventListener('click', () => setTableFiltersHidden(true));
