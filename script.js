@@ -146,8 +146,7 @@ function loadTagFilterState() {
 function setTableFiltersHidden(hidden) {
   const bar = document.getElementById('table-tags-controls');
   const root = document.getElementById('table-section');
-  const showBtn = document.getElementById('show-filters-btn');
-  if (!bar || !root || !showBtn) return;
+  if (!bar || !root) return;
   let ph = document.getElementById('filters-placeholder');
   if (hidden) {
     bar.style.display = 'none';
@@ -155,14 +154,17 @@ function setTableFiltersHidden(hidden) {
       ph = document.createElement('div'); ph.id = 'filters-placeholder'; ph.className = 'filters-placeholder';
       root.insertBefore(ph, document.getElementById('table-root'));
     }
-    showBtn.hidden = false;
     ph.innerHTML = '';
-    ph.appendChild(showBtn);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'show-filters-btn';
+    btn.textContent = 'Show Filters';
+    btn.addEventListener('click', () => setTableFiltersHidden(false));
+    ph.appendChild(btn);
     try { localStorage.setItem('tableFiltersHidden', '1'); } catch {}
   } else {
     bar.style.display = '';
     if (ph) ph.remove();
-    showBtn.hidden = true;
     try { localStorage.setItem('tableFiltersHidden', '0'); } catch {}
   }
 }
