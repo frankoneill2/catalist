@@ -2150,21 +2150,23 @@ window.addEventListener('DOMContentLoaded', async () => {
       try { window.scrollTo(0, tableScrollY || 0); const url = new URL(window.location.href); url.searchParams.delete('case'); window.history.pushState({}, '', url.toString()); } catch {}
     }
   });
-  userBackBtn.addEventListener('click', () => {
-    userDetailEl.hidden = true;
-    // Return to prior view: case detail if one is open, else case list
-    if (currentCaseId) {
-      caseDetailEl.hidden = false;
-      if (caseListSection) caseListSection.style.display = 'none';
-    } else {
-      showCaseList();
-    }
-    if (Array.isArray(unsubUserTasks)) {
-      for (const u of unsubUserTasks) try { u(); } catch {}
-      unsubUserTasks = [];
-    }
-    if (unsubNotesTasks) { try { unsubNotesTasks(); } catch {} unsubNotesTasks = null; }
-  });
+  if (userBackBtn) {
+    userBackBtn.addEventListener('click', () => {
+      userDetailEl.hidden = true;
+      // Return to prior view: case detail if one is open, else table
+      if (currentCaseId) {
+        caseDetailEl.hidden = false;
+        if (caseListSection) caseListSection.style.display = 'none';
+      } else {
+        if (tableSection) tableSection.hidden = false;
+      }
+      if (Array.isArray(unsubUserTasks)) {
+        for (const u of unsubUserTasks) try { u(); } catch {}
+        unsubUserTasks = [];
+      }
+      if (unsubNotesTasks) { try { unsubNotesTasks(); } catch {} unsubNotesTasks = null; }
+    });
+  }
   if (brandHome) {
     brandHome.addEventListener('click', () => {
       // Go to table
