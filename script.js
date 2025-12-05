@@ -2201,22 +2201,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     renderCaseTasks();
   });
 
-  // Start tags realtime
-  startRealtimeTags();
-  bindTagControls();
-  // Build modern table filter UI
-  setupTableFilterUI();
-  // After controls bind, reflect persisted state in native selects for initial render
-  if (filterLocationSel) {
-    Array.from(filterLocationSel.options).forEach(o => { o.selected = activeTagFilters.location.has(o.value); });
-  }
-  if (filterConsultantSel) {
-    Array.from(filterConsultantSel.options).forEach(o => { o.selected = activeTagFilters.consultant.has(o.value); });
-  }
-  // Ensure initial render uses persisted filters
-  if (tableSection && !tableSection.hidden && lastCasesDocs && renderTableFromDocs) {
-    renderTableFromDocs(lastCasesDocs);
-  }
+  // Defer tags + filter UI setup until after sign-in
 }
   // React User toolbar events
   document.addEventListener('userToolbar:status', (e) => {
@@ -2261,6 +2246,13 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Then pick a user from dropdown modal fed by live users list
   username = await showUserSelectModal();
   if (!username) return;
+  // Now that we're signed in and have a user, start tags + build filter UI
+  startRealtimeTags();
+  bindTagControls();
+  setupTableFilterUI();
+  // Reflect persisted filter state in hidden native selects and render
+  if (filterLocationSel) Array.from(filterLocationSel.options).forEach(o => { o.selected = activeTagFilters.location.has(o.value); });
+  if (filterConsultantSel) Array.from(filterConsultantSel.options).forEach(o => { o.selected = activeTagFilters.consultant.has(o.value); });
   // Removed: startRealtimeCases(); now table is the primary index
   // Start settings (users + locations)
   startRealtimeUsers();
