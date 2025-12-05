@@ -1778,7 +1778,11 @@ function buildCompactTaskRow(caseId, it, opts = {}) {
   }
   const av=document.createElement('span'); av.className='mini-avatar'; const initials = it.data && it.data.assignee ? it.data.assignee.split(/\s+/).map(s=>s[0]).join('').slice(0,2).toUpperCase() : ''; av.textContent=initials||''; const col=colorForName((it.data && it.data.assignee)||''); av.style.background=col.bg; av.style.color=col.color; av.style.border=`1px solid ${col.border}`;
   av.addEventListener('click',(e)=>{ e.stopPropagation(); const existing=document.querySelector('.assignee-panel'); if(existing) existing.remove(); const panel=document.createElement('div'); panel.className='assignee-panel'; panel.style.position='fixed'; panel.style.zIndex='2147483646'; const addOpt=(label,value)=>{ const b=document.createElement('button'); b.type='button'; b.className='assignee-option'; b.textContent=label; b.addEventListener('click', async (ev)=>{ ev.stopPropagation(); try{ await updateDoc(doc(db,'cases',caseId,'tasks',it.id),{ assignee:value }); } catch(err){ console.error('Failed to reassign',err); showToast('Failed to reassign'); } finally { panel.remove(); } }); panel.appendChild(b); }; addOpt('Unassigned', null); for (const u of usersCache) addOpt(u.username, u.username); document.body.appendChild(panel); const r=av.getBoundingClientRect(); requestAnimationFrame(()=>{ const w=panel.offsetWidth||160; const left=Math.min(Math.max(8, r.right-w), window.innerWidth - w - 8); const top=Math.min(window.innerHeight - panel.offsetHeight - 8, r.bottom + 6); panel.style.left=`${Math.round(left)}px`; panel.style.top=`${Math.round(top)}px`; }); const onDocClick=(evt)=>{ if(!panel || panel.contains(evt.target) || evt.target===av) return; panel.remove(); document.removeEventListener('click', onDocClick, true); }; setTimeout(()=>document.addEventListener('click', onDocClick, true),0); });
+  // Delete button
+  const del = document.createElement('button'); del.type='button'; del.className='icon-btn delete-btn'; del.textContent='🗑'; del.title='Delete task';
+  del.addEventListener('click', async (e) => { e.stopPropagation(); if (!confirm('Delete this task?')) return; try { await deleteDoc(doc(db, 'cases', caseId, 'tasks', it.id)); } catch (err) { console.error('Failed to delete task', err); showToast('Failed to delete task'); } });
   li.appendChild(av);
+  li.appendChild(del);
   return li;
 }
 
@@ -2988,6 +2992,26 @@ function renderUserTasks() {
       } catch(err){ console.error('Failed to reassign',err); showToast('Failed to reassign'); } finally { panel.remove(); } }); panel.appendChild(b); };
       addOpt('Unassigned', null); for (const u of usersCache) addOpt(u.username,u.username); document.body.appendChild(panel); const r=av.getBoundingClientRect(); requestAnimationFrame(()=>{ const w=panel.offsetWidth||180; const left=Math.min(Math.max(8, r.right-w), window.innerWidth - w - 8); const top=Math.min(window.innerHeight - panel.offsetHeight - 8, r.bottom + 6); panel.style.left=`${Math.round(left)}px`; panel.style.top=`${Math.round(top)}px`; }); const onDocClick=(evt)=>{ if(!panel || panel.contains(evt.target) || evt.target===av) return; panel.remove(); document.removeEventListener('click', onDocClick, true); }; setTimeout(()=>document.addEventListener('click', onDocClick, true),0); });
       li.appendChild(av);
+      // Delete button
+      const del = document.createElement('button'); del.type='button'; del.className='icon-btn delete-btn'; del.textContent='🗑'; del.title='Delete task';
+      del.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!confirm('Delete this task?')) return;
+        try {
+          await deleteDoc(doc(db, 'cases', caseId, 'tasks', it.taskId));
+          // Optimistic UI: remove item and update badge
+          li.remove();
+          const badge = caseCard.querySelector('.badge');
+          if (badge) {
+            const current = parseInt(badge.textContent || '1', 10);
+            if (!Number.isNaN(current) && current > 0) badge.textContent = String(current - 1);
+          }
+        } catch (err) {
+          console.error('Failed to delete task', err);
+          showToast('Failed to delete task');
+        }
+      });
+      li.appendChild(del);
       // Comments unobtrusive
       const toggle=document.createElement('button'); toggle.type='button'; toggle.className='icon-btn comment-toggle'; toggle.setAttribute('aria-label','Show comments'); toggle.textContent='💬'; const countEl=document.createElement('span'); countEl.className='badge comment-count'; li.appendChild(toggle); li.appendChild(countEl);
       const commentSection=document.createElement('div'); commentSection.className='comment-section'; commentSection.hidden=true; const commentsList=document.createElement('ul'); commentsList.className='comments'; commentSection.appendChild(commentsList); const commentForm=document.createElement('form'); commentForm.className='comment-form'; const commentInput=document.createElement('input'); commentInput.placeholder='Add comment'; commentForm.appendChild(commentInput); const commentBtn=document.createElement('button'); commentBtn.className='icon-btn add-comment-btn'; commentBtn.type='submit'; commentBtn.textContent='➕'; commentBtn.setAttribute('aria-label','Add comment'); commentForm.appendChild(commentBtn); commentSection.appendChild(commentForm);
