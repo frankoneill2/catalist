@@ -48,6 +48,9 @@ let unsubTasks = null;
 let unsubNotes = null;
 let unsubCaseDoc = null;
 let unsubTable = null;
+// Keep the last cases snapshot docs for instant client-side filtering/sorting
+let lastCasesDocs = null; // Array of document snapshots
+let renderTableFromDocs = null; // function(docsArray)
 let tableTaskUnsubs = new Map(); // per-case tasks listeners in table
 let unsubUsers = null;
 let unsubLocations = null;
@@ -85,6 +88,59 @@ let subtagsByParent = new Map(); // parentTagId -> [{id, name, order, type}]
 let tagsReady = false;
 let activeTagFilters = { location: new Set(), consultant: new Set(), room: new Set() };
 let activeTagSort = 'none';
+let activeTagSortDir = 'asc'; // 'asc' | 'desc' for segmented control
+
+function encodeSet(set) { return Array.from(set || []).join(','); }
+function decodeSet(s) { return new Set((s || '').split(',').map(x=>x.trim()).filter(Boolean)); }
+
+function saveTagFilterState() {
+  try {
+    // localStorage
+    localStorage.setItem('table.filters.location', encodeSet(activeTagFilters.location));
+    localStorage.setItem('table.filters.consultant', encodeSet(activeTagFilters.consultant));
+    localStorage.setItem('table.filters.room', encodeSet(activeTagFilters.room));
+    localStorage.setItem('table.sort.key', activeTagSort || 'none');
+    localStorage.setItem('table.sort.dir', activeTagSortDir || 'asc');
+  } catch {}
+  try {
+    // URL query params
+    const url = new URL(window.location.href);
+    const params = url.searchParams;
+    const setOrDel = (k, v) => { if (v) params.set(k, v); else params.delete(k); };
+    setOrDel('loc', encodeSet(activeTagFilters.location));
+    setOrDel('cons', encodeSet(activeTagFilters.consultant));
+    setOrDel('room', encodeSet(activeTagFilters.room));
+    setOrDel('sort', activeTagSort && activeTagSort !== 'none' ? activeTagSort : '');
+    setOrDel('dir', activeTagSortDir && activeTagSort !== 'none' ? activeTagSortDir : '');
+    const next = url.toString();
+    window.history.replaceState(null, '', next);
+  } catch {}
+}
+
+function loadTagFilterState() {
+  // Priority: URL -> localStorage -> defaults
+  try {
+    const url = new URL(window.location.href);
+    const p = url.searchParams;
+    const loc = p.get('loc'); const cons = p.get('cons'); const room = p.get('room');
+    const sortKey = p.get('sort'); const dir = p.get('dir');
+    if (loc || cons || room || sortKey) {
+      if (loc) activeTagFilters.location = decodeSet(loc);
+      if (cons) activeTagFilters.consultant = decodeSet(cons);
+      if (room) activeTagFilters.room = decodeSet(room);
+      if (sortKey) activeTagSort = sortKey;
+      if (dir) activeTagSortDir = dir;
+      return;
+    }
+  } catch {}
+  try {
+    activeTagFilters.location = decodeSet(localStorage.getItem('table.filters.location'));
+    activeTagFilters.consultant = decodeSet(localStorage.getItem('table.filters.consultant'));
+    activeTagFilters.room = decodeSet(localStorage.getItem('table.filters.room'));
+    activeTagSort = localStorage.getItem('table.sort.key') || 'none';
+    activeTagSortDir = localStorage.getItem('table.sort.dir') || 'asc';
+  } catch {}
+}
 
 // Utility: assign a consistent color to a name for avatar badges
 function colorForName(name) {
@@ -482,28 +538,33 @@ function fillSelectWithTags(sel, arr) {
 }
 
 function bindTagControls() {
+  const reapply = () => {
+    if (tableSection && !tableSection.hidden && lastCasesDocs && renderTableFromDocs) {
+      renderTableFromDocs(lastCasesDocs);
+    }
+  };
   const onFilterChange = () => {
     activeTagFilters.location = new Set(Array.from(filterLocationSel?.selectedOptions || []).map(o=>o.value));
     activeTagFilters.consultant = new Set(Array.from(filterConsultantSel?.selectedOptions || []).map(o=>o.value));
-    // Re-render table via snapshot listener rerun – simplest is to trigger startRealtimeTable rebuild
-    // Force re-run by calling startRealtimeTable if active
-    if (tableSection && !tableSection.hidden) startRealtimeTable();
+    saveTagFilterState();
+    reapply();
   };
   if (filterLocationSel) filterLocationSel.addEventListener('change', onFilterChange);
   if (filterConsultantSel) filterConsultantSel.addEventListener('change', onFilterChange);
-  if (sortByTagSel) sortByTagSel.addEventListener('change', () => { activeTagSort = sortByTagSel.value || 'none'; if (tableSection && !tableSection.hidden) startRealtimeTable(); });
+  if (sortByTagSel) sortByTagSel.addEventListener('change', () => { activeTagSort = sortByTagSel.value || 'none'; saveTagFilterState(); reapply(); });
   if (clearTagFiltersBtn) clearTagFiltersBtn.addEventListener('click', () => {
     activeTagFilters.location.clear(); activeTagFilters.consultant.clear(); activeTagFilters.room?.clear?.();
     if (filterLocationSel) Array.from(filterLocationSel.options).forEach(o=>o.selected=false);
     if (filterConsultantSel) Array.from(filterConsultantSel.options).forEach(o=>o.selected=false);
     if (sortByTagSel) sortByTagSel.value = 'none'; activeTagSort = 'none';
-    if (tableSection && !tableSection.hidden) startRealtimeTable();
+    saveTagFilterState();
+    reapply();
   });
 }
 
 function caseMatchesTagFilters(caseTags) {
   // AND across types; OR within a type
-  for (const type of ['location','consultant']) {
+  for (const type of ['location','consultant','room']) {
     const set = activeTagFilters[type];
     if (set && set.size) {
       const v = caseTags && caseTags[type];
@@ -1168,16 +1229,17 @@ function buildTableSkeleton() {
 function startRealtimeTable() {
   const q = query(collection(db, 'cases'), orderBy('createdAt', 'desc'));
 
-  const renderFromSnap = async (snap) => {
+  // Renderer that can be invoked from listener and on-demand
+  renderTableFromDocs = async (docsInput) => {
     // If editing a cell, defer table rebuild to preserve caret
     const active = document.activeElement;
     if (active && active.classList && active.classList.contains('cell-editable')) {
-      pendingTableSnap = snap; tableRebuildPending = true; return;
+      pendingTableSnap = { docs: docsInput }; tableRebuildPending = true; return;
     }
     const { table, tbody } = buildTableSkeleton();
     if (!table || !tbody || !tableRoot) return;
     // Optionally sort by tag
-    let docs = snap.docs;
+    let docs = docsInput;
     if (activeTagSort && activeTagSort !== 'none') {
       const scored = [];
       for (const d of docs) {
@@ -1202,6 +1264,7 @@ function startRealtimeTable() {
       // Need titles as tiebreaker
       for (const s of scored) { try { const dat = s.d.data(); s.title = await decryptText(dat.titleCipher, dat.titleIv); } catch {} }
       scored.sort((a,b)=> a.score - b.score || a.title.localeCompare(b.title));
+      if (activeTagSortDir === 'desc') scored.reverse();
       docs = scored.map(s=>s.d);
     }
 
@@ -1231,9 +1294,19 @@ function startRealtimeTable() {
         const idx = list.findIndex(t => t.id === id);
         if (idx === -1) return;
         const tag = list[idx];
-        const chip = document.createElement('span'); chip.className='tag-chip';
+        const chip = document.createElement('span'); chip.className='tag-chip'; chip.setAttribute('role','button'); chip.setAttribute('tabindex','0'); chip.title = `Filter by ${label}`;
         const o = document.createElement('span'); o.className='tag-order'; o.textContent = String(idx+1)+'.'; chip.appendChild(o);
         const t = document.createElement('span'); t.textContent = tag.name; chip.appendChild(t);
+        const toggle = () => {
+          const set = activeTagFilters[type];
+          if (set.has(id)) set.delete(id); else set.add(id);
+          saveTagFilterState();
+          if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs);
+          // Also update pills if present
+          const evt = new CustomEvent('filters:updated'); document.dispatchEvent(evt);
+        };
+        chip.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
+        chip.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
         chips.appendChild(chip);
       };
       mkChip('Location', 'location', caseTags.location || null);
@@ -1268,7 +1341,7 @@ function startRealtimeTable() {
           ed.textContent = val;
           let last = val;
           const saveNow = () => { const v = (ed.innerText || '').replace(/\r/g, ''); if (v !== last) { last = v; saveCaseColumn(d.id, letter, v); } };
-          ed.addEventListener('blur', () => { saveNow(); if (tableRebuildPending && pendingTableSnap) { const snapCopy=pendingTableSnap; pendingTableSnap=null; tableRebuildPending=false; renderFromSnap(snapCopy); } });
+          ed.addEventListener('blur', () => { saveNow(); if (tableRebuildPending && pendingTableSnap) { const snapCopy=pendingTableSnap; pendingTableSnap=null; tableRebuildPending=false; if (renderTableFromDocs && snapCopy && snapCopy.docs) renderTableFromDocs(snapCopy.docs); } });
           ed.addEventListener('paste', (e) => { e.preventDefault(); const text=(e.clipboardData||window.clipboardData).getData('text'); if (document.queryCommandSupported && document.queryCommandSupported('insertText')) { document.execCommand('insertText', false, text); } else { const sel=window.getSelection(); if (sel && sel.rangeCount) { sel.deleteFromDocument(); sel.getRangeAt(0).insertNode(document.createTextNode(text)); } } });
           ed.addEventListener('input', () => { clearTimeout(ed._t); ed._t = setTimeout(saveNow, 1000); });
           ed.addEventListener('keydown', (e) => { const cellIndex=td.cellIndex; if (e.key==='Enter' && !(e.ctrlKey||e.metaKey)) { return; } else if ((e.key==='Enter') && (e.ctrlKey||e.metaKey)) { e.preventDefault(); saveNow(); const nextRow=tr.nextElementSibling; if (nextRow && nextRow.children[cellIndex]) { const n=nextRow.children[cellIndex].querySelector('.cell-editable'); if (n) n.focus(); } } else if (e.key==='Tab') { e.preventDefault(); saveNow(); const dir=e.shiftKey?-1:1; let targetCol=cellIndex+dir; let targetRow=tr; if (targetCol<1) { const prev=tr.previousElementSibling; if (prev) { targetRow=prev; targetCol=6; } else { return; } } else if (targetCol>6) { const next=tr.nextElementSibling; if (next) { targetRow=next; targetCol=1; } else { return; } } const targetCell=targetRow.children[targetCol]; if (targetCell) { const n=targetCell.querySelector('.cell-editable'); if (n) n.focus(); } } else if (e.key==='Escape') { e.preventDefault(); ed.textContent=last; } });
@@ -1287,10 +1360,180 @@ function startRealtimeTable() {
     tableRoot.innerHTML = '';
     tableRoot.appendChild(table);
     // Clean up per-case task listeners for rows no longer present
-    const present = new Set(snap.docs.map(s=>s.id));
+    const present = new Set(docsInput.map(s=>s.id));
     for (const [cid, un] of Array.from(tableTaskUnsubs.entries())) { if (!present.has(cid)) { try { un(); } catch {} tableTaskUnsubs.delete(cid); } }
   };
-  unsubTable = onSnapshot(q, (snap) => { renderFromSnap(snap); }, (err) => console.error('Table listener error', err));
+  unsubTable = onSnapshot(q, (snap) => {
+    lastCasesDocs = snap.docs;
+    if (renderTableFromDocs) renderTableFromDocs(lastCasesDocs);
+    try { document.dispatchEvent(new CustomEvent('filters:updated')); } catch {}
+  }, (err) => console.error('Table listener error', err));
+}
+
+// --- Modern table filter UI (pills, popovers, counts, segmented sort)
+function setupTableFilterUI() {
+  const bar = document.getElementById('table-tags-controls');
+  if (!bar) return;
+  // Clear and rebuild with new controls while keeping legacy selects hidden for fallback
+  bar.innerHTML = '';
+  const left = document.createElement('div'); left.className = 'left';
+  const right = document.createElement('div'); right.className = 'right';
+  bar.appendChild(left); bar.appendChild(right);
+
+  // Active chips area
+  const chipsWrap = document.createElement('div'); chipsWrap.className = 'filter-chips'; left.appendChild(chipsWrap);
+
+  // Pills
+  const pillsWrap = document.createElement('div'); pillsWrap.className = 'pills-wrap'; left.appendChild(pillsWrap);
+  const locPill = document.createElement('button'); locPill.type='button'; locPill.className='filter-pill'; locPill.setAttribute('aria-haspopup','listbox'); locPill.setAttribute('aria-expanded','false'); locPill.textContent='Location'; const lc=document.createElement('span'); lc.className='count'; lc.textContent=''; locPill.appendChild(lc); pillsWrap.appendChild(locPill);
+  const roomPill = document.createElement('button'); roomPill.type='button'; roomPill.className='filter-pill'; roomPill.setAttribute('aria-haspopup','listbox'); roomPill.setAttribute('aria-expanded','false'); roomPill.textContent='Room'; const rc=document.createElement('span'); rc.className='count'; rc.textContent=''; roomPill.appendChild(rc); pillsWrap.appendChild(roomPill);
+  const consPill = document.createElement('button'); consPill.type='button'; consPill.className='filter-pill'; consPill.setAttribute('aria-haspopup','listbox'); consPill.setAttribute('aria-expanded','false'); consPill.textContent='Consultant'; const cc=document.createElement('span'); cc.className='count'; cc.textContent=''; consPill.appendChild(cc); pillsWrap.appendChild(consPill);
+  const mobileBtn = document.createElement('button'); mobileBtn.type='button'; mobileBtn.className='mobile-filters-btn'; mobileBtn.textContent='Filters'; right.appendChild(mobileBtn);
+
+  // Segmented sort and clear
+  const seg = document.createElement('div'); seg.className='segmented';
+  const mkSegBtn = (label, key) => { const b=document.createElement('button'); b.type='button'; b.textContent=label; b.dataset.key=key; b.addEventListener('click',()=>{ activeTagSort = key; saveTagFilterState(); updateSegmented(); if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs); }); return b; };
+  const segNone = mkSegBtn('None','none');
+  const segLoc = mkSegBtn('Location','location');
+  const segRoom = mkSegBtn('Room','room');
+  const segCons = mkSegBtn('Consultant','consultant');
+  seg.appendChild(segNone); const s1=document.createElement('div'); s1.className='sep'; seg.appendChild(s1); seg.appendChild(segLoc); const s2=document.createElement('div'); s2.className='sep'; seg.appendChild(s2); seg.appendChild(segRoom); const s3=document.createElement('div'); s3.className='sep'; seg.appendChild(s3); seg.appendChild(segCons);
+  const dirBtn = document.createElement('button'); dirBtn.type='button'; dirBtn.className='sort-dir'; dirBtn.textContent='↑'; dirBtn.title='Toggle sort direction'; dirBtn.addEventListener('click', ()=>{ activeTagSortDir = activeTagSortDir==='asc'?'desc':'asc'; dirBtn.textContent = activeTagSortDir==='asc'?'↑':'↓'; saveTagFilterState(); if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs); });
+  const clearBtn = document.createElement('button'); clearBtn.type='button'; clearBtn.className='icon-btn small'; clearBtn.textContent='Clear'; clearBtn.addEventListener('click', ()=>{ activeTagFilters.location.clear(); activeTagFilters.consultant.clear(); activeTagFilters.room.clear(); saveTagFilterState(); updateFilterPills(); if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs); });
+  const hideBtn = document.createElement('button'); hideBtn.type='button'; hideBtn.className='icon-btn small'; hideBtn.textContent='Hide'; hideBtn.addEventListener('click', ()=>{ const bar = document.getElementById('table-tags-controls'); const showBtn = document.getElementById('show-filters-btn'); if (bar) bar.style.display='none'; if (showBtn) showBtn.hidden=false; });
+  right.appendChild(seg); right.appendChild(dirBtn); right.appendChild(clearBtn); right.appendChild(hideBtn);
+
+  // Helper: render active chips and counts on pills
+  function renderActiveChips() {
+    chipsWrap.innerHTML = '';
+    const addChip = (type, id, name) => {
+      const chip = document.createElement('span'); chip.className='filter-chip';
+      const t = document.createElement('span'); t.textContent = name; chip.appendChild(t);
+      const x = document.createElement('span'); x.className='x'; x.textContent='✕'; x.setAttribute('role','button'); x.setAttribute('tabindex','0');
+      const remove = () => { const set=activeTagFilters[type]; set.delete(id); saveTagFilterState(); updateFilterPills(); if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs); };
+      x.addEventListener('click', remove); x.addEventListener('keydown', (e)=>{ if (e.key==='Enter' || e.key===' ') { e.preventDefault(); remove(); } });
+      chip.appendChild(x);
+      chipsWrap.appendChild(chip);
+    };
+    const addChipsFor = (type, list) => { for (const id of activeTagFilters[type]) { const it = list.find(t=>t.id===id); if (it) addChip(type, id, it.name); } };
+    addChipsFor('location', tagsByType.get('location') || []);
+    addChipsFor('consultant', tagsByType.get('consultant') || []);
+    // Room chips: need selected location context; approximate by searching all subtags
+    for (const id of activeTagFilters.room) {
+      let name = 'Room';
+      for (const [parent, arr] of subtagsByParent.entries()) { const f = (arr||[]).find(t=>t.id===id); if (f) { name = f.name; break; } }
+      addChip('room', id, name);
+    }
+  }
+
+  function updateSegmented() {
+    [segNone, segLoc, segRoom, segCons].forEach(btn => btn.classList.toggle('active', btn.dataset.key === (activeTagSort||'none')));
+    dirBtn.style.display = (activeTagSort && activeTagSort !== 'none') ? '' : 'none';
+    dirBtn.textContent = activeTagSortDir==='asc' ? '↑' : '↓';
+  }
+
+  // Popover builder
+  function openPopover(anchorBtn, type) {
+    if (anchorBtn.getAttribute('aria-disabled') === 'true') return;
+    // Close any existing
+    const existing = document.querySelector('.filter-popover'); if (existing) existing.remove();
+    const pop = document.createElement('div'); pop.className='filter-popover'; pop.setAttribute('role','listbox');
+    const search = document.createElement('input'); search.className='search'; search.type='search'; search.placeholder='Search…'; pop.appendChild(search);
+    const list = document.createElement('div'); list.className='list'; pop.appendChild(list);
+    document.body.appendChild(pop);
+    const rect = anchorBtn.getBoundingClientRect(); requestAnimationFrame(()=>{ const left=Math.min(window.innerWidth - pop.offsetWidth - 8, rect.left); const top=Math.min(window.innerHeight - pop.offsetHeight - 8, rect.bottom + 6); pop.style.left=`${Math.max(8,left)}px`; pop.style.top=`${Math.max(8,top)}px`; });
+
+    const set = activeTagFilters[type];
+    const options = [];
+    if (type === 'room') {
+      // Only when exactly one location selected
+      const locIds = Array.from(activeTagFilters.location);
+      const parent = locIds.length === 1 ? locIds[0] : null;
+      const rooms = parent ? (subtagsByParent.get(parent) || []) : [];
+      for (const r of rooms) options.push({ id: r.id, name: r.name, count: countCasesBy({ room: r.id }) });
+    } else {
+      const base = tagsByType.get(type) || [];
+      for (const t of base) options.push({ id: t.id, name: t.name, count: countCasesBy({ [type]: t.id }) });
+    }
+
+    const renderList = () => {
+      const q = (search.value||'').toLowerCase();
+      list.innerHTML='';
+      for (const opt of options) {
+        if (q && !opt.name.toLowerCase().includes(q)) continue;
+        const row = document.createElement('div'); row.className='opt'; row.setAttribute('role','option'); row.setAttribute('aria-selected', String(set.has(opt.id)));
+        const label = document.createElement('div'); label.className='label';
+        const cb = document.createElement('input'); cb.type='checkbox'; cb.checked = set.has(opt.id); label.appendChild(cb);
+        const txt = document.createElement('span'); txt.textContent = opt.name; label.appendChild(txt);
+        const cnt = document.createElement('div'); cnt.className='opt-count'; cnt.textContent = String(opt.count);
+        row.appendChild(label); row.appendChild(cnt);
+        row.addEventListener('click', () => { if (set.has(opt.id)) set.delete(opt.id); else set.add(opt.id); row.setAttribute('aria-selected', String(set.has(opt.id))); cb.checked = set.has(opt.id); saveTagFilterState(); updateFilterPills(); if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs); });
+        list.appendChild(row);
+      }
+    };
+    renderList();
+    search.addEventListener('input', () => { clearTimeout(search._t); search._t = setTimeout(renderList, 120); });
+
+    // Outside click to close
+    const onDocClick = (e) => { if (!pop.contains(e.target) && e.target !== anchorBtn) { pop.remove(); document.removeEventListener('click', onDocClick, true); anchorBtn.setAttribute('aria-expanded','false'); } };
+    setTimeout(()=> document.addEventListener('click', onDocClick, true), 0);
+    anchorBtn.setAttribute('aria-expanded','true');
+    search.focus();
+  }
+
+  function countCasesBy(match) {
+    if (!Array.isArray(lastCasesDocs)) return 0;
+    let n = 0; for (const d of lastCasesDocs) { const ct = (d.data().caseTags||{}); let ok = true; for (const k in match) { if (!ct[k] || ct[k] !== match[k]) { ok=false; break; } } if (ok) n++; }
+    return n;
+  }
+
+  function updateFilterPills() {
+    // Counts: show number of selections on each pill
+    lc.textContent = activeTagFilters.location.size ? ` (${activeTagFilters.location.size})` : '';
+    cc.textContent = activeTagFilters.consultant.size ? ` (${activeTagFilters.consultant.size})` : '';
+    rc.textContent = activeTagFilters.room.size ? ` (${activeTagFilters.room.size})` : '';
+    // Room pill enabled only when exactly one location selected
+    const enableRoom = activeTagFilters.location.size === 1;
+    roomPill.setAttribute('aria-disabled', enableRoom ? 'false' : 'true');
+    renderActiveChips();
+  }
+
+  // Wire pills
+  locPill.addEventListener('click', () => openPopover(locPill, 'location'));
+  consPill.addEventListener('click', () => openPopover(consPill, 'consultant'));
+  roomPill.addEventListener('click', () => openPopover(roomPill, 'room'));
+
+  updateSegmented();
+  updateFilterPills();
+  document.addEventListener('tags:updated', updateFilterPills);
+  document.addEventListener('filters:updated', updateFilterPills);
+
+  // Mobile bottom sheet
+  function openFiltersSheet() {
+    const overlay = document.createElement('div'); overlay.className='sheet-overlay';
+    const sheet = document.createElement('div'); sheet.className='sheet'; overlay.appendChild(sheet);
+    const addSection = (title) => { const s=document.createElement('div'); s.className='section'; const h=document.createElement('h4'); h.textContent=title; s.appendChild(h); sheet.appendChild(s); return s; };
+    const sLoc = addSection('Location'); const sRoom = addSection('Room'); const sCons = addSection('Consultant');
+    const sSort = addSection('Sort');
+    // Lists
+    const addList = (container, type, items) => { const list=document.createElement('div'); list.className='list'; container.appendChild(list); for (const it of items) { const row=document.createElement('div'); row.className='opt'; const lbl=document.createElement('label'); lbl.className='label'; const cb=document.createElement('input'); cb.type='checkbox'; cb.checked = activeTagFilters[type].has(it.id); const sp=document.createElement('span'); sp.textContent=it.name; lbl.appendChild(cb); lbl.appendChild(sp); const cnt=document.createElement('div'); cnt.className='opt-count'; cnt.textContent=String(it.count); row.appendChild(lbl); row.appendChild(cnt); row.addEventListener('click',()=>{ cb.checked=!cb.checked; if (cb.checked) activeTagFilters[type].add(it.id); else activeTagFilters[type].delete(it.id); }); list.appendChild(row); } };
+    const locItems = (tagsByType.get('location')||[]).map(t=>({ id:t.id, name:t.name, count: countCasesBy({ location: t.id }) }));
+    addList(sLoc, 'location', locItems);
+    const locIds = Array.from(activeTagFilters.location); const parent = locIds.length===1?locIds[0]:null; const rooms = parent ? (subtagsByParent.get(parent) || []) : [];
+    const roomItems = rooms.map(r=>({ id:r.id, name:r.name, count: countCasesBy({ room: r.id }) }));
+    addList(sRoom, 'room', roomItems);
+    const consItems = (tagsByType.get('consultant')||[]).map(t=>({ id:t.id, name:t.name, count: countCasesBy({ consultant: t.id }) }));
+    addList(sCons, 'consultant', consItems);
+    // Sort controls
+    const sortWrap = document.createElement('div'); sortWrap.className='segmented'; const mk = (l,k)=>{ const b=document.createElement('button'); b.type='button'; b.textContent=l; b.classList.toggle('active', (activeTagSort||'none')===k); b.addEventListener('click',()=>{ activeTagSort=k; updateSeg(); }); return b; };
+    const updateSeg = () => { saveTagFilterState(); };
+    sortWrap.appendChild(mk('None','none')); const sA=document.createElement('div'); sA.className='sep'; sortWrap.appendChild(sA); sortWrap.appendChild(mk('Location','location')); const sB=document.createElement('div'); sB.className='sep'; sortWrap.appendChild(sB); sortWrap.appendChild(mk('Room','room')); const sC=document.createElement('div'); sC.className='sep'; sortWrap.appendChild(sC); sortWrap.appendChild(mk('Consultant','consultant'));
+    sSort.appendChild(sortWrap);
+    const actions = document.createElement('div'); actions.className='actions'; const clear=document.createElement('button'); clear.className='btn'; clear.textContent='Clear'; clear.addEventListener('click',()=>{ activeTagFilters.location.clear(); activeTagFilters.room.clear(); activeTagFilters.consultant.clear(); }); const apply=document.createElement('button'); apply.className='btn primary'; apply.textContent='Apply'; apply.addEventListener('click',()=>{ saveTagFilterState(); updateFilterPills(); if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs); overlay.remove(); }); actions.appendChild(clear); actions.appendChild(apply); sheet.appendChild(actions);
+    overlay.addEventListener('click',(e)=>{ if (e.target===overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+  }
+  mobileBtn.addEventListener('click', openFiltersSheet);
 }
 
 // Attach realtime compact tasks list to a UL
@@ -1772,6 +2015,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   if (hideFiltersBtn) hideFiltersBtn.addEventListener('click', () => setFiltersHidden(true));
   if (showFiltersBtn) showFiltersBtn.addEventListener('click', () => setFiltersHidden(false));
   try { const hidden = localStorage.getItem(filtersKey) === '1'; setFiltersHidden(hidden); } catch {}
+  // Load persisted tag filter state (URL/localStorage)
+  loadTagFilterState();
   // Print action in header
   if (printOpenBtn) {
     printOpenBtn.addEventListener('click', () => {
@@ -1859,6 +2104,20 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Start tags realtime
   startRealtimeTags();
   bindTagControls();
+  // Build modern table filter UI
+  setupTableFilterUI();
+  document.addEventListener('filters:updated', () => updateFilterPills());
+  // After controls bind, reflect persisted state in native selects for initial render
+  if (filterLocationSel) {
+    Array.from(filterLocationSel.options).forEach(o => { o.selected = activeTagFilters.location.has(o.value); });
+  }
+  if (filterConsultantSel) {
+    Array.from(filterConsultantSel.options).forEach(o => { o.selected = activeTagFilters.consultant.has(o.value); });
+  }
+  // Ensure initial render uses persisted filters
+  if (tableSection && !tableSection.hidden && lastCasesDocs && renderTableFromDocs) {
+    renderTableFromDocs(lastCasesDocs);
+  }
 }
   // React User toolbar events
   document.addEventListener('userToolbar:status', (e) => {
