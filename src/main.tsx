@@ -172,21 +172,33 @@ function mountUserToolbar() {
     const onAssigneeChange = (a: string) => { setAssignee(a); dispatch('userToolbar:assignee', { assignee: a }); };
 
     const selected = useMemo(() => statuses, [statuses]);
+    const debug = (() => { try { return new URL(window.location.href).searchParams.get('debug') === '1'; } catch { return false; } })();
+    useEffect(() => {
+      if (!debug) return;
+      console.log('[MyTasksToolbar] mounted', { assignee, users: userOptions });
+    }, [debug]);
     return (
-      <TaskToolbar
-        selectedStatuses={selected}
-        onToggleStatus={toggleStatus}
-        priority={priority}
-        onPriorityChange={onPriorityChange}
-        sort={sort}
-        onSortChange={onSortChange}
-        onClear={onClear}
-        search={search}
-        onSearchChange={onSearchChange}
-        assignee={assignee}
-        assigneeOptions={userOptions}
-        onAssigneeChange={onAssigneeChange}
-      />
+      <>
+        <TaskToolbar
+          selectedStatuses={selected}
+          onToggleStatus={toggleStatus}
+          priority={priority}
+          onPriorityChange={onPriorityChange}
+          sort={sort}
+          onSortChange={onSortChange}
+          onClear={onClear}
+          search={search}
+          onSearchChange={onSearchChange}
+          assignee={assignee}
+          assigneeOptions={userOptions}
+          onAssigneeChange={onAssigneeChange}
+        />
+        {debug && (
+          <div style={{marginTop:'6px', padding:'6px 8px', border:'1px dashed #c7d2fe', borderRadius:'8px', background:'#eef2ff', color:'#1e3a8a', fontSize:'12px'}}>
+            Debug: My Tasks toolbar mounted — assignee: <strong>{assignee}</strong>; users: {userOptions.length}
+          </div>
+        )}
+      </>
     );
   };
 
