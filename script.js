@@ -79,7 +79,9 @@ let currentUserStatusSet = new Set(['open', 'in progress', 'complete']);
 let currentUserPriorityFilter = 'all';
 let currentUserSort = 'none';
 // Cache user tasks per username to reuse between tab switches
-let userTasksCacheByName = new Map(); // name -> { perCase: Map, titles: Map }
+// Cache My Tasks by assignee filter key (me|all|unassigned|name:<user>)
+let userTasksCacheByKey = new Map(); // key -> { perCase: Map, titles: Map }
+let currentAssigneeFilter = 'me'; // 'me' | 'all' | 'unassigned' | 'name:<user>'
 // Edit locks to prevent list rerenders while typing
 let caseTasksEditing = false;
 let caseTasksRebuildPending = false;
@@ -2367,6 +2369,21 @@ window.addEventListener('DOMContentLoaded', async () => {
     saveUserFilterState();
     renderUserTasks();
   });
+  document.addEventListener('userToolbar:assignee', (e) => {
+    const a = (e && e.detail && e.detail.assignee) || 'me';
+    currentAssigneeFilter = a;
+    saveUserFilterState();
+    setUserHeader();
+    // Try cached first
+    const cached = userTasksCacheByKey.get(assigneeKey());
+    if (cached && cached.perCase && cached.titles) {
+      userPerCase = new Map(cached.perCase);
+      userCaseTitles = new Map(cached.titles);
+      renderUserTasks();
+    }
+    // Restart listener
+    startRealtimeUserTasks(currentUserPageName || username);
+  });
   document.addEventListener('userToolbar:clear', () => {
     currentUserStatusSet = new Set(['open','in progress','complete']);
     currentUserPriorityFilter = 'all';
@@ -2542,6 +2559,8 @@ function startRealtimeUsers() {
     }
     // Update composer assignee select with latest users
     populateComposerAssignees();
+    // Inform My Tasks toolbar about users for the assignee selector
+    try { const names = usersCache.map(u => u.username); document.dispatchEvent(new CustomEvent('userToolbar:users', { detail: { users: names } })); } catch {}
   });
 
   // Locations realtime
@@ -2831,7 +2850,7 @@ async function moveRoom(parentId, index, delta) {
 function openUser(name) {
   currentUserPageName = name;
   // Title with inline change link
-  userTitleEl.innerHTML = `${name}'s tasks <button id="change-user-link" class="change-user-link" type="button">(Change user)</button>`;
+  setUserHeader();
   if (caseListSection) caseListSection.style.display = 'none';
   caseDetailEl.hidden = true;
   userDetailEl.hidden = false;
@@ -2853,11 +2872,13 @@ function openUser(name) {
     currentUserPriorityFilter = saved.priority || 'all';
     currentUserSort = saved.sort || 'none';
     currentUserSearch = saved.search || '';
+    currentAssigneeFilter = saved.assignee || 'me';
   } else {
     currentUserStatusSet = new Set(['open','in progress','complete']);
     currentUserPriorityFilter = 'all';
     currentUserSort = 'none';
     currentUserSearch = '';
+    currentAssigneeFilter = 'me';
   }
   // Reflect in controls
   if (userStatusEls.length) userStatusEls.forEach(cb => cb.checked = currentUserStatusSet.has(cb.value));
@@ -2869,9 +2890,10 @@ function openUser(name) {
     priority: currentUserPriorityFilter,
     sort: currentUserSort,
     search: currentUserSearch,
+    assignee: currentAssigneeFilter,
   }}));
-  // If we have cached data for this user, render it immediately for snappy UX
-  const cached = userTasksCacheByName.get(name);
+  // If we have cached data for current assignee selection, render it immediately for snappy UX
+  const cached = userTasksCacheByKey.get(assigneeKey());
   if (cached && cached.perCase && cached.titles) {
     userPerCase = new Map(cached.perCase);
     userCaseTitles = new Map(cached.titles);
@@ -2883,6 +2905,20 @@ function openUser(name) {
   startRealtimeUserTasks(name);
 }
 
+function setUserHeader() {
+  if (!userTitleEl) return;
+  let label = '';
+  if (currentAssigneeFilter === 'all') label = 'All tasks';
+  else if (currentAssigneeFilter === 'unassigned') label = 'Unassigned tasks';
+  else if (currentAssigneeFilter === 'me') label = `${username || currentUserPageName || 'Me'}'s tasks`;
+  else if (currentAssigneeFilter.startsWith('name:')) label = `${currentAssigneeFilter.slice(5)}'s tasks`;
+  userTitleEl.innerHTML = `${label} <button id="change-user-link" class="change-user-link" type="button">(Change user)</button>`;
+}
+
+function assigneeKey() {
+  return currentAssigneeFilter || 'me';
+}
+
 function saveUserFilterState() {
   if (!currentUserPageName) return;
   userFilterByName.set(currentUserPageName, {
@@ -2890,6 +2926,7 @@ function saveUserFilterState() {
     priority: currentUserPriorityFilter,
     sort: currentUserSort,
     search: currentUserSearch,
+    assignee: currentAssigneeFilter,
   });
 }
 
@@ -2903,7 +2940,13 @@ async function startRealtimeUserTasks(name) {
   if (!userCaseTitles) userCaseTitles = new Map();
   if (!userPerCase) userPerCase = new Map();
 
-  const q = query(collectionGroup(db, 'tasks'), where('assignee', '==', name));
+  let tasksRef = collectionGroup(db, 'tasks');
+  let q;
+  if (currentAssigneeFilter === 'all') q = tasksRef;
+  else if (currentAssigneeFilter === 'unassigned') q = query(tasksRef, where('assignee', '==', null));
+  else if (currentAssigneeFilter === 'me') q = query(tasksRef, where('assignee', '==', username || name));
+  else if (currentAssigneeFilter.startsWith('name:')) q = query(tasksRef, where('assignee', '==', currentAssigneeFilter.slice(5)));
+  else q = query(tasksRef, where('assignee', '==', username || name));
   const unsub = onSnapshot(q, async (snap) => {
     try {
       // Build items list with parallel decryption
@@ -2960,7 +3003,7 @@ async function startRealtimeUserTasks(name) {
 
       // Update state and cache, then render
       userPerCase = perCase;
-      userTasksCacheByName.set(name, { perCase: new Map(perCase), titles: new Map(userCaseTitles) });
+      userTasksCacheByKey.set(assigneeKey(), { perCase: new Map(perCase), titles: new Map(userCaseTitles) });
       if (userTasksEditing) { userTasksRebuildPending = true; return; }
       renderUserTasks();
     } catch (err) {

@@ -17,6 +17,30 @@ function mountToolbar() {
     const [priority, setPriority] = useState<Priority>('all');
     const [sort, setSort] = useState<Sort>('none');
     const [search, setSearch] = useState('');
+    const [assignee, setAssignee] = useState<string>('me');
+    const [userOptions, setUserOptions] = useState<string[]>([]);
+
+    useEffect(() => {
+      const handler = (e: any) => {
+        const d = (e && e.detail) || {};
+        if (Array.isArray(d.statuses)) setStatuses(new Set(d.statuses as Status[]));
+        if (d.priority) setPriority(d.priority as Priority);
+        if (d.sort) setSort(d.sort as Sort);
+        if (typeof d.search === 'string') setSearch(d.search);
+        if (typeof d.assignee === 'string') setAssignee(d.assignee);
+      };
+      document.addEventListener('userToolbar:hydrate', handler);
+      return () => document.removeEventListener('userToolbar:hydrate', handler);
+    }, []);
+
+    useEffect(() => {
+      const handler = (e: any) => {
+        const d = (e && e.detail) || {};
+        if (Array.isArray(d.users)) setUserOptions(d.users as string[]);
+      };
+      document.addEventListener('userToolbar:users', handler);
+      return () => document.removeEventListener('userToolbar:users', handler);
+    }, []);
 
     // Hydrate from external state when opening a user page
     useEffect(() => {
@@ -118,6 +142,7 @@ function mountUserToolbar() {
       dispatch('userToolbar:clear', {});
     };
     const onSearchChange = (q: string) => { setSearch(q); dispatch('userToolbar:search', { query: q }); };
+    const onAssigneeChange = (a: string) => { setAssignee(a); dispatch('userToolbar:assignee', { assignee: a }); };
 
     const selected = useMemo(() => statuses, [statuses]);
     return (
@@ -131,6 +156,9 @@ function mountUserToolbar() {
         onClear={onClear}
         search={search}
         onSearchChange={onSearchChange}
+        assignee={assignee}
+        assigneeOptions={userOptions}
+        onAssigneeChange={onAssigneeChange}
       />
     );
   };
@@ -139,4 +167,3 @@ function mountUserToolbar() {
 }
 
 mountUserToolbar();
-

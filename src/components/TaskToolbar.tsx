@@ -18,6 +18,11 @@ export interface TaskToolbarProps {
 
   search?: string;
   onSearchChange?: (q: string) => void;
+
+  // Optional assignee control (My Tasks only)
+  assignee?: string; // 'all' | 'me' | 'unassigned' | 'name:<user>'
+  assigneeOptions?: string[]; // list of usernames to show
+  onAssigneeChange?: (a: string) => void;
 }
 
 const statusDefs: { key: Status; label: string }[] = [
@@ -36,6 +41,9 @@ export const TaskToolbar: React.FC<TaskToolbarProps> = ({
   onClear,
   search,
   onSearchChange,
+  assignee,
+  assigneeOptions,
+  onAssigneeChange,
 }) => {
   const statusRef = useRef<HTMLDivElement | null>(null);
   const [statusOpen, setStatusOpen] = useState(false);
@@ -60,6 +68,23 @@ export const TaskToolbar: React.FC<TaskToolbarProps> = ({
   return (
     <div className="c-toolbar c-toolbar--stack" role="region" aria-label="Task filters">
       <div className="c-row c-row--center">
+        {/* Assignee select (optional) */}
+        {onAssigneeChange && (
+          <label className="c-field" aria-label="Assignee">
+            <span className="sr-only sm:not-sr-only">Assignee</span>
+            <div className="c-select c-select--wide">
+              <select value={assignee || 'me'} onChange={(e) => onAssigneeChange(e.target.value)}>
+                <option value="me">Me</option>
+                <option value="all">All</option>
+                <option value="unassigned">Unassigned</option>
+                {Array.isArray(assigneeOptions) && assigneeOptions.map(u => (
+                  <option key={u} value={`name:${u}`}>{u}</option>
+                ))}
+              </select>
+              <svg aria-hidden className="c-caret" width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><path d="M5.23 7.21a.75.75 0 011.06.02L10 11.207l3.71-3.976a.75.75 0 111.1 1.02l-4.25 4.55a.75.75 0 01-1.1 0l-4.25-4.55a.75.75 0 01.02-1.06z"/></svg>
+            </div>
+          </label>
+        )}
         {/* Status multi-select dropdown */}
         <div className="c-field" ref={statusRef} aria-label="Status">
           <div className="c-select c-select--multi">
