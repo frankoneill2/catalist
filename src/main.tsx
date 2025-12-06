@@ -20,6 +20,7 @@ function mountToolbar() {
     const [assignee, setAssignee] = useState<string>('me');
     const [userOptions, setUserOptions] = useState<string[]>([]);
 
+    // Hydrate from external state (assignee included) for My Tasks toolbar
     useEffect(() => {
       const handler = (e: any) => {
         const d = (e && e.detail) || {};
@@ -33,6 +34,7 @@ function mountToolbar() {
       return () => document.removeEventListener('userToolbar:hydrate', handler);
     }, []);
 
+    // Receive user list for Assignee options
     useEffect(() => {
       const handler = (e: any) => {
         const d = (e && e.detail) || {};
@@ -41,30 +43,7 @@ function mountToolbar() {
       document.addEventListener('userToolbar:users', handler);
       return () => document.removeEventListener('userToolbar:users', handler);
     }, []);
-    const [assignee, setAssignee] = useState<string>('me');
-    const [userOptions, setUserOptions] = useState<string[]>([]);
-
-    useEffect(() => {
-      const handler = (e: any) => {
-        const d = (e && e.detail) || {};
-        if (Array.isArray(d.statuses)) setStatuses(new Set(d.statuses as Status[]));
-        if (d.priority) setPriority(d.priority as Priority);
-        if (d.sort) setSort(d.sort as Sort);
-        if (typeof d.search === 'string') setSearch(d.search);
-        if (typeof d.assignee === 'string') setAssignee(d.assignee);
-      };
-      document.addEventListener('userToolbar:hydrate', handler);
-      return () => document.removeEventListener('userToolbar:hydrate', handler);
-    }, []);
-
-    useEffect(() => {
-      const handler = (e: any) => {
-        const d = (e && e.detail) || {};
-        if (Array.isArray(d.users)) setUserOptions(d.users as string[]);
-      };
-      document.addEventListener('userToolbar:users', handler);
-      return () => document.removeEventListener('userToolbar:users', handler);
-    }, []);
+    
     const [assignee, setAssignee] = useState<string>('me');
     const [userOptions, setUserOptions] = useState<string[]>([]);
 
