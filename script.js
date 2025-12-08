@@ -1885,6 +1885,29 @@ function startRealtimeCaseFields(caseId) {
   unsubCaseDoc = onSnapshot(ref, async (snap) => {
     if (!snap.exists()) return;
     const data = snap.data();
+    // Render tag chips under the title
+    try {
+      const chipsWrap = document.getElementById('case-tag-chips');
+      if (chipsWrap) {
+        chipsWrap.innerHTML = '';
+        const ct = data.caseTags || {};
+        const mkChip = (type, id) => {
+          if (!id) return;
+          const list = type === 'room' ? (subtagsByParent.get(ct.location) || []) : (tagsByType.get(type) || []);
+          const tag = list.find(t => t.id === id);
+          if (!tag) return;
+          const chip = document.createElement('span'); chip.className='tag-chip'; chip.setAttribute('role','button'); chip.setAttribute('tabindex','0');
+          const t = document.createElement('span'); t.textContent = tag.name; chip.appendChild(t);
+          const openEditor = () => { const anchor = caseTitleEl || chipsWrap; openTagPanelForCase(caseId, anchor); };
+          chip.addEventListener('click', (e)=>{ e.stopPropagation(); openEditor(); });
+          chip.addEventListener('keydown', (e)=>{ if (e.key==='Enter'||e.key===' '){ e.preventDefault(); openEditor(); } });
+          chipsWrap.appendChild(chip);
+        };
+        mkChip('location', ct.location || null);
+        if (ct.room && ct.location) mkChip('room', ct.room);
+        mkChip('consultant', ct.consultant || null);
+      }
+    } catch {}
     const fill = async (el, L) => {
       if (!el) return;
       const { c, iv } = fieldNames(L);
@@ -2196,13 +2219,29 @@ window.addEventListener('DOMContentLoaded', async () => {
   userBackBtn = document.getElementById('user-back-btn');
   brandHome = document.getElementById('brand-home');
   // Add a Delete Case button next to the case title if not present
-  if (caseTitleEl && !document.getElementById('case-delete-btn')) {
-    const del = document.createElement('button');
-    del.id = 'case-delete-btn';
-    del.className = 'icon-btn delete-btn';
-    del.textContent = 'Delete';
-    del.style.marginLeft = '8px';
-    del.addEventListener('click', async () => {
+  // Case header overflow menu (⋯) with Delete
+  const actionsWrap = document.getElementById('case-header-actions');
+  if (actionsWrap && !document.getElementById('case-overflow-btn')) {
+    const btn = document.createElement('button');
+    btn.id = 'case-overflow-btn';
+    btn.className = 'icon-btn case-overflow-btn';
+    btn.type = 'button';
+    btn.setAttribute('aria-haspopup', 'true');
+    btn.setAttribute('aria-expanded', 'false');
+    btn.textContent = '⋯';
+    const panel = document.createElement('div');
+    panel.id = 'case-overflow-panel';
+    panel.className = 'case-overflow-panel';
+    panel.hidden = true;
+    const addItem = (label, onClick, danger=false) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'case-overflow-item' + (danger ? ' delete' : '');
+      b.textContent = label;
+      b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); panel.hidden = true; btn.setAttribute('aria-expanded','false'); });
+      panel.appendChild(b);
+    };
+    addItem('Delete case', async () => {
       if (!currentCaseId) return;
       if (!confirm('Delete this case and all its items?')) return;
       try {
@@ -2211,12 +2250,13 @@ window.addEventListener('DOMContentLoaded', async () => {
         caseDetailEl.hidden = true;
         if (tableSection) tableSection.hidden = false;
         showToast('Case deleted');
-      } catch (err) {
-        console.error('Failed to delete case', err);
-        showToast('Failed to delete case');
-      }
-    });
-    caseTitleEl.insertAdjacentElement('afterend', del);
+      } catch (err) { console.error('Failed to delete case', err); showToast('Failed to delete case'); }
+    }, true);
+    actionsWrap.appendChild(btn);
+    actionsWrap.appendChild(panel);
+    const toggle = (open) => { panel.hidden = !open; btn.setAttribute('aria-expanded', String(open)); };
+    btn.addEventListener('click', (e)=>{ e.stopPropagation(); toggle(panel.hidden); });
+    document.addEventListener('click', (e)=>{ if (!panel.hidden && e.target !== btn && !panel.contains(e.target)) toggle(false); }, true);
   }
   userFilterEl = document.getElementById('user-filter');
   userStatusEls = Array.from(document.querySelectorAll('.user-status'));

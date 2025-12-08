@@ -1020,3 +1020,20 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
 
 /* Print header inside print window */
 .print-header { font-size: 12px; color: #111827; margin: 8px 0 6px; padding-bottom: 4px; border-bottom: 1px solid #e5e7eb; }
+#case-detail .tabs {
+  position: sticky;
+  top: 56px; /* below sticky topbar */
+  z-index: 6;
+  background: #fff;
+  padding-top: 4px;
+}
+
+.case-header-actions { position: relative; display: inline-block; margin-left: 8px; }
+.case-overflow-btn { font-weight: 600; }
+.case-overflow-panel { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: var(--shadow-lg); padding: 6px; min-width: 160px; }
+.case-overflow-panel[hidden] { display: none; }
+.case-overflow-item { display: block; width: 100%; text-align: left; background: none; border: none; padding: 8px 10px; border-radius: 6px; color: var(--text); cursor: pointer; }
+.case-overflow-item.delete { color: #ef4444; }
+
+/* Case tag chips under title */
+#case-tag-chips { margin: 6px 0 8px; }
