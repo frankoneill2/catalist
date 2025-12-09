@@ -108,6 +108,19 @@ const CELL_COLORS = [
   '#f3e8ff', // purple-100
 ];
 
+// Toggle for whether to show cell color affordance on hover
+let showCellColor = true;
+function setCellColorEnabled(on) {
+  showCellColor = !!on;
+  const sec = document.getElementById('table-section');
+  if (sec) sec.classList.toggle('cell-color-disabled', !on);
+  try { localStorage.setItem('table.showCellColor', on ? '1' : '0'); } catch {}
+  if (!on) {
+    const existing = document.querySelector('.color-panel');
+    if (existing) existing.remove();
+  }
+}
+
 // Tags caches
 let tagsByType = new Map(); // type -> [{id, name, order}]
 let subtagsByParent = new Map(); // parentTagId -> [{id, name, order, type}]
@@ -1470,64 +1483,66 @@ function startRealtimeTable() {
           const bg = data[colorField] || null;
           if (bg) td.style.background = bg;
 
-          // Add subtle color button (top-right of cell)
-          const colorBtn = document.createElement('button');
-          colorBtn.type = 'button';
-          colorBtn.className = 'cell-color-btn';
-          colorBtn.title = 'Cell color';
-          colorBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            // Close any existing panel
-            const existing = document.querySelector('.color-panel');
-            if (existing) existing.remove();
-            const panel = document.createElement('div');
-            panel.className = 'color-panel';
-            // None (clear) option
-            const none = document.createElement('div');
-            none.className = 'color-swatch none';
-            none.title = 'None';
-            none.addEventListener('click', async (ev) => {
-              ev.stopPropagation();
-              try {
-                const update = {}; update[colorField] = null;
-                await updateDoc(doc(db, 'cases', d.id), update);
-                td.style.background = '';
-              } catch (err) { console.error('Failed to clear color', err); showToast('Failed to update color'); }
-              panel.remove();
-            });
-            panel.appendChild(none);
-            // Color swatches
-            for (const col of CELL_COLORS) {
-              const sw = document.createElement('div');
-              sw.className = 'color-swatch';
-              sw.style.background = col;
-              sw.title = col;
-              sw.addEventListener('click', async (ev) => {
+          // Add subtle color button (top-right of cell) if enabled
+          if (showCellColor) {
+            const colorBtn = document.createElement('button');
+            colorBtn.type = 'button';
+            colorBtn.className = 'cell-color-btn';
+            colorBtn.title = 'Cell color';
+            colorBtn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              // Close any existing panel
+              const existing = document.querySelector('.color-panel');
+              if (existing) existing.remove();
+              const panel = document.createElement('div');
+              panel.className = 'color-panel';
+              // None (clear) option
+              const none = document.createElement('div');
+              none.className = 'color-swatch none';
+              none.title = 'None';
+              none.addEventListener('click', async (ev) => {
                 ev.stopPropagation();
                 try {
-                  const update = {}; update[colorField] = col;
+                  const update = {}; update[colorField] = null;
                   await updateDoc(doc(db, 'cases', d.id), update);
-                  td.style.background = col; // optimistic
-                } catch (err) { console.error('Failed to set color', err); showToast('Failed to update color'); }
+                  td.style.background = '';
+                } catch (err) { console.error('Failed to clear color', err); showToast('Failed to update color'); }
                 panel.remove();
               });
-              panel.appendChild(sw);
-            }
-            document.body.appendChild(panel);
-            // Position panel near button
-            const r = colorBtn.getBoundingClientRect();
-            requestAnimationFrame(() => {
-              const pw = panel.offsetWidth || 180;
-              const ph = panel.offsetHeight || 120;
-              const left = Math.min(Math.max(8, r.right - pw), window.innerWidth - pw - 8);
-              const top = Math.min(window.innerHeight - ph - 8, r.bottom + 6);
-              panel.style.left = `${Math.round(left)}px`;
-              panel.style.top = `${Math.round(top)}px`;
+              panel.appendChild(none);
+              // Color swatches
+              for (const col of CELL_COLORS) {
+                const sw = document.createElement('div');
+                sw.className = 'color-swatch';
+                sw.style.background = col;
+                sw.title = col;
+                sw.addEventListener('click', async (ev) => {
+                  ev.stopPropagation();
+                  try {
+                    const update = {}; update[colorField] = col;
+                    await updateDoc(doc(db, 'cases', d.id), update);
+                    td.style.background = col; // optimistic
+                  } catch (err) { console.error('Failed to set color', err); showToast('Failed to update color'); }
+                  panel.remove();
+                });
+                panel.appendChild(sw);
+              }
+              document.body.appendChild(panel);
+              // Position panel near button
+              const r = colorBtn.getBoundingClientRect();
+              requestAnimationFrame(() => {
+                const pw = panel.offsetWidth || 180;
+                const ph = panel.offsetHeight || 120;
+                const left = Math.min(Math.max(8, r.right - pw), window.innerWidth - pw - 8);
+                const top = Math.min(window.innerHeight - ph - 8, r.bottom + 6);
+                panel.style.left = `${Math.round(left)}px`;
+                panel.style.top = `${Math.round(top)}px`;
+              });
+              const onDocClick = (evt) => { if (!panel.contains(evt.target) && evt.target !== colorBtn) { panel.remove(); document.removeEventListener('click', onDocClick, true); } };
+              setTimeout(() => document.addEventListener('click', onDocClick, true), 0);
             });
-            const onDocClick = (evt) => { if (!panel.contains(evt.target) && evt.target !== colorBtn) { panel.remove(); document.removeEventListener('click', onDocClick, true); } };
-            setTimeout(() => document.addEventListener('click', onDocClick, true), 0);
-          });
-          td.appendChild(colorBtn);
+            td.appendChild(colorBtn);
+          }
           td.appendChild(ed);
         }
         tr.appendChild(td);
@@ -1593,6 +1608,22 @@ function setupTableFilterUI() {
   const clearBtn = document.createElement('button'); clearBtn.type='button'; clearBtn.className='icon-btn small'; clearBtn.textContent='Clear'; clearBtn.addEventListener('click', ()=>{ activeTagFilters.location.clear(); activeTagFilters.consultant.clear(); activeTagFilters.room.clear(); saveTagFilterState(); updateFilterPills(); if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs); });
   const hideBtn = document.createElement('button'); hideBtn.type='button'; hideBtn.className='icon-btn small'; hideBtn.textContent='Hide'; hideBtn.addEventListener('click', ()=>{ setTableFiltersHidden(true); });
   right.appendChild(seg); right.appendChild(dirBtn); right.appendChild(clearBtn); right.appendChild(hideBtn);
+
+  // Cell color toggle (buried in filters menu)
+  const colorWrap = document.createElement('label');
+  colorWrap.className = 'ctrl';
+  colorWrap.style.display = 'inline-flex';
+  colorWrap.style.alignItems = 'center';
+  colorWrap.style.gap = '6px';
+  const colorChk = document.createElement('input'); colorChk.type = 'checkbox';
+  const colorText = document.createElement('span'); colorText.textContent = 'Cell colors'; colorText.className = 'section-label';
+  // Load persisted preference
+  try { showCellColor = (localStorage.getItem('table.showCellColor') ?? '1') !== '0'; } catch { showCellColor = true; }
+  colorChk.checked = !!showCellColor;
+  setCellColorEnabled(showCellColor);
+  colorChk.addEventListener('change', () => { setCellColorEnabled(colorChk.checked); });
+  colorWrap.appendChild(colorChk); colorWrap.appendChild(colorText);
+  right.insertBefore(colorWrap, clearBtn);
 
   // Helper: render active chips and counts on pills
   function renderActiveChips() {

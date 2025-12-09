@@ -665,6 +665,9 @@ button:focus-visible {
 }
 .cell-color-btn::after { content: '\u2022'; display: block; text-align: center; line-height: 16px; color: #6b7280; font-weight: 700; }
 #table-section .data-table td:hover .cell-color-btn { visibility: visible; }
+/* Disable hover color affordance via toggle */
+#table-section.cell-color-disabled .data-table td .cell-color-btn { display: none !important; visibility: hidden !important; }
+#table-section.cell-color-disabled .color-panel { display: none !important; }
 
 .color-panel {
   position: fixed;
