@@ -1292,7 +1292,7 @@ function buildTableSkeleton() {
   table.className = 'data-table';
   const thead = document.createElement('thead');
   const tr = document.createElement('tr');
-  const headers = ['Patient', 'Column A', 'Column B', 'Column C', 'Column D', 'Column E', 'Tasks'];
+  const headers = ['Patient', 'Diagnosis', 'History', 'Micro/ABx', 'Investigations', 'Updates', 'Tasks'];
   for (const h of headers) { const th = document.createElement('th'); th.textContent = h; tr.appendChild(th); }
   thead.appendChild(tr);
   const tbody = document.createElement('tbody');
