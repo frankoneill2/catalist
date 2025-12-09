@@ -648,6 +648,45 @@ button:focus-visible {
 .data-table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 720px; }
 .data-table { table-layout: fixed; }
 .data-table th, .data-table td { border: 1px solid #e5e7eb; padding: 8px; background: #fff; }
+/* Subtle per-cell color control (table) */
+#table-section .data-table td { position: relative; }
+.cell-color-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  visibility: hidden;
+}
+.cell-color-btn::after { content: '\u2022'; display: block; text-align: center; line-height: 16px; color: #6b7280; font-weight: 700; }
+#table-section .data-table td:hover .cell-color-btn { visibility: visible; }
+
+.color-panel {
+  position: fixed;
+  z-index: 2147483646;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  padding: 6px;
+  display: grid;
+  grid-template-columns: repeat(6, 18px);
+  gap: 6px;
+}
+.color-swatch {
+  width: 18px; height: 18px; border-radius: 4px; cursor: pointer; border: 1px solid rgba(0,0,0,0.08);
+}
+.color-swatch.none { background: repeating-linear-gradient(45deg, #f3f4f6, #f3f4f6 4px, #ffffff 4px, #ffffff 8px); }
+
+/* Hide color UI in print */
+@media print {
+  #table-section .cell-color-btn, #table-section .color-panel { display: none !important; }
+}
 .data-table th { background: #f9fafb; text-align: left; font-weight: 600; }
 .data-table td .cell-edit { width: 100%; min-width: 140px; border: 1px solid transparent; border-radius: 8px; padding: 8px 10px; }
 .data-table td .cell-edit:focus { outline: none; border-color: #bfdbfe; box-shadow: 0 0 0 3px rgba(59,130,246,0.2); }

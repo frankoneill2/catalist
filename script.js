@@ -92,6 +92,22 @@ let userStatusEls = [];
 let userPriorityFilterEl, userSortEl;
 let userFilterByName = new Map(); // username -> { statuses: [...], priority: 'all'|'high'|'medium'|'low', sort: 'none'|'pri-asc'|'pri-desc' }
 
+// Gentle cell background colors for table cells
+const CELL_COLORS = [
+  '#fef3c7', // amber-100
+  '#fde68a', // amber-200
+  '#dcfce7', // green-100
+  '#bbf7d0', // green-200
+  '#dbeafe', // blue-100
+  '#bfdbfe', // blue-200
+  '#e0e7ff', // indigo-100
+  '#ddd6fe', // violet-200
+  '#fae8ff', // fuchsia-100
+  '#fee2e2', // red-100
+  '#ffe4e6', // rose-100
+  '#f3e8ff', // purple-100
+];
+
 // Tags caches
 let tagsByType = new Map(); // type -> [{id, name, order}]
 let subtagsByParent = new Map(); // parentTagId -> [{id, name, order, type}]
@@ -1449,6 +1465,69 @@ function startRealtimeTable() {
           ed.addEventListener('paste', (e) => { e.preventDefault(); const text=(e.clipboardData||window.clipboardData).getData('text'); if (document.queryCommandSupported && document.queryCommandSupported('insertText')) { document.execCommand('insertText', false, text); } else { const sel=window.getSelection(); if (sel && sel.rangeCount) { sel.deleteFromDocument(); sel.getRangeAt(0).insertNode(document.createTextNode(text)); } } });
           ed.addEventListener('input', () => { clearTimeout(ed._t); ed._t = setTimeout(saveNow, 1000); });
           ed.addEventListener('keydown', (e) => { const cellIndex=td.cellIndex; if (e.key==='Enter' && !(e.ctrlKey||e.metaKey)) { return; } else if ((e.key==='Enter') && (e.ctrlKey||e.metaKey)) { e.preventDefault(); saveNow(); const nextRow=tr.nextElementSibling; if (nextRow && nextRow.children[cellIndex]) { const n=nextRow.children[cellIndex].querySelector('.cell-editable'); if (n) n.focus(); } } else if (e.key==='Tab') { e.preventDefault(); saveNow(); const dir=e.shiftKey?-1:1; let targetCol=cellIndex+dir; let targetRow=tr; if (targetCol<1) { const prev=tr.previousElementSibling; if (prev) { targetRow=prev; targetCol=6; } else { return; } } else if (targetCol>6) { const next=tr.nextElementSibling; if (next) { targetRow=next; targetCol=1; } else { return; } } const targetCell=targetRow.children[targetCol]; if (targetCell) { const n=targetCell.querySelector('.cell-editable'); if (n) n.focus(); } } else if (e.key==='Escape') { e.preventDefault(); ed.textContent=last; } });
+          // Apply saved background color if present
+          const colorField = `col${letter}Color`;
+          const bg = data[colorField] || null;
+          if (bg) td.style.background = bg;
+
+          // Add subtle color button (top-right of cell)
+          const colorBtn = document.createElement('button');
+          colorBtn.type = 'button';
+          colorBtn.className = 'cell-color-btn';
+          colorBtn.title = 'Cell color';
+          colorBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            // Close any existing panel
+            const existing = document.querySelector('.color-panel');
+            if (existing) existing.remove();
+            const panel = document.createElement('div');
+            panel.className = 'color-panel';
+            // None (clear) option
+            const none = document.createElement('div');
+            none.className = 'color-swatch none';
+            none.title = 'None';
+            none.addEventListener('click', async (ev) => {
+              ev.stopPropagation();
+              try {
+                const update = {}; update[colorField] = null;
+                await updateDoc(doc(db, 'cases', d.id), update);
+                td.style.background = '';
+              } catch (err) { console.error('Failed to clear color', err); showToast('Failed to update color'); }
+              panel.remove();
+            });
+            panel.appendChild(none);
+            // Color swatches
+            for (const col of CELL_COLORS) {
+              const sw = document.createElement('div');
+              sw.className = 'color-swatch';
+              sw.style.background = col;
+              sw.title = col;
+              sw.addEventListener('click', async (ev) => {
+                ev.stopPropagation();
+                try {
+                  const update = {}; update[colorField] = col;
+                  await updateDoc(doc(db, 'cases', d.id), update);
+                  td.style.background = col; // optimistic
+                } catch (err) { console.error('Failed to set color', err); showToast('Failed to update color'); }
+                panel.remove();
+              });
+              panel.appendChild(sw);
+            }
+            document.body.appendChild(panel);
+            // Position panel near button
+            const r = colorBtn.getBoundingClientRect();
+            requestAnimationFrame(() => {
+              const pw = panel.offsetWidth || 180;
+              const ph = panel.offsetHeight || 120;
+              const left = Math.min(Math.max(8, r.right - pw), window.innerWidth - pw - 8);
+              const top = Math.min(window.innerHeight - ph - 8, r.bottom + 6);
+              panel.style.left = `${Math.round(left)}px`;
+              panel.style.top = `${Math.round(top)}px`;
+            });
+            const onDocClick = (evt) => { if (!panel.contains(evt.target) && evt.target !== colorBtn) { panel.remove(); document.removeEventListener('click', onDocClick, true); } };
+            setTimeout(() => document.addEventListener('click', onDocClick, true), 0);
+          });
+          td.appendChild(colorBtn);
           td.appendChild(ed);
         }
         tr.appendChild(td);
@@ -1923,6 +2002,15 @@ function startRealtimeCaseFields(caseId) {
       fill(colEInput, 'E'),
       fill(colFInput, 'F'),
     ]);
+    // Apply cell background colors to notes inputs (A–E) if present
+    try {
+      const applyBg = (el, L) => { if (!el) return; const key = `col${L}Color`; const bg = data[key] || null; el.style.background = bg ? bg : ''; };
+      applyBg(colAInput, 'A');
+      applyBg(colBInput, 'B');
+      applyBg(colCInput, 'C');
+      applyBg(colDInput, 'D');
+      applyBg(colEInput, 'E');
+    } catch {}
   });
 }
 
