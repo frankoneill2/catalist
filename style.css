@@ -690,6 +690,42 @@ button:focus-visible {
 @media print {
   #table-section .cell-color-btn, #table-section .color-panel { display: none !important; }
 }
+
+/* Info (header+body) popover for cells */
+.cell-info-btn {
+  position: absolute;
+  top: 4px;
+  right: 26px; /* leave room for color button */
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  visibility: hidden;
+  font-size: 12px;
+  line-height: 16px;
+}
+#table-section .data-table td:hover .cell-info-btn { visibility: visible; }
+.cell-body-panel {
+  position: fixed;
+  z-index: 2147483646;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  padding: 8px;
+  width: min(420px, 80vw);
+  max-height: 300px;
+  overflow: auto;
+}
+.cell-body-title { font-weight: 600; color: #374151; margin-bottom: 4px; }
+.cell-body-text { white-space: pre-wrap; overflow-wrap: anywhere; color: #374151; }
+
+@media print {
+  #table-section .cell-info-btn, #table-section .cell-body-panel { display: none !important; }
+}
 .data-table th { background: #f9fafb; text-align: left; font-weight: 600; }
 .data-table td .cell-edit { width: 100%; min-width: 140px; border: 1px solid transparent; border-radius: 8px; padding: 8px 10px; }
 .data-table td .cell-edit:focus { outline: none; border-color: #bfdbfe; box-shadow: 0 0 0 3px rgba(59,130,246,0.2); }
@@ -1130,6 +1166,9 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
   min-height: 3.25rem;
   resize: vertical; /* tidy layout */
 }
+
+.note-content { display: grid; gap: 6px; }
+.note-body { min-height: 6.5rem; }
 
 /* Subtle focus state without heavy ring */
 .note-row textarea:focus,

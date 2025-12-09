@@ -31,7 +31,8 @@ let caseDetailEl, caseTitleEl, backBtn;
 let taskForm, taskInput, taskListEl;
 let taskAssigneeEl, taskPriorityEl, composerOptsEl;
 let noteForm, noteInput, notesListEl;
-let colAInput, colBInput, colCInput, colDInput, colEInput, colFInput; // A–F fields
+let colAInput, colBInput, colCInput, colDInput, colEInput, colFInput; // A–F headers
+let colABody, colBBody, colCBody, colDBody, colEBody; // A–E bodies
 let notesTasksList, notesTasksForm, notesTasksInput; // Notes embedded tasks
 let tableSection, tableRoot; // Table view
 // Tag controls
@@ -119,6 +120,16 @@ function setCellColorEnabled(on) {
     const existing = document.querySelector('.color-panel');
     if (existing) existing.remove();
   }
+}
+
+// Cache decrypted section bodies to avoid repeated decrypts: Map(caseId -> Map(letter -> string))
+const cellBodyCache = new Map();
+function cacheBody(caseId, letter, text) {
+  if (!cellBodyCache.has(caseId)) cellBodyCache.set(caseId, new Map());
+  cellBodyCache.get(caseId).set(letter, text);
+}
+function getCachedBody(caseId, letter) {
+  return (cellBodyCache.get(caseId) || new Map()).get(letter);
 }
 
 // Tags caches
@@ -1298,6 +1309,10 @@ function fieldNames(letter) {
   return { c: `col${letter}Cipher`, iv: `col${letter}Iv` };
 }
 
+function bodyFieldNames(letter) {
+  return { c: `col${letter}BodyCipher`, iv: `col${letter}BodyIv` };
+}
+
 async function saveCaseColumn(caseId, letter, value) {
   const { c, iv } = fieldNames(letter);
   const text = (value || '').trim();
@@ -1311,6 +1326,23 @@ async function saveCaseColumn(caseId, letter, value) {
     }
   } catch (err) {
     console.error('Failed to save column', letter, err);
+    showToast('Failed to save');
+  }
+}
+
+async function saveCaseColumnBody(caseId, letter, value) {
+  const { c, iv } = bodyFieldNames(letter);
+  const text = (value || '').trim();
+  if (!caseId) return;
+  try {
+    if (!text) {
+      await updateDoc(doc(db, 'cases', caseId), { [c]: null, [iv]: null });
+    } else {
+      const e = await encryptText(text);
+      await updateDoc(doc(db, 'cases', caseId), { [c]: e.cipher, [iv]: e.iv });
+    }
+  } catch (err) {
+    console.error('Failed to save body column', letter, err);
     showToast('Failed to save');
   }
 }
@@ -1543,6 +1575,41 @@ function startRealtimeTable() {
             });
             td.appendChild(colorBtn);
           }
+          // Info icon to preview header+body
+          const infoBtn = document.createElement('button');
+          infoBtn.type = 'button'; infoBtn.className = 'cell-info-btn'; infoBtn.title = 'Show details'; infoBtn.textContent = 'i';
+          const openInfo = async () => {
+            // Close existing
+            const existing = document.querySelector('.cell-body-panel'); if (existing) existing.remove();
+            const panel = document.createElement('div'); panel.className = 'cell-body-panel';
+            const title = document.createElement('div'); title.className = 'cell-body-title'; title.textContent = ed.textContent || '';
+            const body = document.createElement('div'); body.className = 'cell-body-text'; body.textContent = '';
+            panel.appendChild(title); panel.appendChild(body);
+            document.body.appendChild(panel);
+            // Load body lazily
+            try {
+              let text = getCachedBody(d.id, letter);
+              if (text == null) {
+                const { c: bc, iv: biv } = bodyFieldNames(letter);
+                if (data[bc] && data[biv]) { text = await decryptText(data[bc], data[biv]); } else { text = ''; }
+                cacheBody(d.id, letter, text);
+              }
+              body.textContent = text || '';
+            } catch {}
+            // Position panel near button
+            const r = infoBtn.getBoundingClientRect();
+            requestAnimationFrame(() => {
+              const pw = panel.offsetWidth || 240; const ph = panel.offsetHeight || 120;
+              const left = Math.min(Math.max(8, r.right - pw), window.innerWidth - pw - 8);
+              const top = Math.min(window.innerHeight - ph - 8, r.bottom + 6);
+              panel.style.left = `${Math.round(left)}px`; panel.style.top = `${Math.round(top)}px`;
+            });
+            const onDocClick = (evt) => { if (!panel.contains(evt.target) && evt.target !== infoBtn) { panel.remove(); document.removeEventListener('click', onDocClick, true); } };
+            setTimeout(() => document.addEventListener('click', onDocClick, true), 0);
+          };
+          infoBtn.addEventListener('mouseenter', openInfo);
+          infoBtn.addEventListener('click', (e) => { e.stopPropagation(); openInfo(); });
+          td.appendChild(infoBtn);
           td.appendChild(ed);
         }
         tr.appendChild(td);
@@ -1987,6 +2054,17 @@ function bindNotesFields() {
     if (!el) continue;
     el.addEventListener('blur', () => { if (currentCaseId != null) saveCaseColumn(currentCaseId, L, el.value); });
   }
+  const bodyMap = [
+    { el: colABody, L: 'A' },
+    { el: colBBody, L: 'B' },
+    { el: colCBody, L: 'C' },
+    { el: colDBody, L: 'D' },
+    { el: colEBody, L: 'E' },
+  ];
+  for (const { el, L } of bodyMap) {
+    if (!el) continue;
+    el.addEventListener('blur', () => { if (currentCaseId != null) saveCaseColumnBody(currentCaseId, L, el.value); });
+  }
 }
 
 function startRealtimeCaseFields(caseId) {
@@ -2025,6 +2103,13 @@ function startRealtimeCaseFields(caseId) {
       try { if (data[c] && data[iv]) val = await decryptText(data[c], data[iv]); } catch {}
       el.value = val;
     };
+    const fillBody = async (el, L) => {
+      if (!el) return;
+      const { c, iv } = bodyFieldNames(L);
+      let val = '';
+      try { if (data[c] && data[iv]) val = await decryptText(data[c], data[iv]); } catch {}
+      el.value = val;
+    };
     await Promise.all([
       fill(colAInput, 'A'),
       fill(colBInput, 'B'),
@@ -2032,6 +2117,13 @@ function startRealtimeCaseFields(caseId) {
       fill(colDInput, 'D'),
       fill(colEInput, 'E'),
       fill(colFInput, 'F'),
+    ]);
+    await Promise.all([
+      fillBody(colABody, 'A'),
+      fillBody(colBBody, 'B'),
+      fillBody(colCBody, 'C'),
+      fillBody(colDBody, 'D'),
+      fillBody(colEBody, 'E'),
     ]);
     // Apply cell background colors to notes inputs (A–E) if present
     try {
@@ -2041,6 +2133,11 @@ function startRealtimeCaseFields(caseId) {
       applyBg(colCInput, 'C');
       applyBg(colDInput, 'D');
       applyBg(colEInput, 'E');
+      applyBg(colABody, 'A');
+      applyBg(colBBody, 'B');
+      applyBg(colCBody, 'C');
+      applyBg(colDBody, 'D');
+      applyBg(colEBody, 'E');
     } catch {}
   });
 }
@@ -2322,6 +2419,11 @@ window.addEventListener('DOMContentLoaded', async () => {
   colDInput = document.getElementById('colD-input');
   colEInput = document.getElementById('colE-input');
   colFInput = document.getElementById('colF-input');
+  colABody = document.getElementById('colA-body');
+  colBBody = document.getElementById('colB-body');
+  colCBody = document.getElementById('colC-body');
+  colDBody = document.getElementById('colD-body');
+  colEBody = document.getElementById('colE-body');
   // Notes embedded tasks
   notesTasksList = document.getElementById('notes-tasks-list');
   notesTasksForm = document.getElementById('notes-tasks-form');
