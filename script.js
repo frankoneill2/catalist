@@ -1604,9 +1604,23 @@ function startRealtimeTable() {
               const top = Math.min(window.innerHeight - ph - 8, r.bottom + 6);
               panel.style.left = `${Math.round(left)}px`; panel.style.top = `${Math.round(top)}px`;
             });
-            const onDocClick = (evt) => { if (!panel.contains(evt.target) && evt.target !== infoBtn) { panel.remove(); document.removeEventListener('click', onDocClick, true); } };
+            // Auto-close on outside click or when leaving both trigger and panel
+            const onDocClick = (evt) => { if (!panel.contains(evt.target) && evt.target !== infoBtn) { cleanup(); } };
+            const cleanup = () => { panel.remove(); document.removeEventListener('click', onDocClick, true); };
             setTimeout(() => document.addEventListener('click', onDocClick, true), 0);
+            let overBtn = true; // we opened via hover/click on the button
+            let overPanel = false;
+            const scheduleClose = () => { setTimeout(() => { if (!overBtn && !overPanel && document.body.contains(panel)) cleanup(); }, 120); };
+            const onBtnEnter = () => { overBtn = true; };
+            const onBtnLeave = () => { overBtn = false; scheduleClose(); };
+            const onPanelEnter = () => { overPanel = true; };
+            const onPanelLeave = () => { overPanel = false; scheduleClose(); };
+            infoBtn.addEventListener('mouseenter', onBtnEnter);
+            infoBtn.addEventListener('mouseleave', onBtnLeave);
+            panel.addEventListener('mouseenter', onPanelEnter);
+            panel.addEventListener('mouseleave', onPanelLeave);
           };
+          // Open on hover and on click
           infoBtn.addEventListener('mouseenter', openInfo);
           infoBtn.addEventListener('click', (e) => { e.stopPropagation(); openInfo(); });
           td.appendChild(infoBtn);
