@@ -117,26 +117,28 @@
       <section id="notes" role="tabpanel" aria-labelledby="tab-notes" hidden>
         <h3><span class="emoji" aria-hidden="true">📝</span> Notes</h3>
         <div class="stack" id="af-fields">
-          <label>
-            A
-            <textarea id="colA-input" placeholder="Enter A" aria-label="A"></textarea>
-          </label>
-          <label>
-            B
-            <textarea id="colB-input" placeholder="Enter B" aria-label="B"></textarea>
-          </label>
-          <label>
-            C
-            <textarea id="colC-input" placeholder="Enter C" aria-label="C"></textarea>
-          </label>
-          <label>
-            D
-            <textarea id="colD-input" placeholder="Enter D" aria-label="D"></textarea>
-          </label>
-          <label>
-            E
-            <textarea id="colE-input" placeholder="Enter E" aria-label="E"></textarea>
-          </label>
+          <div class="notes" aria-label="Notes A to E">
+            <div class="note-row">
+              <div class="note-label">A</div>
+              <textarea id="colA-input" placeholder="Enter A" aria-label="A"></textarea>
+            </div>
+            <div class="note-row">
+              <div class="note-label">B</div>
+              <textarea id="colB-input" placeholder="Enter B" aria-label="B"></textarea>
+            </div>
+            <div class="note-row">
+              <div class="note-label">C</div>
+              <textarea id="colC-input" placeholder="Enter C" aria-label="C"></textarea>
+            </div>
+            <div class="note-row">
+              <div class="note-label">D</div>
+              <textarea id="colD-input" placeholder="Enter D" aria-label="D"></textarea>
+            </div>
+            <div class="note-row">
+              <div class="note-label">E</div>
+              <textarea id="colE-input" placeholder="Enter E" aria-label="E"></textarea>
+            </div>
+          </div>
           <div>
             <div style="font-size: 0.9rem; color: var(--muted); margin-bottom: 4px;">F — Tasks</div>
             <div id="notes-tasks" class="cell-tasks" aria-label="Tasks in notes">

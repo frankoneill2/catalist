@@ -1042,3 +1042,58 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
 
 /* Case tag chips under title */
 #case-tag-chips { margin: 6px 0 8px; }
+
+/* --- Unified Notes card (A–E) --- */
+.notes {
+  max-width: 800px;
+  margin: 1rem auto; /* center within section */
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden; /* merge row edges */
+  font-size: 0.95rem; /* slightly denser document feel */
+}
+
+.note-row {
+  display: grid;
+  grid-template-columns: 3rem 1fr;
+  align-items: start;
+  column-gap: 0;
+  padding: 6px 8px; /* internal breathing room */
+}
+
+.note-row + .note-row {
+  border-top: 1px solid #eef2f6; /* light separator */
+}
+
+.note-label {
+  padding: 10px 8px;
+  font-weight: 600;
+  color: #4b5563; /* muted modern grey */
+  font-size: 0.9rem;
+}
+
+/* Flatten textareas only inside notes */
+.note-row textarea {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  padding: 10px 12px;
+  font: inherit;
+  line-height: inherit;
+  min-height: 3.25rem;
+  resize: vertical; /* tidy layout */
+}
+
+/* Subtle focus state without heavy ring */
+.note-row textarea:focus,
+.note-row textarea:focus-visible {
+  background: #f8fafc;
+  box-shadow: none;
+}
+
+.note-row textarea::placeholder { color: #9ca3af; }
