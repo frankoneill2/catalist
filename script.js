@@ -542,7 +542,7 @@ function startRealtimeCases() {
       headerRow.appendChild(subinfo);
       headerRow.appendChild(actions);
       li.appendChild(headerRow);
-      li.addEventListener('click', () => openCase(docSnap.id, title, 'list'));
+      li.addEventListener('click', () => openCase(docSnap.id, title, 'list', 'notes'));
 
       // Compact tasks container (beneath header row)
       const tasksWrap = document.createElement('div');
@@ -3196,7 +3196,7 @@ function renderUserTasks() {
     link.className = 'link-btn';
     link.textContent = title;
     link.setAttribute('aria-label', `Open case ${title}`);
-    link.addEventListener('click', () => openCase(caseId, title, 'user'));
+    link.addEventListener('click', () => openCase(caseId, title, 'user', 'notes'));
     h.appendChild(link);
     header.appendChild(h);
     const countBadge = document.createElement('span');
