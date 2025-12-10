@@ -1561,12 +1561,32 @@ function startRealtimeTable() {
                   e.preventDefault();
                   if (items.length >= max) { showToast('Limit 8 items'); return; }
                   const ni = newItem('',''); items.splice(i+1,0,ni); saveTitles(); window._cellExpand.add(expandedKey); renderLines(true);
-                  setTimeout(()=>{ const n=container.querySelectorAll('.cell-title')[i+1]; if (n) { n.focus(); } },0);
+                  setTimeout(()=>{
+                    const n=container.querySelectorAll('.cell-title')[i+1];
+                    if (n) {
+                      n.focus();
+                      try {
+                        const sel = window.getSelection(); const range = document.createRange();
+                        range.selectNodeContents(n); range.collapse(true);
+                        sel.removeAllRanges(); sel.addRange(range);
+                      } catch {}
+                    }
+                  },0);
                 } else if (e.key==='Backspace' && atStart && i>0) {
                   e.preventDefault();
                   const prev = items[i-1]; const cur = items[i];
                   prev.title = (prev.title||'') + (cur.title||''); items.splice(i,1); saveTitles(); renderLines(showAll);
-                  setTimeout(()=>{ const p=container.querySelectorAll('.cell-title')[i-1]; if (p) { p.focus(); }},0);
+                  setTimeout(()=>{
+                    const p=container.querySelectorAll('.cell-title')[i-1];
+                    if (p) {
+                      p.focus();
+                      try {
+                        const sel = window.getSelection(); const range = document.createRange();
+                        range.selectNodeContents(p); range.collapse(false);
+                        sel.removeAllRanges(); sel.addRange(range);
+                      } catch {}
+                    }
+                  },0);
                 } else if (e.key==='Tab') {
                   e.preventDefault();
                   const dir = e.shiftKey?-1:1; const cellIndex=td.cellIndex; let targetCol=cellIndex+dir; let targetRow=tr;
