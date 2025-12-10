@@ -1170,6 +1170,24 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
 .note-content { display: grid; gap: 6px; }
 .note-body { min-height: 6.5rem; }
 
+/* Notes items list */
+.note-items { display: grid; gap: 8px; }
+.note-item { display: grid; gap: 4px; padding: 6px 0; }
+.note-item .note-item-header { width: 100%; border: none; outline: none; background: transparent; padding: 6px 10px; border-radius: 0; font: inherit; }
+.note-item .note-item-body { min-height: 6rem; border: none; outline: none; background: transparent; padding: 6px 10px; resize: vertical; font: inherit; }
+.note-item .note-actions { display: inline-flex; gap: 6px; }
+.note-item .note-actions .icon-btn { min-height: 0; height: 24px; font-size: 12px; padding: 2px 6px; border: 1px solid #e5e7eb; border-radius: 6px; }
+.add-note-item { justify-self: start; }
+
+/* Table cell multi-headers */
+.cell-items { display: grid; gap: 2px; position: relative; }
+.cell-line { display: grid; grid-template-columns: 10px 1fr; align-items: start; gap: 4px; }
+.cell-bullet { width: 6px; height: 6px; border-radius: 50%; background: #9ca3af; margin-top: 6px; }
+.cell-line .cell-title { display: inline-block; min-height: 18px; outline: none; border: 1px solid transparent; border-radius: 4px; padding: 2px 4px; }
+.cell-line .cell-title:focus { border-color: #bfdbfe; box-shadow: 0 0 0 3px rgba(59,130,246,0.2); }
+.cell-more { font-size: 12px; color: #6b7280; cursor: pointer; user-select: none; }
+.cell-collapse { font-size: 12px; color: #6b7280; cursor: pointer; user-select: none; }
+
 /* Subtle focus state without heavy ring */
 .note-row textarea:focus,
 .note-row textarea:focus-visible {

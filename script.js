@@ -1347,6 +1347,50 @@ async function saveCaseColumnBody(caseId, letter, value) {
   }
 }
 
+// Multi-item model per column (A–E)
+function itemsFieldName(letter) { return `col${letter}Items`; }
+function newItem(title = '', body = '') {
+  return { id: Math.random().toString(36).slice(2, 10), title, body, order: Date.now() };
+}
+async function decryptItems(data, letter) {
+  const arr = data[itemsFieldName(letter)] || null;
+  if (Array.isArray(arr) && arr.length) {
+    const out = [];
+    for (const it of arr) {
+      let title = '', body = '';
+      try { if (it.titleCipher && it.titleIv) title = await decryptText(it.titleCipher, it.titleIv); } catch {}
+      try { if (it.bodyCipher && it.bodyIv) body = await decryptText(it.bodyCipher, it.bodyIv); } catch {}
+      out.push({ id: it.id || Math.random().toString(36).slice(2,10), title, body, order: it.order || 0 });
+    }
+    out.sort((a,b)=> (a.order||0) - (b.order||0));
+    return out;
+  }
+  // Fallback to legacy single header/body
+  let title = '', body = '';
+  try { const { c, iv } = fieldNames(letter); if (data[c] && data[iv]) title = await decryptText(data[c], data[iv]); } catch {}
+  try { const { c, iv } = bodyFieldNames(letter); if (data[c] && data[iv]) body = await decryptText(data[c], data[iv]); } catch {}
+  if (title || body) return [{ id: 'legacy', title, body, order: 0 }];
+  return [];
+}
+async function encryptItemsPayload(items) {
+  const out = [];
+  for (const it of items) {
+    const { cipher: titleCipher, iv: titleIv } = await encryptText((it.title||'').trim());
+    const { cipher: bodyCipher, iv: bodyIv } = await encryptText((it.body||'').trim());
+    out.push({ id: it.id, titleCipher, titleIv, bodyCipher, bodyIv, order: it.order||0 });
+  }
+  return out;
+}
+async function saveItems(caseId, letter, items) {
+  const field = itemsFieldName(letter);
+  const payload = await encryptItemsPayload(items);
+  const first = (items[0] && (items[0].title||'').trim()) || '';
+  const legacy = first ? await encryptText(first) : null;
+  const p = { [field]: payload };
+  if (legacy) { const { c, iv } = fieldNames(letter); p[c] = legacy.cipher; p[iv] = legacy.iv; } else { const { c, iv } = fieldNames(letter); p[c] = null; p[iv] = null; }
+  await updateDoc(doc(db, 'cases', caseId), p);
+}
+
 function buildTableSkeleton() {
   if (!tableRoot) return { table: null, tbody: null };
   const table = document.createElement('table');
@@ -1494,22 +1538,59 @@ function startRealtimeTable() {
           const unsub = attachTasksListRealtime(d.id, ul);
           tableTaskUnsubs.set(d.id, unsub);
         } else {
-          const ed = document.createElement('div');
-          ed.className = 'cell-editable';
-          ed.setAttribute('contenteditable', 'true');
-          ed.dataset.placeholder = `Enter ${letter}`;
-          ed.dataset.caseId = d.id;
-          ed.dataset.letter = letter;
-          const { c, iv } = fieldNames(letter);
-          let val = '';
-          try { if (data[c] && data[iv]) val = await decryptText(data[c], data[iv]); } catch {}
-          ed.textContent = val;
-          let last = val;
-          const saveNow = () => { const v = (ed.innerText || '').replace(/\r/g, ''); if (v !== last) { last = v; saveCaseColumn(d.id, letter, v); } };
-          ed.addEventListener('blur', () => { saveNow(); if (tableRebuildPending && pendingTableSnap) { const snapCopy=pendingTableSnap; pendingTableSnap=null; tableRebuildPending=false; if (renderTableFromDocs && snapCopy && snapCopy.docs) renderTableFromDocs(snapCopy.docs); } });
-          ed.addEventListener('paste', (e) => { e.preventDefault(); const text=(e.clipboardData||window.clipboardData).getData('text'); if (document.queryCommandSupported && document.queryCommandSupported('insertText')) { document.execCommand('insertText', false, text); } else { const sel=window.getSelection(); if (sel && sel.rangeCount) { sel.deleteFromDocument(); sel.getRangeAt(0).insertNode(document.createTextNode(text)); } } });
-          ed.addEventListener('input', () => { clearTimeout(ed._t); ed._t = setTimeout(saveNow, 1000); });
-          ed.addEventListener('keydown', (e) => { const cellIndex=td.cellIndex; if (e.key==='Enter' && !(e.ctrlKey||e.metaKey)) { return; } else if ((e.key==='Enter') && (e.ctrlKey||e.metaKey)) { e.preventDefault(); saveNow(); const nextRow=tr.nextElementSibling; if (nextRow && nextRow.children[cellIndex]) { const n=nextRow.children[cellIndex].querySelector('.cell-editable'); if (n) n.focus(); } } else if (e.key==='Tab') { e.preventDefault(); saveNow(); const dir=e.shiftKey?-1:1; let targetCol=cellIndex+dir; let targetRow=tr; if (targetCol<1) { const prev=tr.previousElementSibling; if (prev) { targetRow=prev; targetCol=6; } else { return; } } else if (targetCol>6) { const next=tr.nextElementSibling; if (next) { targetRow=next; targetCol=1; } else { return; } } const targetCell=targetRow.children[targetCol]; if (targetCell) { const n=targetCell.querySelector('.cell-editable'); if (n) n.focus(); } } else if (e.key==='Escape') { e.preventDefault(); ed.textContent=last; } });
+          // Multi-header cell with inline-editable header lines
+          const container = document.createElement('div'); container.className = 'cell-items';
+          const items = await decryptItems(data, letter);
+          const max = 8;
+          const expandedKey = `${d.id}:${letter}`;
+          if (!window._cellExpand) window._cellExpand = new Set();
+          const isExpanded = window._cellExpand.has(expandedKey);
+
+          const saveTitles = async () => { try { await saveItems(d.id, letter, items); } catch (e) { console.error('save', e); showToast('Failed to save'); } };
+          const renderLines = (showAll) => {
+            container.innerHTML = '';
+            const toShow = showAll ? Math.min(items.length, max) : Math.min(items.length, 3);
+            for (let i=0;i<toShow;i++) {
+              const it = items[i];
+              const line = document.createElement('div'); line.className='cell-line';
+              const bullet = document.createElement('div'); bullet.className='cell-bullet'; line.appendChild(bullet);
+              const title = document.createElement('div'); title.className='cell-title'; title.setAttribute('contenteditable','true'); title.textContent = it.title || '';
+              title.addEventListener('keydown', (e) => {
+                const sel = window.getSelection(); const atStart = sel && sel.anchorOffset === 0 && sel.anchorNode && sel.anchorNode.parentElement === title;
+                if (e.key==='Enter' && !(e.ctrlKey||e.metaKey||e.shiftKey)) {
+                  e.preventDefault();
+                  if (items.length >= max) { showToast('Limit 8 items'); return; }
+                  const ni = newItem('',''); items.splice(i+1,0,ni); saveTitles(); window._cellExpand.add(expandedKey); renderLines(true);
+                  setTimeout(()=>{ const n=container.querySelectorAll('.cell-title')[i+1]; if (n) { n.focus(); } },0);
+                } else if (e.key==='Backspace' && atStart && i>0) {
+                  e.preventDefault();
+                  const prev = items[i-1]; const cur = items[i];
+                  prev.title = (prev.title||'') + (cur.title||''); items.splice(i,1); saveTitles(); renderLines(showAll);
+                  setTimeout(()=>{ const p=container.querySelectorAll('.cell-title')[i-1]; if (p) { p.focus(); }},0);
+                } else if (e.key==='Tab') {
+                  e.preventDefault();
+                  const dir = e.shiftKey?-1:1; const cellIndex=td.cellIndex; let targetCol=cellIndex+dir; let targetRow=tr;
+                  if (targetCol<1) { const prev=tr.previousElementSibling; if (prev) { targetRow=prev; targetCol=6; } else { return; } }
+                  else if (targetCol>6) { const next=tr.nextElementSibling; if (next) { targetRow=next; targetCol=1; } else { return; } }
+                  const targetCell=targetRow.children[targetCol]; if (targetCell) { const n=targetCell.querySelector('.cell-title, .cell-editable'); if (n) n.focus(); }
+                } else if ((e.key==='Enter') && (e.ctrlKey||e.metaKey)) {
+                  e.preventDefault();
+                  const cellIndex=td.cellIndex; const nextRow=tr.nextElementSibling; if (nextRow && nextRow.children[cellIndex]) { const n=nextRow.children[cellIndex].querySelector('.cell-title, .cell-editable'); if (n) n.focus(); }
+                }
+              });
+              title.addEventListener('input', () => { it.title = title.textContent || ''; clearTimeout(title._t); title._t = setTimeout(saveTitles, 600); });
+              line.appendChild(title);
+              container.appendChild(line);
+            }
+            if (!showAll && items.length>3) {
+              const more = document.createElement('div'); more.className='cell-more'; more.textContent = `+${items.length-3}`; more.addEventListener('click', ()=>{ window._cellExpand.add(expandedKey); renderLines(true); }); container.appendChild(more);
+            }
+            if (showAll && items.length>3) {
+              const collapse = document.createElement('div'); collapse.className='cell-collapse'; collapse.textContent='Collapse'; collapse.addEventListener('click', ()=>{ window._cellExpand.delete(expandedKey); renderLines(false); }); container.appendChild(collapse);
+            }
+          };
+          renderLines(isExpanded);
+          
           // Apply saved background color if present
           const colorField = `col${letter}Color`;
           const bg = data[colorField] || null;
@@ -1582,20 +1663,16 @@ function startRealtimeTable() {
             // Close existing
             const existing = document.querySelector('.cell-body-panel'); if (existing) existing.remove();
             const panel = document.createElement('div'); panel.className = 'cell-body-panel';
-            const title = document.createElement('div'); title.className = 'cell-body-title'; title.textContent = ed.textContent || '';
-            const body = document.createElement('div'); body.className = 'cell-body-text'; body.textContent = '';
-            panel.appendChild(title); panel.appendChild(body);
+            const list = document.createElement('div'); panel.appendChild(list);
+            const arr = await decryptItems(data, letter);
+            for (const it of arr) {
+              const t = document.createElement('div'); t.className='cell-body-title'; t.textContent = it.title || '';
+              const b = document.createElement('div'); b.className='cell-body-text'; b.textContent = it.body || '';
+              list.appendChild(t); list.appendChild(b);
+            }
             document.body.appendChild(panel);
             // Load body lazily
-            try {
-              let text = getCachedBody(d.id, letter);
-              if (text == null) {
-                const { c: bc, iv: biv } = bodyFieldNames(letter);
-                if (data[bc] && data[biv]) { text = await decryptText(data[bc], data[biv]); } else { text = ''; }
-                cacheBody(d.id, letter, text);
-              }
-              body.textContent = text || '';
-            } catch {}
+            try {} catch {}
             // Position panel near button
             const r = infoBtn.getBoundingClientRect();
             requestAnimationFrame(() => {
@@ -1624,7 +1701,7 @@ function startRealtimeTable() {
           infoBtn.addEventListener('mouseenter', openInfo);
           infoBtn.addEventListener('click', (e) => { e.stopPropagation(); openInfo(); });
           td.appendChild(infoBtn);
-          td.appendChild(ed);
+          td.appendChild(container);
         }
         tr.appendChild(td);
       }
@@ -2110,50 +2187,63 @@ function startRealtimeCaseFields(caseId) {
         mkChip('consultant', ct.consultant || null);
       }
     } catch {}
-    const fill = async (el, L) => {
-      if (!el) return;
-      const { c, iv } = fieldNames(L);
-      let val = '';
-      try { if (data[c] && data[iv]) val = await decryptText(data[c], data[iv]); } catch {}
-      el.value = val;
-    };
-    const fillBody = async (el, L) => {
-      if (!el) return;
-      const { c, iv } = bodyFieldNames(L);
-      let val = '';
-      try { if (data[c] && data[iv]) val = await decryptText(data[c], data[iv]); } catch {}
-      el.value = val;
-    };
-    await Promise.all([
-      fill(colAInput, 'A'),
-      fill(colBInput, 'B'),
-      fill(colCInput, 'C'),
-      fill(colDInput, 'D'),
-      fill(colEInput, 'E'),
-      fill(colFInput, 'F'),
-    ]);
-    await Promise.all([
-      fillBody(colABody, 'A'),
-      fillBody(colBBody, 'B'),
-      fillBody(colCBody, 'C'),
-      fillBody(colDBody, 'D'),
-      fillBody(colEBody, 'E'),
-    ]);
+    // Render Notes UI items per section (A–E)
+    const sections = [
+      { L: 'A', el: document.getElementById('notes-A-items') },
+      { L: 'B', el: document.getElementById('notes-B-items') },
+      { L: 'C', el: document.getElementById('notes-C-items') },
+      { L: 'D', el: document.getElementById('notes-D-items') },
+      { L: 'E', el: document.getElementById('notes-E-items') },
+    ];
+    for (const s of sections) {
+      const items = await decryptItems(data, s.L);
+      renderNotesSection(s.el, s.L, items);
+    }
     // Apply cell background colors to notes inputs (A–E) if present
     try {
       const applyBg = (el, L) => { if (!el) return; const key = `col${L}Color`; const bg = data[key] || null; el.style.background = bg ? bg : ''; };
-      applyBg(colAInput, 'A');
-      applyBg(colBInput, 'B');
-      applyBg(colCInput, 'C');
-      applyBg(colDInput, 'D');
-      applyBg(colEInput, 'E');
-      applyBg(colABody, 'A');
-      applyBg(colBBody, 'B');
-      applyBg(colCBody, 'C');
-      applyBg(colDBody, 'D');
-      applyBg(colEBody, 'E');
+      const applyToContainer = (id, L) => {
+        const el = document.getElementById(id); if (!el) return; const key = `col${L}Color`; const bg = data[key] || null; el.querySelectorAll('input, textarea').forEach(n => { n.style.background = bg || ''; });
+      };
+      applyToContainer('notes-A-items','A');
+      applyToContainer('notes-B-items','B');
+      applyToContainer('notes-C-items','C');
+      applyToContainer('notes-D-items','D');
+      applyToContainer('notes-E-items','E');
     } catch {}
   });
+}
+
+function renderNotesSection(container, letter, items) {
+  if (!container) return;
+  container.innerHTML = '';
+  const max = 8;
+  const addBtn = container.parentElement?.querySelector('.add-note-item[data-letter="'+letter+'"]');
+  const canAdd = items.length < max;
+  if (addBtn) { addBtn.disabled = !canAdd; addBtn.onclick = () => { if (items.length >= max) { showToast('Limit reached'); return; } items.push(newItem()); persist(); render(); }; }
+  const render = () => {
+    container.innerHTML = '';
+    items.forEach((it, idx) => {
+      const row = document.createElement('div'); row.className = 'note-item'; row.dataset.id = it.id;
+      const header = document.createElement('input'); header.type='text'; header.className='note-item-header'; header.placeholder='Header'; header.value = it.title || '';
+      const body = document.createElement('textarea'); body.className='note-item-body'; body.placeholder='Add details…'; body.value = it.body || '';
+      const actions = document.createElement('div'); actions.className='note-actions';
+      const up = document.createElement('button'); up.type='button'; up.className='icon-btn small'; up.textContent='↑'; up.title='Move up'; up.disabled = idx===0;
+      const down = document.createElement('button'); down.type='button'; down.className='icon-btn small'; down.textContent='↓'; down.title='Move down'; down.disabled = idx===items.length-1;
+      const del = document.createElement('button'); del.type='button'; del.className='icon-btn small delete-btn'; del.textContent='🗑'; del.title='Delete';
+      actions.appendChild(up); actions.appendChild(down); actions.appendChild(del);
+      row.appendChild(header); row.appendChild(body); row.appendChild(actions);
+      container.appendChild(row);
+      header.addEventListener('blur', () => { it.title = header.value; persistDebounced(); });
+      body.addEventListener('blur', () => { it.body = body.value; persistDebounced(); });
+      up.addEventListener('click', () => { const t=items[idx-1]; items[idx-1]=items[idx]; items[idx]=t; persist(); render(); });
+      down.addEventListener('click', () => { const t=items[idx+1]; items[idx+1]=items[idx]; items[idx]=t; persist(); render(); });
+      del.addEventListener('click', () => { items.splice(idx,1); persist(); render(); });
+    });
+  };
+  const persist = async () => { try { await saveItems(currentCaseId, letter, items); } catch (e) { console.error('save items', e); showToast('Failed to save'); } if (addBtn) addBtn.disabled = items.length >= max; };
+  let persistTimer = null; const persistDebounced = () => { clearTimeout(persistTimer); persistTimer = setTimeout(persist, 500); };
+  render();
 }
 
 // --- Form bindings
