@@ -1656,7 +1656,8 @@ function startRealtimeTable() {
             });
             td.appendChild(colorBtn);
           }
-          // Info icon to preview header+body
+          // Info icon to preview header+body (only if any body exists)
+          const hasBodies = (items || []).some(it => (it.body || '').trim().length > 0);
           const infoBtn = document.createElement('button');
           infoBtn.type = 'button'; infoBtn.className = 'cell-info-btn'; infoBtn.title = 'Show details'; infoBtn.textContent = 'i';
           const openInfo = async () => {
@@ -1700,7 +1701,7 @@ function startRealtimeTable() {
           // Open on hover and on click
           infoBtn.addEventListener('mouseenter', openInfo);
           infoBtn.addEventListener('click', (e) => { e.stopPropagation(); openInfo(); });
-          td.appendChild(infoBtn);
+          if (hasBodies) td.appendChild(infoBtn);
           td.appendChild(container);
         }
         tr.appendChild(td);
