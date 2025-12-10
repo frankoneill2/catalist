@@ -1413,7 +1413,7 @@ function startRealtimeTable() {
   renderTableFromDocs = async (docsInput) => {
     // If editing a cell, defer table rebuild to preserve caret
     const active = document.activeElement;
-    if (active && active.classList && active.classList.contains('cell-editable')) {
+    if (active && active.classList && (active.classList.contains('cell-editable') || active.classList.contains('cell-title'))) {
       pendingTableSnap = { docs: docsInput }; tableRebuildPending = true; return;
     }
     const { table, tbody } = buildTableSkeleton();
@@ -1547,6 +1547,7 @@ function startRealtimeTable() {
           const isExpanded = window._cellExpand.has(expandedKey);
 
           const saveTitles = async () => { try { await saveItems(d.id, letter, items); } catch (e) { console.error('save', e); showToast('Failed to save'); } };
+          let saveTimer = null; const scheduleSave = () => { clearTimeout(saveTimer); saveTimer = setTimeout(saveTitles, 500); };
           const renderLines = (showAll) => {
             container.innerHTML = '';
             const toShow = showAll ? Math.min(items.length, max) : Math.min(items.length, 3);
@@ -1560,7 +1561,7 @@ function startRealtimeTable() {
                 if (e.key==='Enter' && !(e.ctrlKey||e.metaKey||e.shiftKey)) {
                   e.preventDefault();
                   if (items.length >= max) { showToast('Limit 8 items'); return; }
-                  const ni = newItem('',''); items.splice(i+1,0,ni); saveTitles(); window._cellExpand.add(expandedKey); renderLines(true);
+                  const ni = newItem('',''); items.splice(i+1,0,ni); window._cellExpand.add(expandedKey); renderLines(true); scheduleSave();
                   setTimeout(()=>{
                     const n=container.querySelectorAll('.cell-title')[i+1];
                     if (n) {
@@ -1575,7 +1576,7 @@ function startRealtimeTable() {
                 } else if (e.key==='Backspace' && atStart && i>0) {
                   e.preventDefault();
                   const prev = items[i-1]; const cur = items[i];
-                  prev.title = (prev.title||'') + (cur.title||''); items.splice(i,1); saveTitles(); renderLines(showAll);
+                  prev.title = (prev.title||'') + (cur.title||''); items.splice(i,1); renderLines(showAll); scheduleSave();
                   setTimeout(()=>{
                     const p=container.querySelectorAll('.cell-title')[i-1];
                     if (p) {
@@ -1598,7 +1599,7 @@ function startRealtimeTable() {
                   const cellIndex=td.cellIndex; const nextRow=tr.nextElementSibling; if (nextRow && nextRow.children[cellIndex]) { const n=nextRow.children[cellIndex].querySelector('.cell-title, .cell-editable'); if (n) n.focus(); }
                 }
               });
-              title.addEventListener('input', () => { it.title = title.textContent || ''; clearTimeout(title._t); title._t = setTimeout(saveTitles, 600); });
+              title.addEventListener('input', () => { it.title = title.textContent || ''; scheduleSave(); });
               line.appendChild(title);
               container.appendChild(line);
             }
