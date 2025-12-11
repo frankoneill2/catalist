@@ -58,6 +58,9 @@ body {
   max-width: 720px;
   margin: 0 auto;
 }
+@media (min-width: 900px) {
+  .app { max-width: 1400px; }
+}
 
 h1,
 h2,
@@ -1127,7 +1130,7 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
   #case-panels #notes { order: 1; }
   #case-panels #tasks { order: 2; }
   /* Avoid centered Notes card inside a column */
-  #case-panels .notes { margin: 0; }
+  #case-panels .notes { margin: 0; max-width: none; }
 }
 
 .case-header-actions { position: relative; display: inline-block; margin-left: 8px; }
