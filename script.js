@@ -1590,6 +1590,34 @@ function startRealtimeTable() {
                   const targetCell=targetRow.children[targetCol]; if (targetCell) { const n=targetCell.querySelector('.cell-title, .cell-editable'); if (n) n.focus(); }
                 }
               });
+              // Per-header body hover/click icon (only if body present)
+              const showLineInfo = (it.body || '').trim().length > 0;
+              if (showLineInfo) {
+                const info = document.createElement('button'); info.type='button'; info.className='line-info-btn'; info.textContent='›'; info.title='Show details';
+                let panel = null; let persisted = false; let overBtn=false; let overPanel=false;
+                const cleanup = () => { if (panel) { panel.remove(); panel=null; } persisted=false; document.removeEventListener('click', onDocClick, true); };
+                const onDocClick = (evt) => { if (panel && !panel.contains(evt.target) && evt.target !== info) { cleanup(); } };
+                const openPanel = () => {
+                  if (panel) return;
+                  panel = document.createElement('div'); panel.className='cell-body-panel';
+                  const bodyOnly = document.createElement('div'); bodyOnly.className='cell-body-text'; bodyOnly.textContent = it.body || '';
+                  panel.appendChild(bodyOnly);
+                  document.body.appendChild(panel);
+                  const r = info.getBoundingClientRect();
+                  requestAnimationFrame(()=>{
+                    const pw = panel.offsetWidth || 240; const ph = panel.offsetHeight || 120;
+                    const left = Math.min(Math.max(8, r.right - pw), window.innerWidth - pw - 8);
+                    const top = Math.min(window.innerHeight - ph - 8, r.bottom + 6);
+                    panel.style.left = `${Math.round(left)}px`; panel.style.top = `${Math.round(top)}px`;
+                  });
+                  panel.addEventListener('mouseenter', ()=>{ overPanel=true; });
+                  panel.addEventListener('mouseleave', ()=>{ overPanel=false; if (!persisted && !overBtn) setTimeout(()=>{ if (!persisted && !overBtn && panel) cleanup(); }, 120); });
+                };
+                info.addEventListener('mouseenter', ()=>{ overBtn=true; if (!persisted) openPanel(); });
+                info.addEventListener('mouseleave', ()=>{ overBtn=false; if (!persisted && !overPanel) setTimeout(()=>{ if (!persisted && !overPanel && panel) cleanup(); }, 120); });
+                info.addEventListener('click', (e)=>{ e.stopPropagation(); if (!panel) openPanel(); if (!persisted) { persisted=true; document.addEventListener('click', onDocClick, true); } else { cleanup(); } });
+                line.appendChild(info);
+              }
               line.appendChild(title);
               container.appendChild(line);
               return;
@@ -1738,52 +1766,7 @@ function startRealtimeTable() {
             });
             td.appendChild(colorBtn);
           }
-          // Info icon to preview header+body (only if any body exists)
-          const hasBodies = (items || []).some(it => (it.body || '').trim().length > 0);
-          const infoBtn = document.createElement('button');
-          infoBtn.type = 'button'; infoBtn.className = 'cell-info-btn'; infoBtn.title = 'Show details'; infoBtn.textContent = 'i';
-          const openInfo = async () => {
-            // Close existing
-            const existing = document.querySelector('.cell-body-panel'); if (existing) existing.remove();
-            const panel = document.createElement('div'); panel.className = 'cell-body-panel';
-            const list = document.createElement('div'); panel.appendChild(list);
-            const arr = await decryptItems(data, letter);
-            for (const it of arr) {
-              const t = document.createElement('div'); t.className='cell-body-title'; t.textContent = it.title || '';
-              const b = document.createElement('div'); b.className='cell-body-text'; b.textContent = it.body || '';
-              list.appendChild(t); list.appendChild(b);
-            }
-            document.body.appendChild(panel);
-            // Load body lazily
-            try {} catch {}
-            // Position panel near button
-            const r = infoBtn.getBoundingClientRect();
-            requestAnimationFrame(() => {
-              const pw = panel.offsetWidth || 240; const ph = panel.offsetHeight || 120;
-              const left = Math.min(Math.max(8, r.right - pw), window.innerWidth - pw - 8);
-              const top = Math.min(window.innerHeight - ph - 8, r.bottom + 6);
-              panel.style.left = `${Math.round(left)}px`; panel.style.top = `${Math.round(top)}px`;
-            });
-            // Auto-close on outside click or when leaving both trigger and panel
-            const onDocClick = (evt) => { if (!panel.contains(evt.target) && evt.target !== infoBtn) { cleanup(); } };
-            const cleanup = () => { panel.remove(); document.removeEventListener('click', onDocClick, true); };
-            setTimeout(() => document.addEventListener('click', onDocClick, true), 0);
-            let overBtn = true; // we opened via hover/click on the button
-            let overPanel = false;
-            const scheduleClose = () => { setTimeout(() => { if (!overBtn && !overPanel && document.body.contains(panel)) cleanup(); }, 120); };
-            const onBtnEnter = () => { overBtn = true; };
-            const onBtnLeave = () => { overBtn = false; scheduleClose(); };
-            const onPanelEnter = () => { overPanel = true; };
-            const onPanelLeave = () => { overPanel = false; scheduleClose(); };
-            infoBtn.addEventListener('mouseenter', onBtnEnter);
-            infoBtn.addEventListener('mouseleave', onBtnLeave);
-            panel.addEventListener('mouseenter', onPanelEnter);
-            panel.addEventListener('mouseleave', onPanelLeave);
-          };
-          // Open on hover and on click
-          infoBtn.addEventListener('mouseenter', openInfo);
-          infoBtn.addEventListener('click', (e) => { e.stopPropagation(); openInfo(); });
-          if (hasBodies) td.appendChild(infoBtn);
+          // Per-line info icons handle body previews; remove old cell-level info button
           td.appendChild(container);
         }
         tr.appendChild(td);

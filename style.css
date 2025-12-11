@@ -688,7 +688,7 @@ button:focus-visible {
 
 /* Hide color UI in print */
 @media print {
-  #table-section .cell-color-btn, #table-section .color-panel { display: none !important; }
+  #table-section .cell-color-btn, #table-section .color-panel, #table-section .cell-info-btn, #table-section .line-info-btn, #table-section .cell-body-panel { display: none !important; }
 }
 
 /* Info (header+body) popover for cells */
@@ -1186,6 +1186,8 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
 .cell-line .cell-title { display: inline-block; min-height: 18px; outline: none; border: 1px solid transparent; border-radius: 4px; padding: 2px 4px; }
 .cell-line .cell-title:focus { border-color: #bfdbfe; box-shadow: 0 0 0 3px rgba(59,130,246,0.2); }
 .cell-line .cell-title[contenteditable="true"]:empty:before { content: attr(data-placeholder); color: #9ca3af; }
+.line-info-btn { background: none; border: none; color: #6b7280; font-size: 12px; padding: 0 2px; cursor: pointer; visibility: hidden; }
+.cell-line:hover .line-info-btn { visibility: visible; }
 .cell-more { font-size: 12px; color: #6b7280; cursor: pointer; user-select: none; }
 .cell-collapse { font-size: 12px; color: #6b7280; cursor: pointer; user-select: none; }
 
