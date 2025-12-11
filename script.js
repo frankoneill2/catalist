@@ -1550,6 +1550,50 @@ function startRealtimeTable() {
           let saveTimer = null; const scheduleSave = () => { clearTimeout(saveTimer); saveTimer = setTimeout(saveTitles, 500); };
           const renderLines = (showAll) => {
             container.innerHTML = '';
+            // If empty, render a placeholder editable line to allow immediate typing
+            if (!items.length) {
+              const line = document.createElement('div'); line.className='cell-line';
+              const bullet = document.createElement('div'); bullet.className='cell-bullet'; line.appendChild(bullet);
+              const title = document.createElement('div'); title.className='cell-title'; title.setAttribute('contenteditable','true'); title.dataset.placeholder = 'Add header…';
+              // Commit first item as soon as user types something
+              title.addEventListener('input', () => {
+                const t = (title.textContent || '').trim();
+                if (t.length > 0 && items.length === 0) {
+                  items.push(newItem(t, ''));
+                  window._cellExpand.add(expandedKey);
+                  renderLines(true);
+                  scheduleSave();
+                  // Focus the newly created first line
+                  setTimeout(()=>{ const n=container.querySelector('.cell-title'); if (n) { n.focus(); } },0);
+                }
+              });
+              // Navigation keys on placeholder
+              title.addEventListener('keydown', (e) => {
+                if ((e.key==='Enter') && !(e.ctrlKey||e.metaKey||e.shiftKey)) {
+                  e.preventDefault();
+                  const t = (title.textContent || '').trim();
+                  if (!t) return; // nothing to add yet
+                  // Create first and second item
+                  items.splice(0,0,newItem(t,''));
+                  items.splice(1,0,newItem('',''));
+                  window._cellExpand.add(expandedKey);
+                  renderLines(true); scheduleSave();
+                  setTimeout(()=>{ const n=container.querySelectorAll('.cell-title')[1]; if (n) { n.focus(); } },0);
+                } else if ((e.key==='Enter') && (e.ctrlKey||e.metaKey)) {
+                  e.preventDefault();
+                  const cellIndex=td.cellIndex; const nextRow=tr.nextElementSibling; if (nextRow && nextRow.children[cellIndex]) { const n=nextRow.children[cellIndex].querySelector('.cell-title, .cell-editable'); if (n) n.focus(); }
+                } else if (e.key==='Tab') {
+                  e.preventDefault();
+                  const dir=e.shiftKey?-1:1; const cellIndex=td.cellIndex; let targetCol=cellIndex+dir; let targetRow=tr;
+                  if (targetCol<1) { const prev=tr.previousElementSibling; if (prev) { targetRow=prev; targetCol=6; } else { return; } }
+                  else if (targetCol>6) { const next=tr.nextElementSibling; if (next) { targetRow=next; targetCol=1; } else { return; } }
+                  const targetCell=targetRow.children[targetCol]; if (targetCell) { const n=targetCell.querySelector('.cell-title, .cell-editable'); if (n) n.focus(); }
+                }
+              });
+              line.appendChild(title);
+              container.appendChild(line);
+              return;
+            }
             const toShow = showAll ? Math.min(items.length, max) : Math.min(items.length, 3);
             for (let i=0;i<toShow;i++) {
               const it = items[i];
