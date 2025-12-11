@@ -330,11 +330,7 @@ async function openCase(id, title, source = 'list', initialTab = 'notes') {
   caseDetailEl.hidden = false;
   startRealtimeTasks(id);
   startRealtimeCaseFields(id);
-  // Bind notes embedded tasks
-  if (unsubNotesTasks) { try { unsubNotesTasks(); } catch {} unsubNotesTasks = null; }
-  if (notesTasksList) {
-    unsubNotesTasks = attachTasksListRealtime(id, notesTasksList);
-  }
+  // Notes embedded tasks removed
   // Open chosen tab
   showTab(initialTab);
   // Update URL for deep link
@@ -2618,10 +2614,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   colCBody = document.getElementById('colC-body');
   colDBody = document.getElementById('colD-body');
   colEBody = document.getElementById('colE-body');
-  // Notes embedded tasks
-  notesTasksList = document.getElementById('notes-tasks-list');
-  notesTasksForm = document.getElementById('notes-tasks-form');
-  notesTasksInput = document.getElementById('notes-tasks-input');
+  // Notes embedded tasks removed
   tabTasksBtn = document.getElementById('tab-tasks');
   tabNotesBtn = document.getElementById('tab-notes');
   // Main tabs
@@ -2766,7 +2759,6 @@ window.addEventListener('DOMContentLoaded', async () => {
         for (const u of unsubUserTasks) try { u(); } catch {}
         unsubUserTasks = [];
       }
-      if (unsubNotesTasks) { try { unsubNotesTasks(); } catch {} unsubNotesTasks = null; }
     });
   }
   if (brandHome) {
