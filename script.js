@@ -1657,7 +1657,7 @@ function startRealtimeTable() {
           const form = document.createElement('form'); form.className = 'composer compact';
           const inp = document.createElement('input'); inp.placeholder = 'Add task…'; inp.setAttribute('aria-label','Task description');
           form.appendChild(inp);
-          form.addEventListener('submit', async (e) => { e.preventDefault(); const t=(inp.value||'').trim(); if(!t) return; const { cipher: textCipher, iv: textIv } = await encryptText(t); const { cipher: statusCipher, iv: statusIv } = await encryptText('open'); await addDoc(collection(db,'cases',d.id,'tasks'), { textCipher, textIv, statusCipher, statusIv, createdAt: serverTimestamp(), username: username || null, assignee: null, priority: null }); inp.value=''; });
+          form.addEventListener('submit', async (e) => { e.preventDefault(); const t=(inp.value||'').trim(); if(!t) return; const { cipher: textCipher, iv: textIv } = await encryptText(t); const { cipher: statusCipher, iv: statusIv } = await encryptText('open'); const ref = await addDoc(collection(db,'cases',d.id,'tasks'), { textCipher, textIv, statusCipher, statusIv, createdAt: serverTimestamp(), username: username || null, assignee: null, priority: null }); try { await logUpdate({ type: 'task_added', caseId: d.id, caseTitle: title, taskId: ref.id, taskTextCipher: textCipher, taskTextIv: textIv }); } catch {} inp.value=''; });
           td.appendChild(wrap); td.appendChild(form);
           if (tableTaskUnsubs.has(d.id)) { try { tableTaskUnsubs.get(d.id)(); } catch {} tableTaskUnsubs.delete(d.id); }
           const unsub = attachTasksListRealtime(d.id, ul);
