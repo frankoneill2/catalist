@@ -796,7 +796,7 @@ button:focus-visible {
 #table-section .data-table th:nth-child(6),
 #table-section .data-table td:nth-child(6) { width: clamp(100px, 8%, 150px); }
 #table-section .data-table th:nth-child(7),
-#table-section .data-table td:nth-child(7) { width: clamp(260px, 35%, 390px); }
+#table-section .data-table td:nth-child(7) { width: clamp(320px, 42%, 520px); }
 #table-section .cell-editable, #table-section .cell-tasks .composer input { border-radius: 4px; }
 /* Allow wrapping long task text inside the Table's tasks cell */
 #table-section .cell-tasks .case-task .task-text {
