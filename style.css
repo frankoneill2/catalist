@@ -1123,7 +1123,7 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
   #case-panels {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 8px;
+    gap: 6px;
     align-items: start;
   }
   /* Ensure Notes on the left, Tasks on the right regardless of DOM order */
@@ -1138,17 +1138,19 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
   #case-tag-chips { margin: 4px 0 6px; }
 
   /* Compact tasks composer and list */
-  #case-detail #task-form.composer { padding: 4px; gap: 6px; }
-  #case-detail #task-form.composer input { height: 30px; font-size: 13px; }
-  #case-detail #task-form.composer .primary { height: 30px; padding: 0 10px; font-size: 13px; }
-  #case-detail #task-list li { padding: 2px 4px; margin-bottom: 4px; }
-  #case-detail #task-list .case-task { gap: 6px; padding: 4px 6px; border-radius: 6px; font-size: 0.85rem; }
-  #case-detail #task-list .case-task .status-btn { width: 18px; height: 18px; font-size: 14px; line-height: 16px; }
-  #case-detail #task-list .case-task .mini-avatar { width: 16px; height: 16px; font-size: 10px; margin-left: 4px; }
-  #case-detail #task-list .case-task .mini-chip { height: 16px; font-size: 10px; padding: 0 6px; }
-  #case-detail #task-list .case-task .comment-toggle { padding: 2px 4px; }
-  #case-detail #task-list .badge.comment-count { padding: 0 4px; font-size: 11px; }
-  #case-detail .icon-btn { min-height: 0; padding: 2px 4px; }
+  #case-detail #task-form.composer { padding: 3px; gap: 4px; }
+  #case-detail #task-form.composer input { height: 26px; font-size: 12px; }
+  #case-detail #task-form.composer .primary { height: 26px; padding: 0 8px; font-size: 12px; }
+  #case-detail #task-list li { padding: 1px 2px; margin-bottom: 3px; }
+  #case-detail #task-list .case-task { gap: 4px; padding: 3px 4px; border-radius: 4px; font-size: 0.8rem; }
+  #case-detail #task-list .case-task .status-btn { width: 16px; height: 16px; font-size: 12px; line-height: 14px; }
+  #case-detail #task-list .case-task .mini-avatar { width: 14px; height: 14px; font-size: 9px; margin-left: 3px; }
+  #case-detail #task-list .case-task .mini-chip { height: 14px; font-size: 9px; padding: 0 4px; }
+  #case-detail #task-list .case-task .comment-toggle { padding: 1px 3px; }
+  #case-detail #task-list .badge.comment-count { padding: 0 3px; font-size: 10px; }
+  #case-detail .icon-btn { min-height: 0; padding: 1px 3px; }
+  #case-detail .composer-opts { gap: 4px; margin: 4px 0 8px; }
+  #case-detail .composer-opts label { font-size: 0.8rem; }
 
   /* Compact chips */
   #case-detail .chip { height: 20px; font-size: 11px; padding: 0 6px; }
