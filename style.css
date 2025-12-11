@@ -1119,6 +1119,8 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
 @media (min-width: 900px) {
   /* Hide toggle tabs on desktop */
   #case-detail .tabs { display: none; }
+  /* Hide Notes embedded composer on desktop (keep list) */
+  #case-detail #notes #notes-tasks-form { display: none; }
   /* Two-column layout for the panels */
   #case-panels {
     display: grid;
@@ -1166,6 +1168,9 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
   #case-detail .note-item .note-item-body { min-height: 3.25rem; padding: 4px 8px; }
   #case-detail .add-note-item { margin-top: 2px; }
 }
+
+/* Ensure case tasks in Case view align left (override grid rule) */
+#case-detail #task-list li { display: flex; align-items: center; }
 
 .case-header-actions { position: relative; display: inline-block; margin-left: 8px; }
 .case-overflow-btn { font-weight: 600; }
