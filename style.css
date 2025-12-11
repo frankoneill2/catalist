@@ -59,7 +59,7 @@ body {
   margin: 0 auto;
 }
 @media (min-width: 900px) {
-  .app { max-width: 1400px; }
+  .app { max-width: 1400px; padding: 8px; }
 }
 
 h1,
@@ -1123,7 +1123,7 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
   #case-panels {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 16px;
+    gap: 10px;
     align-items: start;
   }
   /* Ensure Notes on the left, Tasks on the right regardless of DOM order */
@@ -1131,6 +1131,32 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
   #case-panels #tasks { order: 2; }
   /* Avoid centered Notes card inside a column */
   #case-panels .notes { margin: 0; max-width: none; }
+
+  /* Compact case card and headings */
+  #case-detail.card { padding: 8px 10px; }
+  #case-detail .case-heading { margin: 2px 0 8px; }
+  #case-tag-chips { margin: 4px 0 6px; }
+
+  /* Compact tasks composer and list */
+  #case-detail #task-form.composer { padding: 6px; }
+  #case-detail #task-form.composer input { height: 36px; }
+  #case-detail #task-form.composer .primary { height: 36px; }
+  #case-detail #task-list li { padding: 6px 8px; margin-bottom: 6px; }
+  #case-detail .task-status-btn { width: 28px; height: 28px; font-size: 1.2rem; line-height: 26px; }
+
+  /* Compact chips */
+  #case-detail .chip { height: 20px; font-size: 11px; padding: 0 6px; }
+
+  /* Compact Notes layout */
+  #case-detail .notes { border-radius: 10px; }
+  #case-detail .note-row { padding: 4px 6px; grid-template-columns: 2.2rem 1fr; }
+  #case-detail .note-label { padding: 6px; font-size: 0.85rem; }
+  #case-detail .note-row textarea { padding: 6px 8px; min-height: 2.5rem; }
+  #case-detail .note-items { gap: 6px; }
+  #case-detail .note-item { gap: 2px; padding: 4px 0; }
+  #case-detail .note-item .note-item-header { padding: 4px 8px; }
+  #case-detail .note-item .note-item-body { min-height: 3.25rem; padding: 4px 8px; }
+  #case-detail .add-note-item { margin-top: 2px; }
 }
 
 .case-header-actions { position: relative; display: inline-block; margin-left: 8px; }
