@@ -1591,34 +1591,6 @@ function startRealtimeTable() {
                 }
               });
               line.appendChild(title);
-              // Per-header body hover/click icon (only if body present)
-              const it = items[i];
-              if ((it.body||'').trim().length>0) {
-                const info = document.createElement('button'); info.type='button'; info.className='line-info-btn'; info.textContent='›'; info.title='Show details';
-                let panel = null; let persisted = false; let overBtn=false; let overPanel=false;
-                const cleanup = () => { if (panel) { panel.remove(); panel=null; } persisted=false; document.removeEventListener('click', onDocClick, true); };
-                const onDocClick = (evt) => { if (panel && !panel.contains(evt.target) && evt.target !== info) { cleanup(); } };
-                const openPanel = () => {
-                  if (panel) return;
-                  panel = document.createElement('div'); panel.className='cell-body-panel';
-                  const bodyOnly = document.createElement('div'); bodyOnly.className='cell-body-text'; bodyOnly.textContent = it.body || '';
-                  panel.appendChild(bodyOnly);
-                  document.body.appendChild(panel);
-                  const r = info.getBoundingClientRect();
-                  requestAnimationFrame(()=>{
-                    const pw = panel.offsetWidth || 240; const ph = panel.offsetHeight || 120;
-                    const left = Math.min(Math.max(8, r.right - pw), window.innerWidth - pw - 8);
-                    const top = Math.min(window.innerHeight - ph - 8, r.bottom + 6);
-                    panel.style.left = `${Math.round(left)}px`; panel.style.top = `${Math.round(top)}px`;
-                  });
-                  panel.addEventListener('mouseenter', ()=>{ overPanel=true; });
-                  panel.addEventListener('mouseleave', ()=>{ overPanel=false; if (!persisted && !overBtn) setTimeout(()=>{ if (!persisted && !overBtn && panel) cleanup(); }, 120); });
-                };
-                info.addEventListener('mouseenter', ()=>{ overBtn=true; if (!persisted) openPanel(); });
-                info.addEventListener('mouseleave', ()=>{ overBtn=false; if (!persisted && !overPanel) setTimeout(()=>{ if (!persisted && !overPanel && panel) cleanup(); }, 120); });
-                info.addEventListener('click', (e)=>{ e.stopPropagation(); if (!panel) openPanel(); if (!persisted) { persisted=true; document.addEventListener('click', onDocClick, true); } else { cleanup(); } });
-                line.appendChild(info);
-              }
               container.appendChild(line);
               return;
             }
@@ -1690,6 +1662,33 @@ function startRealtimeTable() {
               });
               title.addEventListener('input', () => { it.title = title.textContent || ''; scheduleSave(); });
               line.appendChild(title);
+              // Add per-header body icon if body exists
+              if ((it.body||'').trim().length>0) {
+                const info = document.createElement('button'); info.type='button'; info.className='line-info-btn'; info.textContent='›'; info.title='Show details';
+                let panel = null; let persisted = false; let overBtn=false; let overPanel=false;
+                const cleanup = () => { if (panel) { panel.remove(); panel=null; } persisted=false; document.removeEventListener('click', onDocClick, true); };
+                const onDocClick = (evt) => { if (panel && !panel.contains(evt.target) && evt.target !== info) { cleanup(); } };
+                const openPanel = () => {
+                  if (panel) return;
+                  panel = document.createElement('div'); panel.className='cell-body-panel';
+                  const bodyOnly = document.createElement('div'); bodyOnly.className='cell-body-text'; bodyOnly.textContent = it.body || '';
+                  panel.appendChild(bodyOnly);
+                  document.body.appendChild(panel);
+                  const r = info.getBoundingClientRect();
+                  requestAnimationFrame(()=>{
+                    const pw = panel.offsetWidth || 240; const ph = panel.offsetHeight || 120;
+                    const left = Math.min(Math.max(8, r.right - pw), window.innerWidth - pw - 8);
+                    const top = Math.min(window.innerHeight - ph - 8, r.bottom + 6);
+                    panel.style.left = `${Math.round(left)}px`; panel.style.top = `${Math.round(top)}px`;
+                  });
+                  panel.addEventListener('mouseenter', ()=>{ overPanel=true; });
+                  panel.addEventListener('mouseleave', ()=>{ overPanel=false; if (!persisted && !overBtn) setTimeout(()=>{ if (!persisted && !overBtn && panel) cleanup(); }, 120); });
+                };
+                info.addEventListener('mouseenter', ()=>{ overBtn=true; if (!persisted) openPanel(); });
+                info.addEventListener('mouseleave', ()=>{ overBtn=false; if (!persisted && !overPanel) setTimeout(()=>{ if (!persisted && !overBtn && panel) cleanup(); }, 120); });
+                info.addEventListener('click', (e)=>{ e.stopPropagation(); if (!panel) openPanel(); if (!persisted) { persisted=true; document.addEventListener('click', onDocClick, true); } else { cleanup(); } });
+                line.appendChild(info);
+              }
               container.appendChild(line);
             }
             if (!showAll && items.length>3) {
