@@ -1124,13 +1124,14 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
   /* Two-column layout for the panels */
   #case-panels {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    /* Make Notes the primary column, Tasks slightly narrower */
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.9fr);
     gap: 6px;
     align-items: start;
   }
   /* Ensure Notes on the left, Tasks on the right regardless of DOM order */
   #case-panels #notes { order: 1; }
-  #case-panels #tasks { order: 2; }
+  #case-panels #tasks { order: 2; border-left: 1px solid #e5e7eb; padding-left: 1.5rem; }
   /* Avoid centered Notes card inside a column */
   #case-panels .notes { margin: 0; max-width: none; }
 
