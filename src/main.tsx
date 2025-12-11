@@ -19,6 +19,8 @@ function mountToolbar() {
     const [search, setSearch] = useState('');
     const [assignee, setAssignee] = useState<string>('me');
     const [userOptions, setUserOptions] = useState<string[]>([]);
+    const [assignee, setAssignee] = useState<string>('me');
+    const [userOptions, setUserOptions] = useState<string[]>([]);
 
     // Hydrate from external state (assignee included) for My Tasks toolbar
     useEffect(() => {
@@ -129,7 +131,9 @@ function mountUserToolbar() {
     const [priority, setPriority] = useState<Priority>('all');
     const [sort, setSort] = useState<Sort>('none');
     const [search, setSearch] = useState('');
-
+    const [assignee, setAssignee] = useState<string>('me');
+    const [userOptions, setUserOptions] = useState<string[]>([]);
+    
     const toggleStatus = (s: Status) => {
       setStatuses(prev => {
         const next = new Set(prev);
@@ -147,6 +151,16 @@ function mountUserToolbar() {
     };
     const onSearchChange = (q: string) => { setSearch(q); dispatch('userToolbar:search', { query: q }); };
     const onAssigneeChange = (a: string) => { setAssignee(a); dispatch('userToolbar:assignee', { assignee: a }); };
+
+    // Receive user list for Assignee options
+    useEffect(() => {
+      const handler = (e: any) => {
+        const d = (e && e.detail) || {};
+        if (Array.isArray(d.users)) setUserOptions(d.users as string[]);
+      };
+      document.addEventListener('userToolbar:users', handler);
+      return () => document.removeEventListener('userToolbar:users', handler);
+    }, []);
 
     const selected = useMemo(() => statuses, [statuses]);
     const debug = (() => { try { return new URL(window.location.href).searchParams.get('debug') === '1'; } catch { return false; } })();
