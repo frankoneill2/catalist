@@ -36,6 +36,7 @@ let colABody, colBBody, colCBody, colDBody, colEBody; // A–E bodies
 let notesTasksList, notesTasksForm, notesTasksInput; // Notes embedded tasks
 let tableSection, tableRoot; // Table view
 let updatesSection, updatesListEl; // Updates feed
+let updatesToolbarEl, updatesTypePillsEl, updatesUserFilterEl, updatesSearchEl, updatesMarkReadBtn, updatesClearBtn, updatesLoadMoreBtn;
 // Tag controls
 let filterLocationSel, filterConsultantSel, sortByTagSel, clearTagFiltersBtn;
 let tabTasksBtn, tabNotesBtn;
@@ -53,6 +54,13 @@ let unsubNotesTasks = null; // unsubscribe for embedded tasks inside Notes (sect
 let unsubCaseDoc = null;
 let unsubTable = null;
 let unsubUpdates = null;
+let updatesLastDoc = null; // pagination
+let updatesItems = []; // processed, decrypted items
+let updatesCache = new Map(); // id -> processed item
+let updatesTypeFilter = new Set(['task_added','task_completed','comment_added','note_added']);
+let updatesUserFilter = '';
+let updatesSearch = '';
+let updatesLastSeenAt = 0; // ms epoch
 // Keep the last cases snapshot docs for instant client-side filtering/sorting
 let lastCasesDocs = null; // Array of document snapshots
 let renderTableFromDocs = null; // function(docsArray)
@@ -324,9 +332,10 @@ function showCaseList() {
 
 async function openCase(id, title, source = 'list', initialTab = 'notes') {
   currentCaseId = id;
-  backTarget = source === 'user' ? 'user' : (source === 'table' ? 'table' : 'list');
+  backTarget = source === 'user' ? 'user' : (source === 'table' ? 'table' : (source === 'updates' ? 'updates' : 'list'));
   caseTitleEl.textContent = title;
   if (tableSection) tableSection.hidden = true;
+  if (updatesSection) updatesSection.hidden = true; // ensure updates is hidden when opening a case
   if (caseListSection) caseListSection.style.display = 'none';
   userDetailEl.hidden = true;
   caseDetailEl.hidden = false;
@@ -383,6 +392,8 @@ function showMainTab(which) {
     userDetailEl.hidden = true;
     if (updatesSection) updatesSection.hidden = false;
     if (!unsubUpdates) startRealtimeUpdates();
+    // Load last seen marker for unread highlight
+    try { const k = `updates.lastSeen:${username||''}`; updatesLastSeenAt = parseInt(localStorage.getItem(k)||'0',10)||0; } catch { updatesLastSeenAt = 0; }
   } else {
     // default: hide everything except table
     if (updatesSection) updatesSection.hidden = true;
@@ -1361,69 +1372,142 @@ async function logUpdate(payload = {}) {
   }
 }
 
-function formatTime(ts) {
-  try { if (!ts) return ''; const d = ts.toDate ? ts.toDate() : ts; return d.toLocaleString?.() || String(d); } catch { return ''; }
+function formatTime(ts) { try { if (!ts) return ''; const d = ts.toDate ? ts.toDate() : ts; return d.toLocaleString?.() || String(d); } catch { return ''; } }
+function formatRelative(ts) {
+  try {
+    const d = ts.toDate ? ts.toDate() : ts;
+    const diff = Date.now() - d.getTime();
+    const sec = Math.floor(diff/1000);
+    if (sec < 60) return `${sec}s ago`;
+    const min = Math.floor(sec/60); if (min < 60) return `${min}m ago`;
+    const hr = Math.floor(min/60); if (hr < 24) return `${hr}h ago`;
+    const day = Math.floor(hr/24); return `${day}d ago`;
+  } catch { return ''; }
 }
 
-function renderUpdateItem(d) {
-  const li = document.createElement('li');
-  li.className = 'update-item';
-  const data = d.data();
-  const who = data.username || 'Someone';
-  const when = formatTime(data.createdAt);
-  let line = '';
-  let caseTitle = 'Case';
-  const fill = async () => {
-    try { if (data.caseTitleCipher && data.caseTitleIv) caseTitle = await decryptText(data.caseTitleCipher, data.caseTitleIv); } catch {}
-    const type = data.type;
-    if (type === 'task_added') {
-      let taskText = '';
-      try { if (data.taskTextCipher && data.taskTextIv) taskText = await decryptText(data.taskTextCipher, data.taskTextIv); } catch {}
-      line = `${who} added ${taskText || 'a task'} to ${caseTitle}`;
-    } else if (type === 'task_completed') {
-      let taskText = '';
-      try { if (data.taskTextCipher && data.taskTextIv) taskText = await decryptText(data.taskTextCipher, data.taskTextIv); } catch {}
-      line = `${who} marked ${taskText || 'a task'} as complete`;
-    } else if (type === 'comment_added') {
-      let comment = '';
-      try { if (data.commentCipher && data.commentIv) comment = await decryptText(data.commentCipher, data.commentIv); } catch {}
-      line = `${who} commented on ${caseTitle}: ${comment}`;
-    } else if (type === 'note_added') {
-      const sec = data.noteSection || '';
-      let noteTitle = '';
-      try { if (data.noteTitleCipher && data.noteTitleIv) noteTitle = await decryptText(data.noteTitleCipher, data.noteTitleIv); } catch {}
-      line = `${who} added ${noteTitle ? ('“' + noteTitle + '” ') : ''}to section ${sec} of ${caseTitle}`;
-    } else {
-      line = `${who} updated ${caseTitle}`;
-    }
-    const a = document.createElement('a'); a.href = '#'; a.textContent = line;
-    a.addEventListener('click', (e) => {
-      e.preventDefault();
-      const cid = data.caseId;
-      if (cid) {
-        if (data.taskId) pendingFocusTaskId = data.taskId;
-        openCase(cid, caseTitle || 'Case', 'table', 'tasks');
-      }
-    });
-    const meta = document.createElement('div'); meta.className = 'update-meta'; meta.textContent = when;
-    li.innerHTML = ''; li.appendChild(a); li.appendChild(meta);
-  };
-  fill();
+function dayKey(ts) { try { const d = ts.toDate ? ts.toDate() : ts; return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); } catch { return ''; } }
+function dayLabel(ts) {
+  try {
+    const d = ts.toDate ? ts.toDate() : ts;
+    const today = new Date(); const yday = new Date(); yday.setDate(today.getDate()-1);
+    const same = (a,b)=> a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
+    if (same(d,today)) return 'Today'; if (same(d,yday)) return 'Yesterday';
+    return d.toLocaleDateString?.(undefined,{ weekday:'short', month:'short', day:'numeric' }) || d.toDateString();
+  } catch { return ''; }
+}
+
+function buildUpdateDom(item) {
+  const li = document.createElement('li'); li.className='update-item'; if (item.createdAtMs && updatesLastSeenAt && item.createdAtMs > updatesLastSeenAt) li.classList.add('new');
+  const icon = document.createElement('div'); icon.className='update-icon'; icon.textContent = item.icon || '•';
+  const content = document.createElement('div'); content.className='update-content';
+  const line = document.createElement('div'); line.className='update-line';
+  const who = document.createElement('span'); who.className='who'; who.textContent=item.username||'Someone';
+  const a = document.createElement('a'); a.href='#'; a.className='link'; a.style.textDecoration='none'; a.style.color='inherit';
+  // Build message based on type
+  let msg='';
+  if (item.type==='task_added') msg = ` added ${item.taskText || 'a task'} to `;
+  else if (item.type==='task_completed') msg = ` marked ${item.taskText || 'a task'} as complete in `;
+  else if (item.type==='comment_added') msg = ` commented in `;
+  else if (item.type==='note_added') msg = ` added a note to section ${item.noteSection || ''} in `;
+  const caseChip = document.createElement('span'); caseChip.className='chip'; caseChip.textContent=item.caseTitle||'Case';
+  const frag = document.createDocumentFragment(); frag.appendChild(who); frag.appendChild(document.createTextNode(msg)); frag.appendChild(caseChip);
+  if (item.type==='comment_added' && item.comment) { const tchip=document.createElement('span'); tchip.className='chip'; tchip.textContent=item.comment; tchip.style.maxWidth='220px'; tchip.style.overflow='hidden'; tchip.style.textOverflow='ellipsis'; tchip.style.whiteSpace='nowrap'; frag.appendChild(document.createTextNode(' ')); frag.appendChild(tchip); }
+  if ((item.type==='task_added' || item.type==='task_completed') && item.taskText) { const tchip=document.createElement('span'); tchip.className='chip'; tchip.textContent=item.taskText; tchip.style.maxWidth='220px'; tchip.style.overflow='hidden'; tchip.style.textOverflow='ellipsis'; tchip.style.whiteSpace='nowrap'; frag.appendChild(document.createTextNode(' ')); frag.appendChild(tchip); }
+  line.appendChild(frag);
+  a.appendChild(line);
+  a.addEventListener('click', (e)=>{ e.preventDefault(); const cid=item.caseId; if (!cid) return; // Switch to table to hide updates
+    try { showMainTab('table'); } catch {}
+    if (item.taskId) pendingFocusTaskId = item.taskId; openCase(cid, item.caseTitle||'Case', 'updates', 'tasks'); });
+  content.appendChild(a);
+  const meta = document.createElement('div'); meta.className='update-meta'; meta.title = item.createdAt ? formatTime(item.createdAt) : ''; meta.textContent = item.createdAt ? formatRelative(item.createdAt) : '';
+  li.appendChild(icon); li.appendChild(content); li.appendChild(meta);
   return li;
+}
+
+function renderUpdatesList() {
+  if (!updatesListEl) return;
+  updatesListEl.innerHTML='';
+  // Filters
+  const filtered = updatesItems.filter(it => {
+    if (!updatesTypeFilter.has(it.type)) return false;
+    if (updatesUserFilter && (it.username||'') !== updatesUserFilter) return false;
+    if (updatesSearch) {
+      const hay = `${it.username||''} ${it.caseTitle||''} ${it.taskText||''} ${it.comment||''}`.toLowerCase();
+      if (!hay.includes(updatesSearch.toLowerCase())) return false;
+    }
+    return true;
+  });
+  if (filtered.length===0) { const d=document.createElement('div'); d.className='update-empty'; d.textContent='No updates yet.'; updatesListEl.appendChild(d); return; }
+  // Group by day
+  let prevKey='';
+  for (const it of filtered) {
+    const k = it.createdAt ? dayKey(it.createdAt) : '';
+    if (k && k !== prevKey) { prevKey = k; const g=document.createElement('div'); g.className='update-group'; g.textContent = dayLabel(it.createdAt); updatesListEl.appendChild(g); }
+    updatesListEl.appendChild(buildUpdateDom(it));
+  }
 }
 
 function startRealtimeUpdates() {
   try {
-    const q = query(collection(db, 'updates'), orderBy('createdAt', 'desc'), limit(200));
+    const q = query(collection(db, 'updates'), orderBy('createdAt', 'desc'), limit(100));
     if (unsubUpdates) { try { unsubUpdates(); } catch {} }
     unsubUpdates = onSnapshot(q, async (snap) => {
-      if (!updatesListEl) return;
-      updatesListEl.innerHTML = '';
-      for (const d of snap.docs) updatesListEl.appendChild(renderUpdateItem(d));
+      updatesItems = [];
+      updatesCache.clear();
+      for (const d of snap.docs) {
+        const data = d.data();
+        const it = { id: d.id, type: data.type, username: data.username||'', caseId: data.caseId||'', taskId: data.taskId||'', createdAt: data.createdAt||null, createdAtMs: data.createdAt?.toMillis ? data.createdAt.toMillis() : null };
+        try { if (data.caseTitleCipher && data.caseTitleIv) it.caseTitle = await decryptText(data.caseTitleCipher, data.caseTitleIv); } catch {}
+        if (it.type==='task_added' || it.type==='task_completed') {
+          try { if (data.taskTextCipher && data.taskTextIv) it.taskText = await decryptText(data.taskTextCipher, data.taskTextIv); } catch {}
+        } else if (it.type==='comment_added') {
+          try { if (data.commentCipher && data.commentIv) it.comment = await decryptText(data.commentCipher, data.commentIv); } catch {}
+        } else if (it.type==='note_added') {
+          it.noteSection = data.noteSection || '';
+          try { if (data.noteTitleCipher && data.noteTitleIv) it.noteTitle = await decryptText(data.noteTitleCipher, data.noteTitleIv); } catch {}
+        }
+        it.icon = (it.type==='task_added') ? '➕' : (it.type==='task_completed') ? '☑' : (it.type==='comment_added') ? '💬' : (it.type==='note_added') ? '📝' : '•';
+        updatesItems.push(it); updatesCache.set(d.id, it);
+      }
+      updatesLastDoc = snap.docs[snap.docs.length-1] || null;
+      // Populate user filter options from usersCache
+      if (updatesUserFilterEl) {
+        const prev = updatesUserFilterEl.value;
+        updatesUserFilterEl.innerHTML = '<option value="">All users</option>' + (usersCache||[]).map(u=>`<option value="${u.username}">${u.username}</option>`).join('');
+        updatesUserFilterEl.value = prev || '';
+      }
+      renderUpdatesList();
     }, (err) => console.error('Updates listener error', err));
   } catch (err) {
     console.error('Failed to start updates listener', err);
   }
+}
+
+async function loadMoreUpdates() {
+  if (!updatesLastDoc) return;
+  try {
+    const q = query(collection(db,'updates'), orderBy('createdAt','desc'), startAfter(updatesLastDoc), limit(100));
+    const snap = await getDocs(q);
+    const more = [];
+    for (const d of snap.docs) {
+      const data = d.data();
+      const it = { id: d.id, type: data.type, username: data.username||'', caseId: data.caseId||'', taskId: data.taskId||'', createdAt: data.createdAt||null, createdAtMs: data.createdAt?.toMillis ? data.createdAt.toMillis() : null };
+      try { if (data.caseTitleCipher && data.caseTitleIv) it.caseTitle = await decryptText(data.caseTitleCipher, data.caseTitleIv); } catch {}
+      if (it.type==='task_added' || it.type==='task_completed') {
+        try { if (data.taskTextCipher && data.taskTextIv) it.taskText = await decryptText(data.taskTextCipher, data.taskTextIv); } catch {}
+      } else if (it.type==='comment_added') {
+        try { if (data.commentCipher && data.commentIv) it.comment = await decryptText(data.commentCipher, data.commentIv); } catch {}
+      } else if (it.type==='note_added') {
+        it.noteSection = data.noteSection || '';
+        try { if (data.noteTitleCipher && data.noteTitleIv) it.noteTitle = await decryptText(data.noteTitleCipher, data.noteTitleIv); } catch {}
+      }
+      it.icon = (it.type==='task_added') ? '➕' : (it.type==='task_completed') ? '☑' : (it.type==='comment_added') ? '💬' : (it.type==='note_added') ? '📝' : '•';
+      more.push(it); updatesCache.set(d.id, it);
+    }
+    updatesLastDoc = snap.docs[snap.docs.length-1] || null;
+    updatesItems = updatesItems.concat(more);
+    renderUpdatesList();
+  } catch (err) { console.error('Failed to load more updates', err); }
 }
 
 // --- A–F case fields stored on the case doc
@@ -2740,6 +2824,13 @@ window.addEventListener('DOMContentLoaded', async () => {
   caseTitleEl = document.getElementById('case-title');
   updatesSection = document.getElementById('updates-section');
   updatesListEl = document.getElementById('updates-list');
+  updatesToolbarEl = document.getElementById('updates-toolbar');
+  updatesTypePillsEl = document.getElementById('updates-type-pills');
+  updatesUserFilterEl = document.getElementById('updates-user-filter');
+  updatesSearchEl = document.getElementById('updates-search');
+  updatesMarkReadBtn = document.getElementById('updates-mark-read');
+  updatesClearBtn = document.getElementById('updates-clear');
+  updatesLoadMoreBtn = document.getElementById('updates-load-more');
   backBtn = document.getElementById('back-btn');
   taskForm = document.getElementById('task-form');
   taskInput = document.getElementById('task-input');
@@ -2838,6 +2929,21 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Main tab bindings
   if (mainTabTable) mainTabTable.addEventListener('click', () => showMainTab('table'));
   if (mainTabUpdates) mainTabUpdates.addEventListener('click', () => showMainTab('updates'));
+  if (updatesTypePillsEl) {
+    updatesTypePillsEl.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-type]');
+      if (!b) return;
+      b.classList.toggle('active');
+      const t = b.getAttribute('data-type');
+      if (b.classList.contains('active')) updatesTypeFilter.add(t); else updatesTypeFilter.delete(t);
+      renderUpdatesList();
+    });
+  }
+  if (updatesUserFilterEl) updatesUserFilterEl.addEventListener('change', () => { updatesUserFilter = updatesUserFilterEl.value || ''; renderUpdatesList(); });
+  if (updatesSearchEl) updatesSearchEl.addEventListener('input', () => { updatesSearch = updatesSearchEl.value.trim(); renderUpdatesList(); });
+  if (updatesClearBtn) updatesClearBtn.addEventListener('click', () => { updatesTypeFilter = new Set(['task_added','task_completed','comment_added','note_added']); Array.from(updatesTypePillsEl?.querySelectorAll('.pill')||[]).forEach(p=>p.classList.add('active')); updatesUserFilter=''; if (updatesUserFilterEl) updatesUserFilterEl.value=''; updatesSearch=''; if (updatesSearchEl) updatesSearchEl.value=''; renderUpdatesList(); });
+  if (updatesMarkReadBtn) updatesMarkReadBtn.addEventListener('click', () => { try { const k = `updates.lastSeen:${username||''}`; const now = Date.now(); localStorage.setItem(k, String(now)); updatesLastSeenAt = now; } catch {} renderUpdatesList(); });
+  if (updatesLoadMoreBtn) updatesLoadMoreBtn.addEventListener('click', loadMoreUpdates);
   if (mainTabMy) mainTabMy.addEventListener('click', () => showMainTab('my'));
   // Filters show/hide
   const filtersKey = 'tableFiltersHidden';
@@ -2880,6 +2986,16 @@ window.addEventListener('DOMContentLoaded', async () => {
       userDetailEl.hidden = false;
       if (caseListSection) caseListSection.style.display = 'none';
       backTarget = 'list';
+    } else if (backTarget === 'updates' && updatesSection) {
+      // Return to updates tab
+      if (unsubTasks) { unsubTasks(); unsubTasks = null; }
+      if (unsubNotes) { unsubNotes(); unsubNotes = null; }
+      if (unsubCaseDoc) { unsubCaseDoc(); unsubCaseDoc = null; }
+      currentCaseId = null;
+      caseDetailEl.hidden = true;
+      showMainTab('updates');
+      // Clear case param
+      try { const url = new URL(window.location.href); url.searchParams.delete('case'); window.history.pushState({}, '', url.toString()); } catch {}
     } else {
       // Return to table
       if (unsubTasks) { unsubTasks(); unsubTasks = null; }

@@ -7,8 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
-  <script type="module" crossorigin src="/catalist/assets/index-C17WAMHg.js"></script>
-  <link rel="stylesheet" crossorigin href="/catalist/assets/index-XXVYB3yi.css">
+  <script type="module" crossorigin src="/catalist/assets/index-AdtoQJ22.js"></script>
+  <link rel="stylesheet" crossorigin href="/catalist/assets/index-CTfArA5G.css">
 </head>
 <body>
   <header class="topbar">
@@ -170,8 +170,29 @@
 
     <section id="updates-section" class="card" hidden>
       <h2 class="case-heading">Updates</h2>
-      <ul id="updates-list" class="updates-list" aria-live="polite"></ul>
-      <div id="updates-footer" class="updates-footer"></div>
+      <div id="updates-toolbar" class="c-toolbar c-toolbar--stack" aria-label="Updates filters">
+        <div class="c-row">
+          <div class="segmented" id="updates-type-pills" role="group" aria-label="Update types">
+            <button type="button" class="pill active" data-type="task_added">Tasks</button>
+            <div class="sep"></div>
+            <button type="button" class="pill active" data-type="task_completed">Completed</button>
+            <div class="sep"></div>
+            <button type="button" class="pill active" data-type="comment_added">Comments</button>
+            <div class="sep"></div>
+            <button type="button" class="pill active" data-type="note_added">Notes</button>
+          </div>
+          <select id="updates-user-filter" title="Filter by user" style="max-width: 220px">
+            <option value="">All users</option>
+          </select>
+          <input id="updates-search" class="c-field--grow" type="search" placeholder="Search updates">
+          <button id="updates-mark-read" class="btn" type="button">Mark all read</button>
+          <button id="updates-clear" class="btn" type="button">Clear</button>
+        </div>
+      </div>
+      <ul id="updates-list" class="updates-list" aria-live="polite" role="list"></ul>
+      <div id="updates-footer" class="updates-footer">
+        <button id="updates-load-more" class="btn" type="button">Load more</button>
+      </div>
     </section>
   </main>
   <div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="true"></div>
