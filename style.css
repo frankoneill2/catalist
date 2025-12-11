@@ -1123,7 +1123,7 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
   #case-panels {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 10px;
+    gap: 8px;
     align-items: start;
   }
   /* Ensure Notes on the left, Tasks on the right regardless of DOM order */
@@ -1138,11 +1138,17 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
   #case-tag-chips { margin: 4px 0 6px; }
 
   /* Compact tasks composer and list */
-  #case-detail #task-form.composer { padding: 6px; }
-  #case-detail #task-form.composer input { height: 36px; }
-  #case-detail #task-form.composer .primary { height: 36px; }
-  #case-detail #task-list li { padding: 6px 8px; margin-bottom: 6px; }
-  #case-detail .task-status-btn { width: 28px; height: 28px; font-size: 1.2rem; line-height: 26px; }
+  #case-detail #task-form.composer { padding: 4px; gap: 6px; }
+  #case-detail #task-form.composer input { height: 30px; font-size: 13px; }
+  #case-detail #task-form.composer .primary { height: 30px; padding: 0 10px; font-size: 13px; }
+  #case-detail #task-list li { padding: 2px 4px; margin-bottom: 4px; }
+  #case-detail #task-list .case-task { gap: 6px; padding: 4px 6px; border-radius: 6px; font-size: 0.85rem; }
+  #case-detail #task-list .case-task .status-btn { width: 18px; height: 18px; font-size: 14px; line-height: 16px; }
+  #case-detail #task-list .case-task .mini-avatar { width: 16px; height: 16px; font-size: 10px; margin-left: 4px; }
+  #case-detail #task-list .case-task .mini-chip { height: 16px; font-size: 10px; padding: 0 6px; }
+  #case-detail #task-list .case-task .comment-toggle { padding: 2px 4px; }
+  #case-detail #task-list .badge.comment-count { padding: 0 4px; font-size: 11px; }
+  #case-detail .icon-btn { min-height: 0; padding: 2px 4px; }
 
   /* Compact chips */
   #case-detail .chip { height: 20px; font-size: 11px; padding: 0 6px; }
