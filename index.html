@@ -83,10 +83,11 @@
       <div id="case-header-actions" class="case-header-actions"></div>
       <div id="case-tag-chips" class="tag-chips" aria-label="Case tags"></div>
       <div class="tabs" role="tablist" aria-label="Case sections">
-        <button id="tab-tasks" class="tab active" role="tab" aria-controls="tasks" aria-selected="true">Tasks</button>
         <button id="tab-notes" class="tab" role="tab" aria-controls="notes" aria-selected="false">Notes</button>
+        <button id="tab-tasks" class="tab active" role="tab" aria-controls="tasks" aria-selected="true">Tasks</button>
       </div>
 
+      <div id="case-panels">
       <section id="tasks" role="tabpanel" aria-labelledby="tab-tasks">
         <div id="task-toolbar-root" style="margin-bottom: 8px"></div>
         <form id="task-form" class="composer" autocomplete="off">
@@ -166,6 +167,7 @@
           </div>
         </div>
       </section>
+      </div>
     </section>
 
     <section id="user-detail" class="card" hidden>

@@ -1112,6 +1112,24 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
   margin: 0 auto;
 }
 
+/* Desktop: side-by-side Notes (left) and Tasks (right) */
+@media (min-width: 900px) {
+  /* Hide toggle tabs on desktop */
+  #case-detail .tabs { display: none; }
+  /* Two-column layout for the panels */
+  #case-panels {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 16px;
+    align-items: start;
+  }
+  /* Ensure Notes on the left, Tasks on the right regardless of DOM order */
+  #case-panels #notes { order: 1; }
+  #case-panels #tasks { order: 2; }
+  /* Avoid centered Notes card inside a column */
+  #case-panels .notes { margin: 0; }
+}
+
 .case-header-actions { position: relative; display: inline-block; margin-left: 8px; }
 .case-overflow-btn { font-weight: 600; }
 .case-overflow-panel { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: var(--shadow-lg); padding: 6px; min-width: 160px; }

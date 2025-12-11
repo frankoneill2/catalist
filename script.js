@@ -48,6 +48,7 @@ let tableScrollY = 0; // restore scroll after closing case
 let currentUserPageName = null;
 let unsubTasks = null;
 let unsubNotes = null;
+let unsubNotesTasks = null; // unsubscribe for embedded tasks inside Notes (section F)
 let unsubCaseDoc = null;
 let unsubTable = null;
 // Keep the last cases snapshot docs for instant client-side filtering/sorting
@@ -2320,16 +2321,37 @@ function bindTabs() {
   tabNotesBtn.addEventListener('click', () => showTab('notes'));
 }
 
-function showTab(which) {
+function isDesktopCaseLayout() {
+  try { return window.matchMedia('(min-width: 900px)').matches; } catch { return false; }
+}
+
+function applyCasePanelsVisibility() {
   const tasks = document.getElementById('tasks');
   const notes = document.getElementById('notes');
+  if (!tasks || !notes) return;
+  if (isDesktopCaseLayout()) {
+    // Desktop: show both panels
+    tasks.hidden = false;
+    notes.hidden = false;
+  } else {
+    // Mobile: show the active tab only
+    const tasksActive = tabTasksBtn && tabTasksBtn.classList.contains('active');
+    tasks.hidden = !tasksActive;
+    notes.hidden = tasksActive;
+  }
+}
+
+function showTab(which) {
   const isTasks = which === 'tasks';
-  tasks.hidden = !isTasks;
-  notes.hidden = isTasks;
-  tabTasksBtn.classList.toggle('active', isTasks);
-  tabNotesBtn.classList.toggle('active', !isTasks);
-  tabTasksBtn.setAttribute('aria-selected', String(isTasks));
-  tabNotesBtn.setAttribute('aria-selected', String(!isTasks));
+  if (tabTasksBtn) {
+    tabTasksBtn.classList.toggle('active', isTasks);
+    tabTasksBtn.setAttribute('aria-selected', String(isTasks));
+  }
+  if (tabNotesBtn) {
+    tabNotesBtn.classList.toggle('active', !isTasks);
+    tabNotesBtn.setAttribute('aria-selected', String(!isTasks));
+  }
+  applyCasePanelsVisibility();
 }
 
 // Apply toolbar filters to current case tasks and render
@@ -2671,6 +2693,9 @@ window.addEventListener('DOMContentLoaded', async () => {
   bindNoteForm();
   bindNotesFields();
   bindTabs();
+  // Ensure correct visibility on load and on resize (desktop shows both)
+  applyCasePanelsVisibility();
+  window.addEventListener('resize', applyCasePanelsVisibility);
   // Main tab bindings
   if (mainTabTable) mainTabTable.addEventListener('click', () => showMainTab('table'));
   if (mainTabMy) mainTabMy.addEventListener('click', () => showMainTab('my'));
