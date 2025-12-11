@@ -1590,9 +1590,10 @@ function startRealtimeTable() {
                   const targetCell=targetRow.children[targetCol]; if (targetCell) { const n=targetCell.querySelector('.cell-title, .cell-editable'); if (n) n.focus(); }
                 }
               });
+              line.appendChild(title);
               // Per-header body hover/click icon (only if body present)
-              const showLineInfo = (it.body || '').trim().length > 0;
-              if (showLineInfo) {
+              const it = items[i];
+              if ((it.body||'').trim().length>0) {
                 const info = document.createElement('button'); info.type='button'; info.className='line-info-btn'; info.textContent='›'; info.title='Show details';
                 let panel = null; let persisted = false; let overBtn=false; let overPanel=false;
                 const cleanup = () => { if (panel) { panel.remove(); panel=null; } persisted=false; document.removeEventListener('click', onDocClick, true); };
@@ -1618,7 +1619,6 @@ function startRealtimeTable() {
                 info.addEventListener('click', (e)=>{ e.stopPropagation(); if (!panel) openPanel(); if (!persisted) { persisted=true; document.addEventListener('click', onDocClick, true); } else { cleanup(); } });
                 line.appendChild(info);
               }
-              line.appendChild(title);
               container.appendChild(line);
               return;
             }

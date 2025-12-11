@@ -1181,7 +1181,7 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
 
 /* Table cell multi-headers */
 .cell-items { display: grid; gap: 2px; position: relative; }
-.cell-line { display: grid; grid-template-columns: 10px 1fr; align-items: start; gap: 4px; }
+.cell-line { display: grid; grid-template-columns: 10px 1fr auto; align-items: start; gap: 4px; }
 .cell-bullet { width: 6px; height: 6px; border-radius: 50%; background: #9ca3af; margin-top: 6px; }
 .cell-line .cell-title { display: inline-block; min-height: 18px; outline: none; border: 1px solid transparent; border-radius: 4px; padding: 2px 4px; }
 .cell-line .cell-title:focus { border-color: #bfdbfe; box-shadow: 0 0 0 3px rgba(59,130,246,0.2); }
