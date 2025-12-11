@@ -1557,7 +1557,8 @@ function startRealtimeTable() {
               const bullet = document.createElement('div'); bullet.className='cell-bullet'; line.appendChild(bullet);
               const title = document.createElement('div'); title.className='cell-title'; title.setAttribute('contenteditable','true'); title.textContent = it.title || '';
               title.addEventListener('keydown', (e) => {
-                const sel = window.getSelection(); const atStart = sel && sel.anchorOffset === 0 && sel.anchorNode && sel.anchorNode.parentElement === title;
+                const sel = window.getSelection(); const atStart = sel && sel.anchorOffset === 0 && sel.anchorNode && (sel.anchorNode === title || sel.anchorNode.parentElement === title);
+                const isEmpty = !title.textContent || title.textContent.replace(/\u200B/g,'').trim() === '';
                 if (e.key==='Enter' && !(e.ctrlKey||e.metaKey||e.shiftKey)) {
                   e.preventDefault();
                   if (items.length >= max) { showToast('Limit 8 items'); return; }
@@ -1570,6 +1571,22 @@ function startRealtimeTable() {
                         const sel = window.getSelection(); const range = document.createRange();
                         range.selectNodeContents(n); range.collapse(true);
                         sel.removeAllRanges(); sel.addRange(range);
+                      } catch {}
+                    }
+                  },0);
+                } else if (e.key==='Backspace' && i>0 && isEmpty) {
+                  // Delete empty header line and move caret to end of previous line
+                  e.preventDefault();
+                  items.splice(i,1);
+                  renderLines(showAll); scheduleSave();
+                  setTimeout(()=>{
+                    const p=container.querySelectorAll('.cell-title')[i-1];
+                    if (p) {
+                      p.focus();
+                      try {
+                        const sel2 = window.getSelection(); const range2 = document.createRange();
+                        range2.selectNodeContents(p); range2.collapse(false);
+                        sel2.removeAllRanges(); sel2.addRange(range2);
                       } catch {}
                     }
                   },0);
