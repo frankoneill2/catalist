@@ -44,6 +44,7 @@
     <div id="main-tabs" class="tabs">
       <button id="tab-table" class="tab active" role="tab" aria-selected="true" aria-controls="table-section">Table</button>
       <button id="tab-my" class="tab" role="tab" aria-selected="false" aria-controls="user-detail">My Tasks</button>
+      <button id="tab-updates" class="tab" role="tab" aria-selected="false" aria-controls="updates-section">Updates</button>
     </div>
 
     <section id="table-section" class="card" hidden>
@@ -164,6 +165,12 @@
       <h2 id="user-title" class="case-heading"></h2>
       <div id="user-toolbar-root" style="margin-bottom: 8px"></div>
       <ul id="user-task-list"></ul>
+    </section>
+
+    <section id="updates-section" class="card" hidden>
+      <h2 class="case-heading">Updates</h2>
+      <ul id="updates-list" class="updates-list" aria-live="polite"></ul>
+      <div id="updates-footer" class="updates-footer"></div>
     </section>
   </main>
   <div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="true"></div>

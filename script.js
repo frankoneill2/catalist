@@ -35,6 +35,7 @@ let colAInput, colBInput, colCInput, colDInput, colEInput, colFInput; // A–F h
 let colABody, colBBody, colCBody, colDBody, colEBody; // A–E bodies
 let notesTasksList, notesTasksForm, notesTasksInput; // Notes embedded tasks
 let tableSection, tableRoot; // Table view
+let updatesSection, updatesListEl; // Updates feed
 // Tag controls
 let filterLocationSel, filterConsultantSel, sortByTagSel, clearTagFiltersBtn;
 let tabTasksBtn, tabNotesBtn;
@@ -51,6 +52,7 @@ let unsubNotes = null;
 let unsubNotesTasks = null; // unsubscribe for embedded tasks inside Notes (section F)
 let unsubCaseDoc = null;
 let unsubTable = null;
+let unsubUpdates = null;
 // Keep the last cases snapshot docs for instant client-side filtering/sorting
 let lastCasesDocs = null; // Array of document snapshots
 let renderTableFromDocs = null; // function(docsArray)
@@ -344,8 +346,10 @@ async function openCase(id, title, source = 'list', initialTab = 'notes') {
 function showMainTab(which) {
   const mainTabTable = document.getElementById('tab-table');
   const mainTabMy = document.getElementById('tab-my');
+  const mainTabUpdates = document.getElementById('tab-updates');
   const isTable = which === 'table';
   const isMy = which === 'my';
+  const isUpdates = which === 'updates';
   if (mainTabTable) {
     mainTabTable.classList.toggle('active', isTable);
     mainTabTable.setAttribute('aria-selected', String(isTable));
@@ -354,18 +358,36 @@ function showMainTab(which) {
     mainTabMy.classList.toggle('active', isMy);
     mainTabMy.setAttribute('aria-selected', String(isMy));
   }
+  if (mainTabUpdates) {
+    mainTabUpdates.classList.toggle('active', isUpdates);
+    mainTabUpdates.setAttribute('aria-selected', String(isUpdates));
+  }
   if (isTable) {
     if (caseListSection) caseListSection.style.display = 'none';
     caseDetailEl.hidden = true;
     userDetailEl.hidden = true;
+    if (updatesSection) updatesSection.hidden = true;
     if (tableSection) tableSection.hidden = false;
     if (!unsubTable) startRealtimeTable();
-  } else {
+    if (unsubUpdates) { try { unsubUpdates(); } catch {} unsubUpdates = null; }
+  } else if (isMy) {
     if (tableSection) tableSection.hidden = true;
     if (unsubTable) { unsubTable(); unsubTable = null; }
-    if (isMy) {
-      openUser(username);
-    }
+    if (updatesSection) updatesSection.hidden = true;
+    if (unsubUpdates) { try { unsubUpdates(); } catch {} unsubUpdates = null; }
+    openUser(username);
+  } else if (isUpdates) {
+    if (tableSection) tableSection.hidden = true;
+    if (unsubTable) { unsubTable(); unsubTable = null; }
+    caseDetailEl.hidden = true;
+    userDetailEl.hidden = true;
+    if (updatesSection) updatesSection.hidden = false;
+    if (!unsubUpdates) startRealtimeUpdates();
+  } else {
+    // default: hide everything except table
+    if (updatesSection) updatesSection.hidden = true;
+    if (unsubUpdates) { try { unsubUpdates(); } catch {} unsubUpdates = null; }
+    if (tableSection) tableSection.hidden = false;
   }
 }
 
@@ -761,6 +783,13 @@ async function loadCompactTasks(caseId, caseTitle, ul, moreBtn) {
           statusBtn.textContent = icon(next);
           statusBtn.setAttribute('aria-label', `Task status: ${next}`);
           li.className = 'case-task ' + (next === 'in progress' ? 's-inprogress' : (next === 'complete' ? 's-complete' : 's-open'));
+          if (next === 'complete') {
+            // Log completion with task text snapshot
+            try {
+              const tEnc = await encryptText(it.text || '');
+              await logUpdate({ type: 'task_completed', caseId, caseTitle: caseTitle, taskId: it.id, taskTextCipher: tEnc.cipher, taskTextIv: tEnc.iv });
+            } catch {}
+          }
           // Do not re-sort now; keep in-session order stable until leaving page
         } catch (err) {
           console.error('Failed to update status', err);
@@ -1010,6 +1039,13 @@ function startRealtimeTasks(caseId) {
           li.dataset.status = next;
           statusBtn.textContent = statusIcon(next);
           statusBtn.setAttribute('aria-label', statusLabel(next));
+          if (next === 'complete') {
+            try {
+              const tt = titleSpan && titleSpan.textContent ? titleSpan.textContent : '';
+              const tEnc = await encryptText(tt);
+              await logUpdate({ type: 'task_completed', caseId, taskId: docSnap.id, taskTextCipher: tEnc.cipher, taskTextIv: tEnc.iv });
+            } catch {}
+          }
         });
         taskMain.appendChild(statusBtn);
         taskMain.appendChild(titleSpan);
@@ -1176,6 +1212,10 @@ function startRealtimeTasks(caseId) {
             await addDoc(collection(db, 'cases', caseId, 'tasks', docSnap.id, 'comments'), {
               cipher, iv, username, createdAt: serverTimestamp(),
             });
+            // Log update: comment added
+            try {
+              await logUpdate({ type: 'comment_added', caseId, taskId: docSnap.id, commentCipher: cipher, commentIv: iv });
+            } catch {}
             // Kick off realtime after write to avoid flicker
             if (shouldStartListener) {
               startRealtimeComments(caseId, docSnap.id, commentsList, (n) => { commentCount = n; updateToggleLabel(); });
@@ -1299,6 +1339,91 @@ function startRealtimeNotes(caseId) {
       }
     }
   });
+}
+
+// --- Updates feed helpers ---
+async function logUpdate(payload = {}) {
+  try {
+    const base = { type: payload.type, caseId: payload.caseId || currentCaseId || '', username, createdAt: serverTimestamp() };
+    // Case title snapshot
+    let caseTitleText = payload.caseTitle || (typeof caseTitleEl !== 'undefined' && caseTitleEl && caseTitleEl.textContent ? caseTitleEl.textContent : 'Case');
+    try { caseTitleText = (caseTitleText || '').trim(); } catch {}
+    const { cipher: caseTitleCipher, iv: caseTitleIv } = await encryptText(caseTitleText || 'Case');
+    const docBody = { ...base, caseTitleCipher, caseTitleIv };
+    const optional = [
+      'taskId','taskTextCipher','taskTextIv','assignee','priority',
+      'commentCipher','commentIv','noteSection','noteTitleCipher','noteTitleIv'
+    ];
+    for (const k of optional) if (payload[k] !== undefined) docBody[k] = payload[k];
+    await addDoc(collection(db, 'updates'), docBody);
+  } catch (err) {
+    console.error('Failed to log update', err);
+  }
+}
+
+function formatTime(ts) {
+  try { if (!ts) return ''; const d = ts.toDate ? ts.toDate() : ts; return d.toLocaleString?.() || String(d); } catch { return ''; }
+}
+
+function renderUpdateItem(d) {
+  const li = document.createElement('li');
+  li.className = 'update-item';
+  const data = d.data();
+  const who = data.username || 'Someone';
+  const when = formatTime(data.createdAt);
+  let line = '';
+  let caseTitle = 'Case';
+  const fill = async () => {
+    try { if (data.caseTitleCipher && data.caseTitleIv) caseTitle = await decryptText(data.caseTitleCipher, data.caseTitleIv); } catch {}
+    const type = data.type;
+    if (type === 'task_added') {
+      let taskText = '';
+      try { if (data.taskTextCipher && data.taskTextIv) taskText = await decryptText(data.taskTextCipher, data.taskTextIv); } catch {}
+      line = `${who} added ${taskText || 'a task'} to ${caseTitle}`;
+    } else if (type === 'task_completed') {
+      let taskText = '';
+      try { if (data.taskTextCipher && data.taskTextIv) taskText = await decryptText(data.taskTextCipher, data.taskTextIv); } catch {}
+      line = `${who} marked ${taskText || 'a task'} as complete`;
+    } else if (type === 'comment_added') {
+      let comment = '';
+      try { if (data.commentCipher && data.commentIv) comment = await decryptText(data.commentCipher, data.commentIv); } catch {}
+      line = `${who} commented on ${caseTitle}: ${comment}`;
+    } else if (type === 'note_added') {
+      const sec = data.noteSection || '';
+      let noteTitle = '';
+      try { if (data.noteTitleCipher && data.noteTitleIv) noteTitle = await decryptText(data.noteTitleCipher, data.noteTitleIv); } catch {}
+      line = `${who} added ${noteTitle ? ('“' + noteTitle + '” ') : ''}to section ${sec} of ${caseTitle}`;
+    } else {
+      line = `${who} updated ${caseTitle}`;
+    }
+    const a = document.createElement('a'); a.href = '#'; a.textContent = line;
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      const cid = data.caseId;
+      if (cid) {
+        if (data.taskId) pendingFocusTaskId = data.taskId;
+        openCase(cid, caseTitle || 'Case', 'table', 'tasks');
+      }
+    });
+    const meta = document.createElement('div'); meta.className = 'update-meta'; meta.textContent = when;
+    li.innerHTML = ''; li.appendChild(a); li.appendChild(meta);
+  };
+  fill();
+  return li;
+}
+
+function startRealtimeUpdates() {
+  try {
+    const q = query(collection(db, 'updates'), orderBy('createdAt', 'desc'), limit(200));
+    if (unsubUpdates) { try { unsubUpdates(); } catch {} }
+    unsubUpdates = onSnapshot(q, async (snap) => {
+      if (!updatesListEl) return;
+      updatesListEl.innerHTML = '';
+      for (const d of snap.docs) updatesListEl.appendChild(renderUpdateItem(d));
+    }, (err) => console.error('Updates listener error', err));
+  } catch (err) {
+    console.error('Failed to start updates listener', err);
+  }
 }
 
 // --- A–F case fields stored on the case doc
@@ -2285,7 +2410,7 @@ function renderNotesSection(container, letter, items) {
   const max = 8;
   const addBtn = container.parentElement?.querySelector('.add-note-item[data-letter="'+letter+'"]');
   const canAdd = items.length < max;
-  if (addBtn) { addBtn.disabled = !canAdd; addBtn.onclick = () => { if (items.length >= max) { showToast('Limit reached'); return; } items.push(newItem()); persist(); render(); }; }
+  if (addBtn) { addBtn.disabled = !canAdd; addBtn.onclick = () => { if (items.length >= max) { showToast('Limit reached'); return; } items.push(newItem()); persist(); try { logUpdate({ type: 'note_added', caseId: currentCaseId, noteSection: letter }); } catch {} render(); }; }
   const render = () => {
     container.innerHTML = '';
     items.forEach((it, idx) => {
@@ -2416,6 +2541,12 @@ function buildTaskListItem(item, opts = {}) {
       statusBtn.textContent = icon(next);
       statusBtn.setAttribute('aria-label', `Task status: ${next}`);
       li.className = 'case-task ' + (next === 'in progress' ? 's-inprogress' : (next === 'complete' ? 's-complete' : 's-open'));
+      if (next === 'complete') {
+        try {
+          const tEnc = await encryptText(titleSpan.textContent || '');
+          await logUpdate({ type: 'task_completed', caseId, taskId, taskTextCipher: tEnc.cipher, taskTextIv: tEnc.iv });
+        } catch {}
+      }
     } catch (err) { console.error('Failed to update status', err); showToast('Failed to update status'); }
   });
   const titleSpan = document.createElement('span');
@@ -2500,7 +2631,7 @@ function buildTaskListItem(item, opts = {}) {
     commentsLoaded = true;
   }
   toggle.addEventListener('click', ()=>{ const h=commentSection.hidden; commentSection.hidden=!h; updateToggle(); if(h && !commentsLoaded){ startRealtimeComments(caseId, taskId, commentsList, (n)=>{ commentCount=n; updateToggle(); }); commentsLoaded=true; } });
-  commentForm.addEventListener('submit', async (e)=>{ e.preventDefault(); const t=commentInput.value.trim(); if(!t) return; const tempLi=document.createElement('li'); tempLi.className='optimistic'; const span=document.createElement('span'); span.textContent = username ? `${username}: ${t}` : t; tempLi.appendChild(span); commentsList.appendChild(tempLi); commentInput.value=''; commentSection.hidden=false; updateToggle(); try{ const {cipher, iv}= await encryptText(t); await addDoc(collection(db,'cases',caseId,'tasks',taskId,'comments'),{cipher,iv,username,createdAt:serverTimestamp()}); if(!commentsLoaded){ startRealtimeComments(caseId,taskId,commentsList,(n)=>{ commentCount=n; updateToggle();}); commentsLoaded=true; } } catch(err){ tempLi.classList.add('failed'); showToast('Failed to add comment'); } });
+  commentForm.addEventListener('submit', async (e)=>{ e.preventDefault(); const t=commentInput.value.trim(); if(!t) return; const tempLi=document.createElement('li'); tempLi.className='optimistic'; const span=document.createElement('span'); span.textContent = username ? `${username}: ${t}` : t; tempLi.appendChild(span); commentsList.appendChild(tempLi); commentInput.value=''; commentSection.hidden=false; updateToggle(); try{ const {cipher, iv}= await encryptText(t); await addDoc(collection(db,'cases',caseId,'tasks',taskId,'comments'),{cipher,iv,username,createdAt:serverTimestamp()}); try { await logUpdate({ type: 'comment_added', caseId, taskId, commentCipher: cipher, commentIv: iv }); } catch {} if(!commentsLoaded){ startRealtimeComments(caseId,taskId,commentsList,(n)=>{ commentCount=n; updateToggle();}); commentsLoaded=true; } } catch(err){ tempLi.classList.add('failed'); showToast('Failed to add comment'); } });
   li.appendChild(commentSection);
   return li;
 }
@@ -2543,9 +2674,21 @@ function bindTaskForm() {
     const priSel = document.getElementById('task-priority');
     const assignee = assigneeSel ? (assigneeSel.value || null) : null;
     const priority = priSel ? (priSel.value || null) : null;
-    await addDoc(collection(db, 'cases', currentCaseId, 'tasks'), {
+    const ref = await addDoc(collection(db, 'cases', currentCaseId, 'tasks'), {
       textCipher, textIv, statusCipher, statusIv, createdAt: serverTimestamp(), username, assignee, priority,
     });
+    // Log update: task added
+    try {
+      await logUpdate({
+        type: 'task_added',
+        caseId: currentCaseId,
+        taskId: ref.id,
+        taskTextCipher: textCipher,
+        taskTextIv: textIv,
+        assignee,
+        priority,
+      });
+    } catch {}
     taskInput.value = '';
     if (assigneeSel) assigneeSel.value = '';
     if (priSel) priSel.value = '';
@@ -2595,6 +2738,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   caseLocationSel = document.getElementById('case-location');
   caseDetailEl = document.getElementById('case-detail');
   caseTitleEl = document.getElementById('case-title');
+  updatesSection = document.getElementById('updates-section');
+  updatesListEl = document.getElementById('updates-list');
   backBtn = document.getElementById('back-btn');
   taskForm = document.getElementById('task-form');
   taskInput = document.getElementById('task-input');
@@ -2621,6 +2766,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   const mainTabTable = document.getElementById('tab-table');
   const mainTabCases = document.getElementById('tab-cases');
   const mainTabMy = document.getElementById('tab-my');
+  const mainTabUpdates = document.getElementById('tab-updates');
   userDetailEl = document.getElementById('user-detail');
   userTitleEl = document.getElementById('user-title');
   userTaskListEl = document.getElementById('user-task-list');
@@ -2691,6 +2837,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   window.addEventListener('resize', applyCasePanelsVisibility);
   // Main tab bindings
   if (mainTabTable) mainTabTable.addEventListener('click', () => showMainTab('table'));
+  if (mainTabUpdates) mainTabUpdates.addEventListener('click', () => showMainTab('updates'));
   if (mainTabMy) mainTabMy.addEventListener('click', () => showMainTab('my'));
   // Filters show/hide
   const filtersKey = 'tableFiltersHidden';
@@ -3510,7 +3657,7 @@ function renderUserTasks() {
       const icon = (s)=> s==='complete'?'☑':(s==='in progress'?'◐':'☐');
       statusBtn.textContent = icon(it.status);
       statusBtn.setAttribute('aria-label', `Task status: ${it.status}`);
-      statusBtn.addEventListener('click', async (e)=>{ e.stopPropagation(); const order=['open','in progress','complete']; const next=order[(order.indexOf(it.status)+1)%order.length]; try{ const {cipher, iv}= await encryptText(next); await updateDoc(doc(db,'cases',caseId,'tasks',it.taskId),{ statusCipher:cipher, statusIv:iv }); it.status=next; statusBtn.textContent=icon(next); statusBtn.setAttribute('aria-label',`Task status: ${next}`); li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')); } catch(err){ console.error('Failed to update status',err); showToast('Failed to update status'); } });
+      statusBtn.addEventListener('click', async (e)=>{ e.stopPropagation(); const order=['open','in progress','complete']; const next=order[(order.indexOf(it.status)+1)%order.length]; try{ const {cipher, iv}= await encryptText(next); await updateDoc(doc(db,'cases',caseId,'tasks',it.taskId),{ statusCipher:cipher, statusIv:iv }); it.status=next; statusBtn.textContent=icon(next); statusBtn.setAttribute('aria-label',`Task status: ${next}`); li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')); if (next==='complete') { try { const tEnc = await encryptText(it.text || ''); await logUpdate({ type: 'task_completed', caseId, taskId: it.taskId, taskTextCipher: tEnc.cipher, taskTextIv: tEnc.iv }); } catch {} } } catch(err){ console.error('Failed to update status',err); showToast('Failed to update status'); } });
       const titleSpan = document.createElement('span'); titleSpan.className='task-text'; titleSpan.textContent=it.text;
       // Inline edit on My Tasks title
       titleSpan.addEventListener('click', (e) => {
