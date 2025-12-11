@@ -1509,10 +1509,13 @@ function startRealtimeTable() {
           const toggle = () => {
             const set = activeTagFilters[type];
             if (set.has(id)) set.delete(id); else set.add(id);
+            chip.classList.toggle('active', set.has(id));
             saveTagFilterState();
             if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs);
             const evt = new CustomEvent('filters:updated'); document.dispatchEvent(evt);
           };
+          // Reflect current active filter state on initial render
+          try { const set = activeTagFilters[type]; chip.classList.toggle('active', set && set.has(id)); } catch {}
           chip.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
           chip.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
         }

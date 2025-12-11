@@ -894,6 +894,7 @@ button:focus-visible {
 .name-row { display: flex; align-items: center; gap: 6px; }
 .tag-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; color: #374151; }
 .tag-chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border-radius: 999px; background: #eef2ff; color: #1e3a8a; border: 1px solid #e5e7eb; }
+.tag-chip.active { background: #dbeafe; color: #1d4ed8; border-color: #93c5fd; box-shadow: 0 0 0 2px rgba(147,197,253,0.3); }
 .tag-order { color: #6b7280; font-weight: 600; }
 .edit-tags-btn { background: none; border: 1px solid #e5e7eb; border-radius: 4px; padding: 2px 6px; font-size: 12px; color: #374151; }
 .tag-panel { position: fixed; z-index: 2147483646; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: var(--shadow-md); padding: 8px; width: 280px; }
