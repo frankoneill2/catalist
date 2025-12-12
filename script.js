@@ -1050,7 +1050,7 @@ function startRealtimeTasks(caseId) {
             try {
               const tt = titleSpan && titleSpan.textContent ? titleSpan.textContent : '';
               const tEnc = await encryptText(tt);
-              await logUpdate({ type: 'task_completed', caseId, taskId: docSnap.id, taskTextCipher: tEnc.cipher, taskTextIv: tEnc.iv });
+              await logUpdate({ type: 'task_completed', caseId, caseTitle: (caseTitleEl && caseTitleEl.textContent) || 'Case', taskId: docSnap.id, taskTextCipher: tEnc.cipher, taskTextIv: tEnc.iv });
             } catch {}
           }
         });
@@ -1739,7 +1739,7 @@ function startRealtimeTable() {
           form.addEventListener('submit', async (e) => { e.preventDefault(); const t=(inp.value||'').trim(); if(!t) return; const { cipher: textCipher, iv: textIv } = await encryptText(t); const { cipher: statusCipher, iv: statusIv } = await encryptText('open'); const ref = await addDoc(collection(db,'cases',d.id,'tasks'), { textCipher, textIv, statusCipher, statusIv, createdAt: serverTimestamp(), username: username || null, assignee: null, priority: null }); try { await logUpdate({ type: 'task_added', caseId: d.id, caseTitle: title, taskId: ref.id, taskTextCipher: textCipher, taskTextIv: textIv }); } catch {} inp.value=''; });
           td.appendChild(wrap); td.appendChild(form);
           if (tableTaskUnsubs.has(d.id)) { try { tableTaskUnsubs.get(d.id)(); } catch {} tableTaskUnsubs.delete(d.id); }
-          const unsub = attachTasksListRealtime(d.id, ul);
+          const unsub = attachTasksListRealtime(d.id, ul, { caseTitle: title });
           tableTaskUnsubs.set(d.id, unsub);
         } else {
           // Multi-header cell with inline-editable header lines
@@ -2273,7 +2273,7 @@ function buildCompactTaskRow(caseId, it, opts = {}) {
     e.stopPropagation();
     const order = ['open','in progress','complete'];
     const next = order[(order.indexOf(it.status)+1)%order.length];
-    try { const { cipher, iv } = await encryptText(next); await updateDoc(doc(db,'cases',caseId,'tasks',it.id),{ statusCipher:cipher, statusIv:iv }); it.status=next; statusBtn.textContent=icon(next); statusBtn.setAttribute('aria-label',`Task status: ${next}`); li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')); if (next==='complete') { try { const tEnc = await encryptText(it.text || ''); await logUpdate({ type: 'task_completed', caseId, taskId: it.id, taskTextCipher: tEnc.cipher, taskTextIv: tEnc.iv }); } catch {} } } catch(err){ console.error('Failed to update status',err); showToast('Failed to update status'); }
+    try { const { cipher, iv } = await encryptText(next); await updateDoc(doc(db,'cases',caseId,'tasks',it.id),{ statusCipher:cipher, statusIv:iv }); it.status=next; statusBtn.textContent=icon(next); statusBtn.setAttribute('aria-label',`Task status: ${next}`); li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')); if (next==='complete') { try { const tEnc = await encryptText(it.text || ''); await logUpdate({ type: 'task_completed', caseId, caseTitle: (opts && opts.caseTitle) || 'Case', taskId: it.id, taskTextCipher: tEnc.cipher, taskTextIv: tEnc.iv }); } catch {} } } catch(err){ console.error('Failed to update status',err); showToast('Failed to update status'); }
   });
   const text = document.createElement('span'); text.className='task-text'; text.textContent = it.text;
   // Inline edit behavior: click to turn into a contenteditable field
@@ -3753,7 +3753,7 @@ function renderUserTasks() {
       const icon = (s)=> s==='complete'?'☑':(s==='in progress'?'◐':'☐');
       statusBtn.textContent = icon(it.status);
       statusBtn.setAttribute('aria-label', `Task status: ${it.status}`);
-      statusBtn.addEventListener('click', async (e)=>{ e.stopPropagation(); const order=['open','in progress','complete']; const next=order[(order.indexOf(it.status)+1)%order.length]; try{ const {cipher, iv}= await encryptText(next); await updateDoc(doc(db,'cases',caseId,'tasks',it.taskId),{ statusCipher:cipher, statusIv:iv }); it.status=next; statusBtn.textContent=icon(next); statusBtn.setAttribute('aria-label',`Task status: ${next}`); li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')); if (next==='complete') { try { const tEnc = await encryptText(it.text || ''); await logUpdate({ type: 'task_completed', caseId, taskId: it.taskId, taskTextCipher: tEnc.cipher, taskTextIv: tEnc.iv }); } catch {} } } catch(err){ console.error('Failed to update status',err); showToast('Failed to update status'); } });
+      statusBtn.addEventListener('click', async (e)=>{ e.stopPropagation(); const order=['open','in progress','complete']; const next=order[(order.indexOf(it.status)+1)%order.length]; try{ const {cipher, iv}= await encryptText(next); await updateDoc(doc(db,'cases',caseId,'tasks',it.taskId),{ statusCipher:cipher, statusIv:iv }); it.status=next; statusBtn.textContent=icon(next); statusBtn.setAttribute('aria-label',`Task status: ${next}`); li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')); if (next==='complete') { try { const tEnc = await encryptText(it.text || ''); await logUpdate({ type: 'task_completed', caseId, caseTitle: title, taskId: it.taskId, taskTextCipher: tEnc.cipher, taskTextIv: tEnc.iv }); } catch {} } } catch(err){ console.error('Failed to update status',err); showToast('Failed to update status'); } });
       const titleSpan = document.createElement('span'); titleSpan.className='task-text'; titleSpan.textContent=it.text;
       // Inline edit on My Tasks title
       titleSpan.addEventListener('click', (e) => {
