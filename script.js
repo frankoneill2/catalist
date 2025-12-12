@@ -1214,14 +1214,14 @@ function startRealtimeTasks(caseId) {
           // Clear input right away for snappy UX
           commentInput.value = '';
 
-          try {
-            const { cipher, iv } = await encryptText(text);
-            await addDoc(collection(db, 'cases', caseId, 'tasks', docSnap.id, 'comments'), {
-              cipher, iv, username, createdAt: serverTimestamp(),
-            });
+            try {
+              const { cipher, iv } = await encryptText(text);
+              await addDoc(collection(db, 'cases', caseId, 'tasks', docSnap.id, 'comments'), {
+                cipher, iv, username, createdAt: serverTimestamp(),
+              });
             // Log update: comment added
             try {
-              await logUpdate({ type: 'comment_added', caseId, taskId: docSnap.id, commentCipher: cipher, commentIv: iv });
+              await logUpdate({ type: 'comment_added', caseId, caseTitle: (caseTitleEl && caseTitleEl.textContent) || 'Case', taskId: docSnap.id, commentCipher: cipher, commentIv: iv });
             } catch {}
             // Kick off realtime after write to avoid flicker
             if (shouldStartListener) {
@@ -2821,7 +2821,7 @@ function buildTaskListItem(item, opts = {}) {
     commentsLoaded = true;
   }
   toggle.addEventListener('click', ()=>{ const h=commentSection.hidden; commentSection.hidden=!h; updateToggle(); if(h && !commentsLoaded){ startRealtimeComments(caseId, taskId, commentsList, (n)=>{ commentCount=n; updateToggle(); }); commentsLoaded=true; } });
-  commentForm.addEventListener('submit', async (e)=>{ e.preventDefault(); const t=commentInput.value.trim(); if(!t) return; const tempLi=document.createElement('li'); tempLi.className='optimistic'; const span=document.createElement('span'); span.textContent = username ? `${username}: ${t}` : t; tempLi.appendChild(span); commentsList.appendChild(tempLi); commentInput.value=''; commentSection.hidden=false; updateToggle(); try{ const {cipher, iv}= await encryptText(t); await addDoc(collection(db,'cases',caseId,'tasks',taskId,'comments'),{cipher,iv,username,createdAt:serverTimestamp()}); try { await logUpdate({ type: 'comment_added', caseId, taskId, commentCipher: cipher, commentIv: iv }); } catch {} if(!commentsLoaded){ startRealtimeComments(caseId,taskId,commentsList,(n)=>{ commentCount=n; updateToggle();}); commentsLoaded=true; } } catch(err){ tempLi.classList.add('failed'); showToast('Failed to add comment'); } });
+  commentForm.addEventListener('submit', async (e)=>{ e.preventDefault(); const t=commentInput.value.trim(); if(!t) return; const tempLi=document.createElement('li'); tempLi.className='optimistic'; const span=document.createElement('span'); span.textContent = username ? `${username}: ${t}` : t; tempLi.appendChild(span); commentsList.appendChild(tempLi); commentInput.value=''; commentSection.hidden=false; updateToggle(); try{ const {cipher, iv}= await encryptText(t); await addDoc(collection(db,'cases',caseId,'tasks',taskId,'comments'),{cipher,iv,username,createdAt:serverTimestamp()}); try { await logUpdate({ type: 'comment_added', caseId, caseTitle: (caseTitleEl && caseTitleEl.textContent) || 'Case', taskId, commentCipher: cipher, commentIv: iv }); } catch {} if(!commentsLoaded){ startRealtimeComments(caseId,taskId,commentsList,(n)=>{ commentCount=n; updateToggle();}); commentsLoaded=true; } } catch(err){ tempLi.classList.add('failed'); showToast('Failed to add comment'); } });
   li.appendChild(commentSection);
   return li;
 }
@@ -3917,7 +3917,7 @@ function renderUserTasks() {
       const commentSection=document.createElement('div'); commentSection.className='comment-section'; commentSection.hidden=true; const commentsList=document.createElement('ul'); commentsList.className='comments'; commentSection.appendChild(commentsList); const commentForm=document.createElement('form'); commentForm.className='comment-form'; const commentInput=document.createElement('input'); commentInput.placeholder='Add comment'; commentForm.appendChild(commentInput); const commentBtn=document.createElement('button'); commentBtn.className='icon-btn add-comment-btn'; commentBtn.type='submit'; commentBtn.textContent='➕'; commentBtn.setAttribute('aria-label','Add comment'); commentForm.appendChild(commentBtn); commentSection.appendChild(commentForm);
       let commentsLoaded=false; let commentCount=0; const updateToggle=()=>{ countEl.textContent= commentCount>0? String(commentCount):''; toggle.textContent= commentSection.hidden? '💬':'✖'; toggle.setAttribute('aria-label', commentSection.hidden? 'Show comments':'Hide comments'); }; updateToggle();
       toggle.addEventListener('click', ()=>{ const h=commentSection.hidden; commentSection.hidden=!h; updateToggle(); if(h && !commentsLoaded){ startRealtimeComments(caseId, it.taskId, commentsList, (n)=>{ commentCount=n; updateToggle(); }); commentsLoaded=true; } });
-      commentForm.addEventListener('submit', async (e)=>{ e.preventDefault(); const t=commentInput.value.trim(); if(!t) return; const tempLi=document.createElement('li'); tempLi.className='optimistic'; const span=document.createElement('span'); span.textContent= username? `${username}: ${t}` : t; tempLi.appendChild(span); commentsList.appendChild(tempLi); commentInput.value=''; commentSection.hidden=false; updateToggle(); try{ const {cipher, iv}= await encryptText(t); await addDoc(collection(db,'cases',caseId,'tasks',it.taskId,'comments'), {cipher,iv,username,createdAt:serverTimestamp()}); try { await logUpdate({ type: 'comment_added', caseId, taskId: it.taskId, commentCipher: cipher, commentIv: iv }); } catch {} if(!commentsLoaded){ startRealtimeComments(caseId, it.taskId, commentsList, (n)=>{ commentCount=n; updateToggle(); }); commentsLoaded=true; } } catch(err){ tempLi.classList.add('failed'); showToast('Failed to add comment'); } });
+      commentForm.addEventListener('submit', async (e)=>{ e.preventDefault(); const t=commentInput.value.trim(); if(!t) return; const tempLi=document.createElement('li'); tempLi.className='optimistic'; const span=document.createElement('span'); span.textContent= username? `${username}: ${t}` : t; tempLi.appendChild(span); commentsList.appendChild(tempLi); commentInput.value=''; commentSection.hidden=false; updateToggle(); try{ const {cipher, iv}= await encryptText(t); await addDoc(collection(db,'cases',caseId,'tasks',it.taskId,'comments'), {cipher,iv,username,createdAt:serverTimestamp()}); try { await logUpdate({ type: 'comment_added', caseId, caseTitle: title, taskId: it.taskId, commentCipher: cipher, commentIv: iv }); } catch {} if(!commentsLoaded){ startRealtimeComments(caseId, it.taskId, commentsList, (n)=>{ commentCount=n; updateToggle(); }); commentsLoaded=true; } } catch(err){ tempLi.classList.add('failed'); showToast('Failed to add comment'); } });
       li.appendChild(commentSection);
       ul.appendChild(li);
     }
