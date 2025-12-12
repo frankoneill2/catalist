@@ -676,6 +676,25 @@ button:focus-visible {
 .update-item.new { border-color: #bfdbfe; box-shadow: 0 0 0 3px rgba(59,130,246,0.12); }
 .update-empty { color: #6b7280; text-align: center; padding: 16px; }
 
+/* Inline-emphasized task name inside Updates lines */
+.task-name-chip {
+  display: inline-block;
+  font-weight: 700;
+  background: #eef2ff;
+  color: #1e3a8a;
+  border: 1px solid #e5e7eb;
+  border-radius: 9999px;
+  padding: 0 8px;
+  height: 18px;
+  line-height: 18px;
+  vertical-align: text-bottom;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin: 0 4px;
+}
+
 /* Table view */
 .table-root { overflow-x: auto; }
 .data-table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 720px; }

@@ -1400,17 +1400,34 @@ function buildUpdateDom(item) {
   const line = document.createElement('div'); line.className='update-line';
   const who = document.createElement('span'); who.className='who'; who.textContent=item.username||'Someone';
   const a = document.createElement('a'); a.href='#'; a.className='link'; a.style.textDecoration='none'; a.style.color='inherit';
-  // Build message based on type
-  let msg='';
-  if (item.type==='task_added') msg = ` added ${item.taskText || 'a task'} to `;
-  else if (item.type==='task_completed') msg = ` marked ${item.taskText || 'a task'} as complete in `;
-  else if (item.type==='comment_added') msg = ` commented in `;
-  else if (item.type==='note_added') msg = ` added a note ${item.noteSection ? ('to section '+item.noteSection+' ') : ''}in `;
+  // Build message with inline-emphasized task name
   const caseChip = document.createElement('span'); caseChip.className='chip'; caseChip.textContent=item.caseTitle||'Case';
-  const frag = document.createDocumentFragment(); frag.appendChild(who); frag.appendChild(document.createTextNode(msg)); frag.appendChild(caseChip);
-  if (item.type==='comment_added' && item.comment) { const tchip=document.createElement('span'); tchip.className='chip'; tchip.textContent=item.comment; tchip.style.maxWidth='220px'; tchip.style.overflow='hidden'; tchip.style.textOverflow='ellipsis'; tchip.style.whiteSpace='nowrap'; frag.appendChild(document.createTextNode(' ')); frag.appendChild(tchip); }
-  if (item.type==='note_added' && item.note) { const nchip=document.createElement('span'); nchip.className='chip'; nchip.textContent=item.note; nchip.style.maxWidth='220px'; nchip.style.overflow='hidden'; nchip.style.textOverflow='ellipsis'; nchip.style.whiteSpace='nowrap'; frag.appendChild(document.createTextNode(' ')); frag.appendChild(nchip); }
-  if ((item.type==='task_added' || item.type==='task_completed') && item.taskText) { const tchip=document.createElement('span'); tchip.className='chip'; tchip.textContent=item.taskText; tchip.style.maxWidth='220px'; tchip.style.overflow='hidden'; tchip.style.textOverflow='ellipsis'; tchip.style.whiteSpace='nowrap'; frag.appendChild(document.createTextNode(' ')); frag.appendChild(tchip); }
+  const frag = document.createDocumentFragment();
+  frag.appendChild(who);
+  if (item.type==='task_added') {
+    frag.appendChild(document.createTextNode(' added '));
+    if (item.taskText) { const tn=document.createElement('span'); tn.className='task-name-chip'; tn.textContent=item.taskText; frag.appendChild(tn); } else { frag.appendChild(document.createTextNode('a task')); }
+    frag.appendChild(document.createTextNode(' to '));
+    frag.appendChild(caseChip);
+  } else if (item.type==='task_completed') {
+    frag.appendChild(document.createTextNode(' marked '));
+    if (item.taskText) { const tn=document.createElement('span'); tn.className='task-name-chip'; tn.textContent=item.taskText; frag.appendChild(tn); } else { frag.appendChild(document.createTextNode('a task')); }
+    frag.appendChild(document.createTextNode(' as complete in '));
+    frag.appendChild(caseChip);
+  } else if (item.type==='comment_added') {
+    frag.appendChild(document.createTextNode(' commented in '));
+    frag.appendChild(caseChip);
+    if (item.comment) { const cchip=document.createElement('span'); cchip.className='chip'; cchip.textContent=item.comment; cchip.style.maxWidth='220px'; cchip.style.overflow='hidden'; cchip.style.textOverflow='ellipsis'; cchip.style.whiteSpace='nowrap'; frag.appendChild(document.createTextNode(' ')); frag.appendChild(cchip); }
+  } else if (item.type==='note_added') {
+    frag.appendChild(document.createTextNode(' added a note '));
+    if (item.noteSection) { frag.appendChild(document.createTextNode(`to section ${item.noteSection} `)); }
+    frag.appendChild(document.createTextNode('in '));
+    frag.appendChild(caseChip);
+    if (item.note) { const nchip=document.createElement('span'); nchip.className='chip'; nchip.textContent=item.note; nchip.style.maxWidth='220px'; nchip.style.overflow='hidden'; nchip.style.textOverflow='ellipsis'; nchip.style.whiteSpace='nowrap'; frag.appendChild(document.createTextNode(' ')); frag.appendChild(nchip); }
+  } else {
+    frag.appendChild(document.createTextNode(' updated '));
+    frag.appendChild(caseChip);
+  }
   line.appendChild(frag);
   a.appendChild(line);
   a.addEventListener('click', (e)=>{ e.preventDefault(); const cid=item.caseId; if (!cid) return; // Switch to table to hide updates
@@ -1455,16 +1472,23 @@ function renderUpdatesList() {
         const li = document.createElement('li');
         const a = document.createElement('a'); a.href='#'; a.style.textDecoration='none'; a.style.color='inherit';
         const who = document.createElement('span'); who.className='who'; who.textContent=it.username||'Someone';
-        let msg='';
-        if (it.type==='task_added') msg = ` added ${it.taskText || 'a task'}`;
-        else if (it.type==='task_completed') msg = ` marked ${it.taskText || 'a task'} as complete`;
-        else if (it.type==='comment_added') msg = ` commented`;
-        else if (it.type==='note_added') msg = ` added a note`;
-        const frag = document.createDocumentFragment(); frag.appendChild(who); frag.appendChild(document.createTextNode(msg));
-        const addChip = (txt) => { const chip=document.createElement('span'); chip.className='chip'; chip.textContent=txt; chip.style.maxWidth='220px'; chip.style.overflow='hidden'; chip.style.textOverflow='ellipsis'; chip.style.whiteSpace='nowrap'; frag.appendChild(document.createTextNode(' ')); frag.appendChild(chip); };
-        if ((it.type==='task_added' || it.type==='task_completed') && it.taskText) addChip(it.taskText);
-        if (it.type==='comment_added' && it.comment) addChip(it.comment);
-        if (it.type==='note_added' && it.note) addChip(it.note);
+        const frag = document.createDocumentFragment(); frag.appendChild(who);
+        if (it.type==='task_added') {
+          frag.appendChild(document.createTextNode(' added '));
+          if (it.taskText) { const tn=document.createElement('span'); tn.className='task-name-chip'; tn.textContent=it.taskText; frag.appendChild(tn); } else { frag.appendChild(document.createTextNode('a task')); }
+        } else if (it.type==='task_completed') {
+          frag.appendChild(document.createTextNode(' marked '));
+          if (it.taskText) { const tn=document.createElement('span'); tn.className='task-name-chip'; tn.textContent=it.taskText; frag.appendChild(tn); } else { frag.appendChild(document.createTextNode('a task')); }
+          frag.appendChild(document.createTextNode(' as complete'));
+        } else if (it.type==='comment_added') {
+          frag.appendChild(document.createTextNode(' commented'));
+          if (it.comment) { const chip=document.createElement('span'); chip.className='chip'; chip.textContent=it.comment; chip.style.maxWidth='220px'; chip.style.overflow='hidden'; chip.style.textOverflow='ellipsis'; chip.style.whiteSpace='nowrap'; frag.appendChild(document.createTextNode(' ')); frag.appendChild(chip); }
+        } else if (it.type==='note_added') {
+          frag.appendChild(document.createTextNode(' added a note'));
+          if (it.note) { const chip=document.createElement('span'); chip.className='chip'; chip.textContent=it.note; chip.style.maxWidth='220px'; chip.style.overflow='hidden'; chip.style.textOverflow='ellipsis'; chip.style.whiteSpace='nowrap'; frag.appendChild(document.createTextNode(' ')); frag.appendChild(chip); }
+        } else {
+          frag.appendChild(document.createTextNode(' updated'));
+        }
         a.appendChild(frag);
         a.addEventListener('click', (e)=>{ e.preventDefault(); try { showMainTab('table'); } catch {}; if (it.taskId) pendingFocusTaskId = it.taskId; openCase(it.caseId, it.caseTitle||'Case', 'updates', 'tasks'); });
         li.appendChild(a); list.appendChild(li);
