@@ -2684,6 +2684,25 @@ function buildTaskListItem(item, opts = {}) {
   });
   li.appendChild(statusBtn);
   li.appendChild(titleSpan);
+  // Quick edit/delete actions
+  const quickEdit = document.createElement('button');
+  quickEdit.type = 'button';
+  quickEdit.className = 'icon-btn';
+  quickEdit.setAttribute('aria-label', 'Edit task');
+  quickEdit.textContent = '✏️';
+  quickEdit.addEventListener('click', (e) => { e.stopPropagation(); titleSpan.click(); });
+  li.appendChild(quickEdit);
+  const delBtn = document.createElement('button');
+  delBtn.type = 'button';
+  delBtn.className = 'icon-btn delete-btn';
+  delBtn.setAttribute('aria-label', 'Delete task');
+  delBtn.textContent = '🗑';
+  delBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!confirm('Delete this task?')) return;
+    try { await deleteDoc(doc(db, 'cases', caseId, 'tasks', taskId)); } catch (err) { console.error('Failed to delete task', err); showToast('Failed to delete task'); }
+  });
+  li.appendChild(delBtn);
   // Priority chip
   if (data.priority) {
     const pri = document.createElement('span');
