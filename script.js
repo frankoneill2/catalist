@@ -1359,7 +1359,8 @@ async function logUpdate(payload = {}) {
     const docBody = { ...base, caseTitleCipher, caseTitleIv };
     const optional = [
       'taskId','taskTextCipher','taskTextIv','assignee','priority',
-      'commentCipher','commentIv','noteSection','noteTitleCipher','noteTitleIv'
+      'commentCipher','commentIv',
+      'noteSection','noteTitleCipher','noteTitleIv','noteTextCipher','noteTextIv'
     ];
     for (const k of optional) if (payload[k] !== undefined) docBody[k] = payload[k];
     await addDoc(collection(db, 'updates'), docBody);
@@ -1404,10 +1405,11 @@ function buildUpdateDom(item) {
   if (item.type==='task_added') msg = ` added ${item.taskText || 'a task'} to `;
   else if (item.type==='task_completed') msg = ` marked ${item.taskText || 'a task'} as complete in `;
   else if (item.type==='comment_added') msg = ` commented in `;
-  else if (item.type==='note_added') msg = ` added a note to section ${item.noteSection || ''} in `;
+  else if (item.type==='note_added') msg = ` added a note ${item.noteSection ? ('to section '+item.noteSection+' ') : ''}in `;
   const caseChip = document.createElement('span'); caseChip.className='chip'; caseChip.textContent=item.caseTitle||'Case';
   const frag = document.createDocumentFragment(); frag.appendChild(who); frag.appendChild(document.createTextNode(msg)); frag.appendChild(caseChip);
   if (item.type==='comment_added' && item.comment) { const tchip=document.createElement('span'); tchip.className='chip'; tchip.textContent=item.comment; tchip.style.maxWidth='220px'; tchip.style.overflow='hidden'; tchip.style.textOverflow='ellipsis'; tchip.style.whiteSpace='nowrap'; frag.appendChild(document.createTextNode(' ')); frag.appendChild(tchip); }
+  if (item.type==='note_added' && item.note) { const nchip=document.createElement('span'); nchip.className='chip'; nchip.textContent=item.note; nchip.style.maxWidth='220px'; nchip.style.overflow='hidden'; nchip.style.textOverflow='ellipsis'; nchip.style.whiteSpace='nowrap'; frag.appendChild(document.createTextNode(' ')); frag.appendChild(nchip); }
   if ((item.type==='task_added' || item.type==='task_completed') && item.taskText) { const tchip=document.createElement('span'); tchip.className='chip'; tchip.textContent=item.taskText; tchip.style.maxWidth='220px'; tchip.style.overflow='hidden'; tchip.style.textOverflow='ellipsis'; tchip.style.whiteSpace='nowrap'; frag.appendChild(document.createTextNode(' ')); frag.appendChild(tchip); }
   line.appendChild(frag);
   a.appendChild(line);
@@ -1433,13 +1435,58 @@ function renderUpdatesList() {
     return true;
   });
   if (filtered.length===0) { const d=document.createElement('div'); d.className='update-empty'; d.textContent='No updates yet.'; updatesListEl.appendChild(d); return; }
-  // Group by day
-  let prevKey='';
+  // Group by day and then group contiguous items by same caseId
+  let prevDay = '';
+  let currentCase = '';
+  let group = [];
+  const flush = () => {
+    if (!group.length) return;
+    if (group.length === 1) {
+      updatesListEl.appendChild(buildUpdateDom(group[0]));
+    } else {
+      const outer = document.createElement('li'); outer.className='update-item';
+      const icon = document.createElement('div'); icon.className='update-icon'; icon.textContent='📁';
+      const content = document.createElement('div'); content.className='update-content';
+      const header = document.createElement('div'); header.className='update-line';
+      const caseChip = document.createElement('span'); caseChip.className='chip'; caseChip.textContent = group[0].caseTitle || 'Case'; header.appendChild(caseChip);
+      content.appendChild(header);
+      const list = document.createElement('ul'); list.style.margin='4px 0 0'; list.style.padding='0'; list.style.listStyle='none';
+      const renderLine = (it) => {
+        const li = document.createElement('li');
+        const a = document.createElement('a'); a.href='#'; a.style.textDecoration='none'; a.style.color='inherit';
+        const who = document.createElement('span'); who.className='who'; who.textContent=it.username||'Someone';
+        let msg='';
+        if (it.type==='task_added') msg = ` added ${it.taskText || 'a task'}`;
+        else if (it.type==='task_completed') msg = ` marked ${it.taskText || 'a task'} as complete`;
+        else if (it.type==='comment_added') msg = ` commented`;
+        else if (it.type==='note_added') msg = ` added a note`;
+        const frag = document.createDocumentFragment(); frag.appendChild(who); frag.appendChild(document.createTextNode(msg));
+        const addChip = (txt) => { const chip=document.createElement('span'); chip.className='chip'; chip.textContent=txt; chip.style.maxWidth='220px'; chip.style.overflow='hidden'; chip.style.textOverflow='ellipsis'; chip.style.whiteSpace='nowrap'; frag.appendChild(document.createTextNode(' ')); frag.appendChild(chip); };
+        if ((it.type==='task_added' || it.type==='task_completed') && it.taskText) addChip(it.taskText);
+        if (it.type==='comment_added' && it.comment) addChip(it.comment);
+        if (it.type==='note_added' && it.note) addChip(it.note);
+        a.appendChild(frag);
+        a.addEventListener('click', (e)=>{ e.preventDefault(); try { showMainTab('table'); } catch {}; if (it.taskId) pendingFocusTaskId = it.taskId; openCase(it.caseId, it.caseTitle||'Case', 'updates', 'tasks'); });
+        li.appendChild(a); list.appendChild(li);
+      };
+      const max = 3; const more = Math.max(0, group.length - max);
+      group.slice(0, max).forEach(renderLine);
+      if (more > 0) { const li=document.createElement('li'); const btn=document.createElement('button'); btn.type='button'; btn.className='btn'; btn.textContent=`Show ${more} more`; btn.addEventListener('click', ()=>{ btn.remove(); group.slice(max).forEach(renderLine); }); li.appendChild(btn); list.appendChild(li); }
+      content.appendChild(list);
+      const meta = document.createElement('div'); meta.className='update-meta'; meta.textContent = group[0].createdAt ? formatRelative(group[0].createdAt) : '';
+      outer.appendChild(icon); outer.appendChild(content); outer.appendChild(meta);
+      updatesListEl.appendChild(outer);
+    }
+    group = []; currentCase = '';
+  };
   for (const it of filtered) {
-    const k = it.createdAt ? dayKey(it.createdAt) : '';
-    if (k && k !== prevKey) { prevKey = k; const g=document.createElement('div'); g.className='update-group'; g.textContent = dayLabel(it.createdAt); updatesListEl.appendChild(g); }
-    updatesListEl.appendChild(buildUpdateDom(it));
+    const day = it.createdAt ? dayKey(it.createdAt) : '';
+    if (day && day !== prevDay) { flush(); prevDay = day; const g=document.createElement('div'); g.className='update-group'; g.textContent= dayLabel(it.createdAt); updatesListEl.appendChild(g); }
+    if (!currentCase) { currentCase = it.caseId || ''; group = [it]; }
+    else if ((it.caseId||'') === currentCase) { group.push(it); }
+    else { flush(); currentCase = it.caseId || ''; group = [it]; }
   }
+  flush();
 }
 
 function startRealtimeUpdates() {
@@ -1460,6 +1507,7 @@ function startRealtimeUpdates() {
         } else if (it.type==='note_added') {
           it.noteSection = data.noteSection || '';
           try { if (data.noteTitleCipher && data.noteTitleIv) it.noteTitle = await decryptText(data.noteTitleCipher, data.noteTitleIv); } catch {}
+          try { if (data.noteTextCipher && data.noteTextIv) it.note = await decryptText(data.noteTextCipher, data.noteTextIv); } catch {}
         }
         it.icon = (it.type==='task_added') ? '➕' : (it.type==='task_completed') ? '☑' : (it.type==='comment_added') ? '💬' : (it.type==='note_added') ? '📝' : '•';
         updatesItems.push(it); updatesCache.set(d.id, it);
@@ -1495,6 +1543,7 @@ async function loadMoreUpdates() {
       } else if (it.type==='note_added') {
         it.noteSection = data.noteSection || '';
         try { if (data.noteTitleCipher && data.noteTitleIv) it.noteTitle = await decryptText(data.noteTitleCipher, data.noteTitleIv); } catch {}
+        try { if (data.noteTextCipher && data.noteTextIv) it.note = await decryptText(data.noteTextCipher, data.noteTextIv); } catch {}
       }
       it.icon = (it.type==='task_added') ? '➕' : (it.type==='task_completed') ? '☑' : (it.type==='comment_added') ? '💬' : (it.type==='note_added') ? '📝' : '•';
       more.push(it); updatesCache.set(d.id, it);
@@ -2842,6 +2891,7 @@ function bindNoteForm() {
     await addDoc(collection(db, 'cases', currentCaseId, 'notes'), {
       cipher, iv, username, createdAt: serverTimestamp(),
     });
+    try { await logUpdate({ type: 'note_added', caseId: currentCaseId, caseTitle: (caseTitleEl && caseTitleEl.textContent) || 'Case', noteTextCipher: cipher, noteTextIv: iv }); } catch {}
     noteInput.value = '';
   });
 }
