@@ -2505,8 +2505,27 @@ function renderNotesSection(container, letter, items) {
       container.appendChild(row);
       header.addEventListener('blur', () => { it.title = header.value; persistDebounced(); });
       body.addEventListener('blur', () => { it.body = body.value; persistDebounced(); });
-      up.addEventListener('click', () => { const t=items[idx-1]; items[idx-1]=items[idx]; items[idx]=t; persist(); render(); });
-      down.addEventListener('click', () => { const t=items[idx+1]; items[idx+1]=items[idx]; items[idx]=t; persist(); render(); });
+      const normalizeOrder = () => { for (let i=0;i<items.length;i++) { items[i].order = (items[i].order && Number.isFinite(items[i].order)) ? items[i].order : 0; } };
+      const resequence = () => { // ensure a simple increasing sequence to reflect UI order
+        for (let i=0;i<items.length;i++) items[i].order = i+1;
+      };
+      up.addEventListener('click', () => {
+        if (idx === 0) return;
+        normalizeOrder();
+        // swap array positions
+        const t = items[idx-1]; items[idx-1] = items[idx]; items[idx] = t;
+        resequence();
+        persist();
+        render();
+      });
+      down.addEventListener('click', () => {
+        if (idx === items.length-1) return;
+        normalizeOrder();
+        const t = items[idx+1]; items[idx+1] = items[idx]; items[idx] = t;
+        resequence();
+        persist();
+        render();
+      });
       del.addEventListener('click', () => { items.splice(idx,1); persist(); render(); });
     });
   };
