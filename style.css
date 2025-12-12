@@ -679,20 +679,20 @@ button:focus-visible {
 /* Inline-emphasized task name inside Updates lines */
 .task-name-chip {
   display: inline-block;
-  font-weight: 700;
-  background: #eef2ff;
-  color: #1e3a8a;
+  font-weight: 600;
+  background: transparent;
+  color: #374151;
   border: 1px solid #e5e7eb;
   border-radius: 9999px;
-  padding: 0 8px;
+  padding: 0 6px;
   height: 18px;
   line-height: 18px;
   vertical-align: text-bottom;
-  max-width: 220px;
+  max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  margin: 0 4px;
+  margin: 0 2px;
 }
 
 /* Table view */
