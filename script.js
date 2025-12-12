@@ -36,7 +36,7 @@ let colABody, colBBody, colCBody, colDBody, colEBody; // A–E bodies
 let notesTasksList, notesTasksForm, notesTasksInput; // Notes embedded tasks
 let tableSection, tableRoot; // Table view
 let updatesSection, updatesListEl; // Updates feed
-let updatesToolbarEl, updatesTypePillsEl, updatesUserFilterEl, updatesSearchEl, updatesMarkReadBtn, updatesClearBtn, updatesLoadMoreBtn;
+let updatesToolbarEl, updatesUserFilterEl, updatesSearchEl, updatesLoadMoreBtn;
 // Tag controls
 let filterLocationSel, filterConsultantSel, sortByTagSel, clearTagFiltersBtn;
 let tabTasksBtn, tabNotesBtn;
@@ -57,10 +57,8 @@ let unsubUpdates = null;
 let updatesLastDoc = null; // pagination
 let updatesItems = []; // processed, decrypted items
 let updatesCache = new Map(); // id -> processed item
-let updatesTypeFilter = new Set(['task_added','task_completed','comment_added','note_added']);
 let updatesUserFilter = '';
 let updatesSearch = '';
-let updatesLastSeenAt = 0; // ms epoch
 // Keep the last cases snapshot docs for instant client-side filtering/sorting
 let lastCasesDocs = null; // Array of document snapshots
 let renderTableFromDocs = null; // function(docsArray)
@@ -392,8 +390,6 @@ function showMainTab(which) {
     userDetailEl.hidden = true;
     if (updatesSection) updatesSection.hidden = false;
     if (!unsubUpdates) startRealtimeUpdates();
-    // Load last seen marker for unread highlight
-    try { const k = `updates.lastSeen:${username||''}`; updatesLastSeenAt = parseInt(localStorage.getItem(k)||'0',10)||0; } catch { updatesLastSeenAt = 0; }
   } else {
     // default: hide everything except table
     if (updatesSection) updatesSection.hidden = true;
@@ -1397,7 +1393,7 @@ function dayLabel(ts) {
 }
 
 function buildUpdateDom(item) {
-  const li = document.createElement('li'); li.className='update-item'; if (item.createdAtMs && updatesLastSeenAt && item.createdAtMs > updatesLastSeenAt) li.classList.add('new');
+  const li = document.createElement('li'); li.className='update-item';
   const icon = document.createElement('div'); icon.className='update-icon'; icon.textContent = item.icon || '•';
   const content = document.createElement('div'); content.className='update-content';
   const line = document.createElement('div'); line.className='update-line';
@@ -1429,7 +1425,6 @@ function renderUpdatesList() {
   updatesListEl.innerHTML='';
   // Filters
   const filtered = updatesItems.filter(it => {
-    if (!updatesTypeFilter.has(it.type)) return false;
     if (updatesUserFilter && (it.username||'') !== updatesUserFilter) return false;
     if (updatesSearch) {
       const hay = `${it.username||''} ${it.caseTitle||''} ${it.taskText||''} ${it.comment||''}`.toLowerCase();
@@ -2825,11 +2820,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   updatesSection = document.getElementById('updates-section');
   updatesListEl = document.getElementById('updates-list');
   updatesToolbarEl = document.getElementById('updates-toolbar');
-  updatesTypePillsEl = document.getElementById('updates-type-pills');
   updatesUserFilterEl = document.getElementById('updates-user-filter');
   updatesSearchEl = document.getElementById('updates-search');
-  updatesMarkReadBtn = document.getElementById('updates-mark-read');
-  updatesClearBtn = document.getElementById('updates-clear');
   updatesLoadMoreBtn = document.getElementById('updates-load-more');
   backBtn = document.getElementById('back-btn');
   taskForm = document.getElementById('task-form');
@@ -2929,20 +2921,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Main tab bindings
   if (mainTabTable) mainTabTable.addEventListener('click', () => showMainTab('table'));
   if (mainTabUpdates) mainTabUpdates.addEventListener('click', () => showMainTab('updates'));
-  if (updatesTypePillsEl) {
-    updatesTypePillsEl.addEventListener('click', (e) => {
-      const b = e.target.closest('button[data-type]');
-      if (!b) return;
-      b.classList.toggle('active');
-      const t = b.getAttribute('data-type');
-      if (b.classList.contains('active')) updatesTypeFilter.add(t); else updatesTypeFilter.delete(t);
-      renderUpdatesList();
-    });
-  }
   if (updatesUserFilterEl) updatesUserFilterEl.addEventListener('change', () => { updatesUserFilter = updatesUserFilterEl.value || ''; renderUpdatesList(); });
   if (updatesSearchEl) updatesSearchEl.addEventListener('input', () => { updatesSearch = updatesSearchEl.value.trim(); renderUpdatesList(); });
-  if (updatesClearBtn) updatesClearBtn.addEventListener('click', () => { updatesTypeFilter = new Set(['task_added','task_completed','comment_added','note_added']); Array.from(updatesTypePillsEl?.querySelectorAll('.pill')||[]).forEach(p=>p.classList.add('active')); updatesUserFilter=''; if (updatesUserFilterEl) updatesUserFilterEl.value=''; updatesSearch=''; if (updatesSearchEl) updatesSearchEl.value=''; renderUpdatesList(); });
-  if (updatesMarkReadBtn) updatesMarkReadBtn.addEventListener('click', () => { try { const k = `updates.lastSeen:${username||''}`; const now = Date.now(); localStorage.setItem(k, String(now)); updatesLastSeenAt = now; } catch {} renderUpdatesList(); });
   if (updatesLoadMoreBtn) updatesLoadMoreBtn.addEventListener('click', loadMoreUpdates);
   if (mainTabMy) mainTabMy.addEventListener('click', () => showMainTab('my'));
   // Filters show/hide

@@ -171,21 +171,10 @@
       <h2 class="case-heading">Updates</h2>
       <div id="updates-toolbar" class="c-toolbar c-toolbar--stack" aria-label="Updates filters">
         <div class="c-row">
-          <div class="segmented" id="updates-type-pills" role="group" aria-label="Update types">
-            <button type="button" class="pill active" data-type="task_added">Tasks</button>
-            <div class="sep"></div>
-            <button type="button" class="pill active" data-type="task_completed">Completed</button>
-            <div class="sep"></div>
-            <button type="button" class="pill active" data-type="comment_added">Comments</button>
-            <div class="sep"></div>
-            <button type="button" class="pill active" data-type="note_added">Notes</button>
-          </div>
           <select id="updates-user-filter" title="Filter by user" style="max-width: 220px">
             <option value="">All users</option>
           </select>
           <input id="updates-search" class="c-field--grow" type="search" placeholder="Search updates">
-          <button id="updates-mark-read" class="btn" type="button">Mark all read</button>
-          <button id="updates-clear" class="btn" type="button">Clear</button>
         </div>
       </div>
       <ul id="updates-list" class="updates-list" aria-live="polite" role="list"></ul>
