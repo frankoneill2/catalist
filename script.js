@@ -2726,9 +2726,7 @@ async function openWardNoteComposer() {
   const modal = document.createElement('div'); modal.className='modal modal-wide'; overlay.appendChild(modal);
   const form = document.createElement('div'); form.className='stack'; modal.appendChild(form);
 
-  // Heading (hidden by default; toggled via compact controls)
-  const headingWrap = document.createElement('label'); headingWrap.textContent='Heading';
-  const headingInput = document.createElement('input'); headingInput.type='text'; headingInput.placeholder='Heading…'; headingWrap.appendChild(headingInput); headingWrap.style.display='none';
+  // (Heading handled inline above main note)
 
   // Diagnoses (A)
   const dxWrap = document.createElement('div'); dxWrap.className='section'; dxWrap.style.display='none';
