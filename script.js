@@ -256,7 +256,7 @@ async function openNewCaseModal() {
   await refreshRooms(); const roomCandidates = Array.from(activeTagFilters.room||[]); if (roomCandidates.length===1) roomSel.value = roomCandidates[0];
   locSel.addEventListener('change', async ()=>{ await refreshRooms(); roomSel.value=''; });
 
-  const close = () => overlay.remove();
+  const close = () => { if (modalTasksUnsub) { try { modalTasksUnsub(); } catch {} } overlay.remove(); };
   cancel.addEventListener('click', close);
   create.addEventListener('click', async () => {
     const t = (nameInput.value||'').trim(); if (!t) { nameInput.focus(); return; }
@@ -2776,9 +2776,14 @@ async function openWardNoteComposer() {
   const includeChk = document.createElement('input'); includeChk.type='checkbox'; includeChk.checked = true; includeRow.appendChild(includeChk);
   includeRow.appendChild(document.createTextNode('Include existing open tasks in this note'));
   tasksWrap.appendChild(includeRow);
-  const newTaskLabel = document.createElement('label'); newTaskLabel.textContent='Add new tasks (one per line)';
-  const newTaskInput = document.createElement('textarea'); newTaskInput.placeholder='E.g. Take bloods\nOrder CXR'; newTaskLabel.appendChild(newTaskInput);
-  tasksWrap.appendChild(newTaskLabel);
+  // Mini task composer and list
+  const miniForm = document.createElement('form'); miniForm.className='composer'; miniForm.autocomplete='off'; miniForm.style.marginTop='8px';
+  const plus = document.createElement('button'); plus.type='button'; plus.className='icon-btn'; plus.setAttribute('aria-hidden','true'); plus.tabIndex=-1; plus.textContent='+';
+  const miniInput = document.createElement('input'); miniInput.placeholder='Add a task…'; miniInput.setAttribute('aria-label','Task description');
+  const miniAdd = document.createElement('button'); miniAdd.type='submit'; miniAdd.className='primary'; miniAdd.textContent='Add';
+  miniForm.appendChild(plus); miniForm.appendChild(miniInput); miniForm.appendChild(miniAdd);
+  tasksWrap.appendChild(miniForm);
+  const modalTaskList = document.createElement('ul'); modalTaskList.style.marginTop='6px'; tasksWrap.appendChild(modalTaskList);
   form.appendChild(tasksWrap);
   const tasksBtn = mkLink('Tasks (include open: on)'); ctrls.appendChild(tasksBtn);
 
@@ -2798,6 +2803,8 @@ async function openWardNoteComposer() {
   // Load Dx and Issues
   let dxItems = [];
   let issueItems = [];
+  let modalTasks = [];
+  let modalTasksUnsub = null;
   try {
     const snap = await getDoc(doc(db,'cases', currentCaseId));
     const data = snap.data() || {};
@@ -2843,6 +2850,58 @@ async function openWardNoteComposer() {
   includeChk.addEventListener('change', ()=>{ tasksBtn.textContent = `Tasks (include open: ${includeChk.checked ? 'on':'off'})`; });
   tasksBtn.textContent = `Tasks (include open: ${includeChk.checked ? 'on':'off'})`;
 
+  // Tasks realtime list for modal
+  const qTasks = query(collection(db,'cases',currentCaseId,'tasks'), orderBy('createdAt','desc'));
+  const statusIcon = (s) => s === 'complete' ? '☑' : (s === 'in progress' ? '◐' : '☐');
+  function renderModalTasks() {
+    modalTaskList.innerHTML = '';
+    for (const t of modalTasks) {
+      const li = document.createElement('li'); li.style.display='grid'; li.style.gridTemplateColumns='auto 1fr'; li.style.alignItems='center'; li.style.gap='6px';
+      const sb = document.createElement('button'); sb.type='button'; sb.className='status-btn'; sb.textContent = statusIcon(t.status);
+      sb.setAttribute('aria-label',`Task status: ${t.status}`);
+      sb.addEventListener('click', async (e)=>{
+        e.preventDefault();
+        const order = ['open','in progress','complete'];
+        const next = order[(order.indexOf(t.status)+1)%order.length];
+        try {
+          const { cipher, iv } = await encryptText(next);
+          await updateDoc(doc(db,'cases',currentCaseId,'tasks',t.id), { statusCipher: cipher, statusIv: iv });
+        } catch {}
+      });
+      const span = document.createElement('span'); span.textContent = t.text || '';
+      li.appendChild(sb); li.appendChild(span);
+      modalTaskList.appendChild(li);
+    }
+  }
+  if (modalTasksUnsub) { try { modalTasksUnsub(); } catch {} }
+  modalTasksUnsub = onSnapshot(qTasks, async (snap) => {
+    const arr = [];
+    for (const d of snap.docs) {
+      const dat = d.data();
+      let text = '', status = '';
+      try { text = await decryptText(dat.textCipher, dat.textIv); } catch {}
+      try { status = await decryptText(dat.statusCipher, dat.statusIv); } catch {}
+      arr.push({ id: d.id, text, status, data: dat });
+    }
+    modalTasks = arr;
+    renderModalTasks();
+  });
+
+  // Add new task from modal
+  let newTaskIds = [];
+  let newTaskTitles = [];
+  miniForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const v = (miniInput.value||'').trim(); if (!v) return;
+    try {
+      const { cipher: textCipher, iv: textIv } = await encryptText(v);
+      const { cipher: statusCipher, iv: statusIv } = await encryptText('open');
+      const ref = await addDoc(collection(db,'cases',currentCaseId,'tasks'), { textCipher, textIv, statusCipher, statusIv, createdAt: serverTimestamp(), username, assignee: null, priority: null });
+      newTaskIds.push(ref.id); newTaskTitles.push(v);
+      miniInput.value='';
+    } catch {}
+  });
+
   const close = () => overlay.remove();
   cancel.addEventListener('click', close);
   save.addEventListener('click', async () => {
@@ -2872,19 +2931,10 @@ async function openWardNoteComposer() {
       const includedTaskTitles = [];
       if (includeExisting) {
         try {
-          for (const t of currentCaseTasks || []) {
+          for (const t of modalTasks || []) {
             if ((t.status||'') === 'open') { includedTaskIds.push(t.id); includedTaskTitles.push(t.text||''); }
           }
         } catch {}
-      }
-      const newTaskIds = [];
-      const newTaskTitles = [];
-      const newTasksRaw = (newTaskInput.value||'').split(/\n+/).map(s=>s.trim()).filter(Boolean).slice(0,20);
-      for (const tt of newTasksRaw) {
-        const { cipher: textCipher, iv: textIv } = await encryptText(tt);
-        const { cipher: statusCipher, iv: statusIv } = await encryptText('open');
-        const ref = await addDoc(collection(db,'cases',currentCaseId,'tasks'), { textCipher, textIv, statusCipher, statusIv, createdAt: serverTimestamp(), username, assignee: null, priority: null });
-        newTaskIds.push(ref.id); newTaskTitles.push(tt);
       }
 
       // 5) Build compiled body
