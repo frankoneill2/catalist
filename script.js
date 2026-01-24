@@ -39,7 +39,10 @@ let updatesSection, updatesListEl; // Updates feed
 let updatesToolbarEl, updatesUserFilterEl, updatesSearchEl, updatesLoadMoreBtn;
 // Tag controls
 let filterLocationSel, filterConsultantSel, sortByTagSel, clearTagFiltersBtn;
-let tabTasksBtn, tabNotesBtn;
+let tabOverviewBtn, tabWardNotesBtn;
+let wardNotesSection, wardNotesListEl;
+let newWardNoteBtn;
+let unsubWardNotes = null;
 let userDetailEl, userTitleEl, userTaskListEl, userBackBtn;
 let brandHome;
 let currentCaseId = null;
