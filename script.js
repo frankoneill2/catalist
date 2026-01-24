@@ -2724,12 +2724,11 @@ async function openWardNoteComposer() {
   if (!currentCaseId) return;
   const overlay = document.createElement('div'); overlay.className='modal-overlay';
   const modal = document.createElement('div'); modal.className='modal modal-wide'; overlay.appendChild(modal);
-  const title = document.createElement('h3'); title.textContent='New Ward Note'; modal.appendChild(title);
   const form = document.createElement('div'); form.className='stack'; modal.appendChild(form);
 
   // Heading (hidden by default; toggled via compact controls)
   const headingWrap = document.createElement('label'); headingWrap.textContent='Heading';
-  const headingInput = document.createElement('input'); headingInput.type='text'; headingInput.placeholder='Heading…'; headingWrap.appendChild(headingInput); headingWrap.style.display='none'; form.appendChild(headingWrap);
+  const headingInput = document.createElement('input'); headingInput.type='text'; headingInput.placeholder='Heading…'; headingWrap.appendChild(headingInput); headingWrap.style.display='none';
 
   // Diagnoses (A)
   const dxWrap = document.createElement('div'); dxWrap.className='section'; dxWrap.style.display='none';
@@ -2750,7 +2749,7 @@ async function openWardNoteComposer() {
   // Other
   // Compact controls row above the main note
   const ctrls = document.createElement('div'); ctrls.style.display='flex'; ctrls.style.gap='12px'; ctrls.style.alignItems='center'; ctrls.style.fontSize='12px'; ctrls.style.color='#6b7280';
-  const mkLink = (label) => { const b=document.createElement('button'); b.type='button'; b.textContent=label; b.style.background='none'; b.style.border='none'; b.style.padding='0'; b.style.cursor='pointer'; b.style.color='#6b7280'; return b; };
+  const mkLink = (label) => { const b=document.createElement('button'); b.type='button'; b.textContent=label; b.className='compact-link'; return b; };
   const headingBtn = mkLink('Add heading');
   const dxBtn = mkLink('Diagnoses (Δ)');
   const issuesBtn = mkLink('Issues');
@@ -2758,6 +2757,11 @@ async function openWardNoteComposer() {
   ctrls.appendChild(headingBtn);
   ctrls.appendChild(dxBtn);
   ctrls.appendChild(issuesBtn);
+  // Insert toggled sections below the compact controls (to keep menu fixed)
+  form.appendChild(headingWrap);
+  form.appendChild(dxWrap);
+  form.appendChild(issuesWrap);
+
   // Main Ward note field
   const otherWrap = document.createElement('div');
   const otherLabel = document.createElement('div'); otherLabel.className='wardnote-label'; otherLabel.textContent='Ward note'; otherWrap.appendChild(otherLabel);
@@ -2777,10 +2781,11 @@ async function openWardNoteComposer() {
   const tasksBtn = mkLink('Tasks (include open: on)'); ctrls.appendChild(tasksBtn);
 
   // Toggle handlers for compact controls
-  headingBtn.addEventListener('click', ()=>{ const show = headingWrap.style.display==='none'; headingWrap.style.display = show ? '' : 'none'; if (show) headingInput.focus(); });
-  dxBtn.addEventListener('click', ()=>{ dxWrap.style.display = dxWrap.style.display==='none' ? '' : 'none'; });
-  issuesBtn.addEventListener('click', ()=>{ issuesWrap.style.display = issuesWrap.style.display==='none' ? '' : 'none'; });
-  tasksBtn.addEventListener('click', ()=>{ tasksWrap.style.display = tasksWrap.style.display==='none' ? '' : 'none'; });
+  function setActive(btn, on) { btn.classList.toggle('active', !!on); }
+  headingBtn.addEventListener('click', ()=>{ const show = headingWrap.style.display==='none'; headingWrap.style.display = show ? '' : 'none'; setActive(headingBtn, show); if (show) headingInput.focus(); });
+  dxBtn.addEventListener('click', ()=>{ const show = dxWrap.style.display==='none'; dxWrap.style.display = show ? '' : 'none'; setActive(dxBtn, show); });
+  issuesBtn.addEventListener('click', ()=>{ const show = issuesWrap.style.display==='none'; issuesWrap.style.display = show ? '' : 'none'; setActive(issuesBtn, show); });
+  tasksBtn.addEventListener('click', ()=>{ const show = tasksWrap.style.display==='none'; tasksWrap.style.display = show ? '' : 'none'; setActive(tasksBtn, show); });
 
   // Actions
   const actions = document.createElement('div'); actions.className='actions';
