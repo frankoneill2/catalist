@@ -59,7 +59,7 @@ body {
   margin: 0 auto;
 }
 @media (min-width: 900px) {
-  .app { max-width: 1400px; padding: 8px; }
+  .app { max-width: 100%; padding: 8px; }
 }
 
 /* My Tasks: keep a comfortable, slimmer width on desktop */
@@ -1324,3 +1324,5 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
 }
 
 .note-row textarea::placeholder { color: #9ca3af; }
+.case-header-actions { display: flex; gap: 8px; align-items: center; }
+.case-header-actions .btn { height: 32px; padding: 0 12px; }

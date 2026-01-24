@@ -3242,6 +3242,16 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Case header overflow menu (⋯) with Delete
   const actionsWrap = document.getElementById('case-header-actions');
   if (actionsWrap && !document.getElementById('case-overflow-btn')) {
+    // New Ward Note quick action
+    if (!document.getElementById('new-ward-note-header')) {
+      const nn = document.createElement('button');
+      nn.id = 'new-ward-note-header';
+      nn.className = 'btn';
+      nn.type = 'button';
+      nn.textContent = 'New Note';
+      nn.addEventListener('click', openWardNoteComposer);
+      actionsWrap.appendChild(nn);
+    }
     const btn = document.createElement('button');
     btn.id = 'case-overflow-btn';
     btn.className = 'icon-btn case-overflow-btn';
