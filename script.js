@@ -1451,7 +1451,7 @@ function renderUpdatesList() {
     }
     return true;
   });
-  if (filtered.length===0) { const d=document.createElement('div'); d.className='update-empty'; d.textContent='No updates yet.'; updatesListEl.appendChild(d); return; }
+  if (filtered.length===0) { const d=document.createElement('div'); d.className='update-empty'; d.textContent='No issues yet.'; updatesListEl.appendChild(d); return; }
   // Group by day and then group contiguous items by same caseId
   let prevDay = '';
   let currentCase = '';
@@ -1671,7 +1671,7 @@ function buildTableSkeleton() {
   table.className = 'data-table';
   const thead = document.createElement('thead');
   const tr = document.createElement('tr');
-  const headers = ['Patient', 'Diagnosis', 'History', 'Micro/ABx', 'Investigations', 'Updates', 'Tasks'];
+  const headers = ['Patient', 'Diagnosis', 'History', 'Meds', 'Investigations', 'Issues', 'Tasks'];
   for (const h of headers) { const th = document.createElement('th'); th.textContent = h; tr.appendChild(th); }
   thead.appendChild(tr);
   const tbody = document.createElement('tbody');

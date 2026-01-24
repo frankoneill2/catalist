@@ -44,7 +44,7 @@
     <div id="main-tabs" class="tabs">
       <button id="tab-table" class="tab active" role="tab" aria-selected="true" aria-controls="table-section">Table</button>
       <button id="tab-my" class="tab" role="tab" aria-selected="false" aria-controls="user-detail">My Tasks</button>
-      <button id="tab-updates" class="tab" role="tab" aria-selected="false" aria-controls="updates-section">Updates</button>
+      <button id="tab-updates" class="tab" role="tab" aria-selected="false" aria-controls="updates-section">Issues</button>
     </div>
 
     <section id="table-section" class="card" hidden>
@@ -134,10 +134,10 @@
               </div>
             </div>
             <div class="note-row">
-              <div class="note-label">ABx</div>
+              <div class="note-label">Meds</div>
               <div class="note-content">
-                <div id="notes-C-items" class="note-items" aria-label="ABx items"></div>
-                <button type="button" class="icon-btn small add-note-item" data-letter="C" aria-label="Add ABx header">+ Add header</button>
+                <div id="notes-C-items" class="note-items" aria-label="Meds items"></div>
+                <button type="button" class="icon-btn small add-note-item" data-letter="C" aria-label="Add Meds header">+ Add header</button>
               </div>
             </div>
             <div class="note-row">
@@ -168,12 +168,12 @@
     </section>
 
     <section id="updates-section" class="card" hidden>
-      <div id="updates-toolbar" class="c-toolbar c-toolbar--stack" aria-label="Updates filters">
+      <div id="updates-toolbar" class="c-toolbar c-toolbar--stack" aria-label="Issues filters">
         <div class="c-row">
           <select id="updates-user-filter" title="Filter by user" style="max-width: 220px">
             <option value="">All users</option>
           </select>
-          <input id="updates-search" class="c-field--grow" type="search" placeholder="Search updates">
+          <input id="updates-search" class="c-field--grow" type="search" placeholder="Search issues">
         </div>
       </div>
       <ul id="updates-list" class="updates-list" aria-live="polite" role="list"></ul>
