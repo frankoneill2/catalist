@@ -1094,6 +1094,10 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
   width: min(92vw, 420px);
   box-shadow: 0 10px 24px rgba(0,0,0,0.12);
 }
+.modal-wide { width: min(96vw, 1100px); max-height: 90vh; overflow: auto; }
+@media (min-width: 1200px) {
+  .modal-wide { width: min(92vw, 1280px); }
+}
 .modal h3 { margin: 0 0 8px; color: var(--text); font-weight: 600; }
 .modal .row { display: grid; gap: 8px; margin-bottom: 12px; }
 .modal .actions { display: flex; justify-content: flex-end; gap: 8px; }
