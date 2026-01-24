@@ -2942,7 +2942,6 @@ async function openWardNoteComposer() {
       // 5) Build compiled body
       const parts = [];
       const heading = (headingEl.textContent||'').trim();
-      if (heading) parts.push(heading);
       const dxLine = (cleanDx.length>0) ? ('Δ ' + cleanDx.map(d=>d.title).join('; ')) : 'Δ Diagnosis not specified';
       parts.push(dxLine);
       // Issues included
