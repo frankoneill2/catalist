@@ -1178,26 +1178,10 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
   margin: 0 auto;
 }
 
-/* Desktop: side-by-side Notes (left) and Tasks (right) */
+/* Desktop: two-column layout and visible tabs */
 @media (min-width: 900px) {
-  /* Hide toggle tabs on desktop */
-  #case-detail .tabs { display: none; }
-  /* Hide Notes embedded composer on desktop (keep list) */
-  #case-detail #notes #notes-tasks-form { display: none; }
-  /* Two-column layout for the panels */
-  #case-panels {
-    display: grid;
-    /* Make Notes the primary column, Tasks slightly narrower */
-    grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.9fr);
-    gap: 6px;
-    align-items: start;
-  }
-  /* Ensure Notes on the left, Tasks on the right regardless of DOM order */
-  #case-panels #notes { order: 1; }
-  #case-panels #tasks { order: 2; border-left: 1px solid #e5e7eb; padding-left: 1.5rem; }
-  /* Avoid centered Notes card inside a column */
-  #case-panels .notes { margin: 0; max-width: none; }
-
+  /* Keep tabs visible on desktop */
+  #case-detail .tabs { display: grid; }
   /* Compact case card and headings */
   #case-detail.card { padding: 8px 10px; }
   #case-detail .case-heading { margin: 2px 0 8px; }
@@ -1249,13 +1233,18 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
 /* --- Unified Notes card (A–E) --- */
 .notes {
   max-width: 800px;
-  margin: 1rem auto; /* center within section */
+  margin: 1rem auto; /* center within section by default */
   background: #fff;
   border: 1px solid #e5e7eb;
   border-radius: 12px;
   box-shadow: var(--shadow-sm);
   overflow: hidden; /* merge row edges */
   font-size: 0.95rem; /* slightly denser document feel */
+}
+
+/* In Overview, let Notes expand to the full column width */
+@media (min-width: 900px) {
+  .overview-grid .notes { max-width: none; margin: 0; }
 }
 
 .note-row {
