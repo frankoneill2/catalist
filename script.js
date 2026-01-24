@@ -2453,14 +2453,29 @@ function openTagPanelForCase(caseId, anchorTd) {
   }
   locSel.addEventListener('change', async ()=>{ await refreshRooms(); roomSel.value=''; });
 
-  cancel.addEventListener('click', ()=>{ panel.remove(); document.removeEventListener('click', onDocClick, true); });
+  // Keep location options in sync if tags change while editor is open
+  const onTagsUpdated = () => {
+    const prev = locSel.value || '';
+    addOpts(locSel, tagsByType.get('location') || []);
+    // Restore previous selection if still present
+    try { if (prev && Array.from(locSel.options).some(o => o.value === prev)) locSel.value = prev; } catch {}
+  };
+  document.addEventListener('tags:updated', onTagsUpdated);
+
+  const cleanupPanel = () => {
+    panel.remove();
+    document.removeEventListener('click', onDocClick, true);
+    document.removeEventListener('tags:updated', onTagsUpdated);
+  };
+
+  cancel.addEventListener('click', cleanupPanel);
   save.addEventListener('click', async ()=>{
     try {
       const loc = locSel.value || null; const room = roomSel.value || null; const cons = consSel.value || null;
       const ct = { location: loc, consultant: cons };
       if (loc && room) ct.room = room; else ct.room = null;
       await updateDoc(doc(db,'cases',caseId), { caseTags: ct });
-      panel.remove(); document.removeEventListener('click', onDocClick, true);
+      cleanupPanel();
     } catch (err) { console.error('Failed to update tags', err); showToast('Failed to update tags'); }
   });
 
@@ -2470,7 +2485,7 @@ function openTagPanelForCase(caseId, anchorTd) {
     const top = Math.min(window.innerHeight - panel.offsetHeight - 8, r.bottom + 6);
     panel.style.left = `${Math.max(8,left)}px`; panel.style.top = `${Math.max(8,top)}px`;
   });
-  const onDocClick = (e)=>{ if (!panel || panel.contains(e.target)) return; panel.remove(); document.removeEventListener('click', onDocClick, true); };
+  const onDocClick = (e)=>{ if (!panel || panel.contains(e.target)) return; cleanupPanel(); };
   setTimeout(()=>document.addEventListener('click', onDocClick, true),0);
 }
 
@@ -3540,17 +3555,10 @@ function startRealtimeUsers() {
     }
   }
 
-  // Add location
-  addLocBtn.addEventListener('click', async (e) => {
+  // Add location → open Tags manager (unified tags system)
+  addLocBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    const name = (prompt('Add location name') || '').trim();
-    if (!name) return;
-    try {
-      await addDoc(collection(db, 'locations'), { name, createdAt: serverTimestamp() });
-    } catch (err) {
-      console.error('Failed to add location', err);
-      showToast('Failed to add location (permissions)');
-    }
+    openTagsManager();
   });
 }
 
