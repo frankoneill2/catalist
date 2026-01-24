@@ -2759,9 +2759,14 @@ async function openWardNoteComposer() {
 
   // Main Ward note field
   const otherWrap = document.createElement('div');
-  const otherLabel = document.createElement('div'); otherLabel.className='wardnote-label'; otherLabel.textContent='Ward note'; otherWrap.appendChild(otherLabel);
-  // Inline editable heading
-  const headingInput = document.createElement('input'); headingInput.type='text'; headingInput.className='wardnote-title'; headingInput.value = 'Ward note'; otherWrap.appendChild(headingInput);
+  // Inline editable heading (looks like a header, but editable)
+  const headingEl = document.createElement('div');
+  headingEl.className = 'wardnote-title';
+  headingEl.setAttribute('contenteditable','true');
+  headingEl.setAttribute('role','textbox');
+  headingEl.setAttribute('aria-label','Note heading');
+  headingEl.textContent = 'Ward note';
+  otherWrap.appendChild(headingEl);
   const otherHelp = document.createElement('div'); otherHelp.className='wardnote-help'; otherHelp.textContent = 'This free text is the main body of the note; it doesn’t appear in the table.'; otherWrap.appendChild(otherHelp);
   const otherInput = document.createElement('textarea'); otherInput.className='wardnote-area'; otherInput.placeholder='Write your note…'; otherWrap.appendChild(otherInput); form.appendChild(otherWrap);
 
@@ -2884,7 +2889,7 @@ async function openWardNoteComposer() {
 
       // 5) Build compiled body
       const parts = [];
-      const heading = (headingInput.value||'').trim();
+      const heading = (headingEl.textContent||'').trim();
       if (heading) parts.push(heading);
       const dxLine = (cleanDx.length>0) ? ('Δ ' + cleanDx.map(d=>d.title).join('; ')) : 'Δ Diagnosis not specified';
       parts.push(dxLine);

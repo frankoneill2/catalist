@@ -1334,7 +1334,8 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
 
 /* Ward note emphasis */
 .wardnote-label { font-weight: 600; margin-top: 6px; }
-.wardnote-title { width: 100%; font-size: 18px; font-weight: 600; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 10px; margin: 6px 0; }
+.wardnote-title { width: 100%; font-size: 20px; font-weight: 700; padding: 4px 0; margin: 6px 0; border: none; background: transparent; outline: none; cursor: text; }
+.wardnote-title:focus { border-bottom: 1px dashed #d1d5db; }
 .wardnote-help { font-size: 12px; color: var(--muted); margin: 4px 0 6px; }
 .wardnote-area {
   width: 100%; min-height: 45vh; padding: 12px 14px; font-size: 16px; line-height: 1.5;
