@@ -112,6 +112,9 @@ ul {
 .modal-task { padding: 6px 8px; border-radius: 8px; }
 .modal-task--new { background: #ecfdf5; border: 1px solid #bbf7d0; }
 .modal-task .badge-new { font-size: 11px; color: #065f46; background: #a7f3d0; border-radius: 999px; padding: 2px 6px; margin-left: 8px; }
+/* Excluded (not included in note) state when include-existing is off */
+.modal-task--excluded { opacity: 0.5; background: #f9fafb; }
+.modal-task .badge-excluded { font-size: 11px; color: #6b7280; background: #e5e7eb; border-radius: 999px; padding: 2px 6px; margin-left: 8px; }
 
 .stack > * + * {
   margin-top: 0.75rem;

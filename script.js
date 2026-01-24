@@ -2847,7 +2847,7 @@ async function openWardNoteComposer() {
   showAllBtn.addEventListener('click', ()=>{ issueItems.forEach(it=>{ const st = issueState.get(it.id)||{}; st.show = true; issueState.set(it.id, st); }); renderIssues(); });
   hideAllBtn.addEventListener('click', ()=>{ issueItems.forEach(it=>{ const st = issueState.get(it.id)||{}; st.show = false; issueState.set(it.id, st); }); renderIssues(); });
   // Reflect tasks include state in compact link
-  includeChk.addEventListener('change', ()=>{ tasksBtn.textContent = `Tasks (include open: ${includeChk.checked ? 'on':'off'})`; });
+  includeChk.addEventListener('change', ()=>{ tasksBtn.textContent = `Tasks (include open: ${includeChk.checked ? 'on':'off'})`; renderModalTasks(); });
   tasksBtn.textContent = `Tasks (include open: ${includeChk.checked ? 'on':'off'})`;
 
   // Tasks realtime list for modal
