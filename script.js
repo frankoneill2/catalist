@@ -2851,12 +2851,15 @@ async function openWardNoteComposer() {
   tasksBtn.textContent = `Tasks (include open: ${includeChk.checked ? 'on':'off'})`;
 
   // Tasks realtime list for modal
+  let newTaskIds = [];
+  let newTaskTitles = [];
   const qTasks = query(collection(db,'cases',currentCaseId,'tasks'), orderBy('createdAt','desc'));
   const statusIcon = (s) => s === 'complete' ? '☑' : (s === 'in progress' ? '◐' : '☐');
   function renderModalTasks() {
     modalTaskList.innerHTML = '';
     for (const t of modalTasks) {
-      const li = document.createElement('li'); li.style.display='grid'; li.style.gridTemplateColumns='auto 1fr'; li.style.alignItems='center'; li.style.gap='6px';
+      const li = document.createElement('li'); li.className = 'modal-task' + (newTaskIds.includes(t.id) ? ' modal-task--new' : '');
+      li.style.display='grid'; li.style.gridTemplateColumns='auto 1fr'; li.style.alignItems='center'; li.style.gap='6px';
       const sb = document.createElement('button'); sb.type='button'; sb.className='status-btn'; sb.textContent = statusIcon(t.status);
       sb.setAttribute('aria-label',`Task status: ${t.status}`);
       sb.addEventListener('click', async (e)=>{
@@ -2869,6 +2872,7 @@ async function openWardNoteComposer() {
         } catch {}
       });
       const span = document.createElement('span'); span.textContent = t.text || '';
+      if (newTaskIds.includes(t.id)) { const b=document.createElement('span'); b.className='badge-new'; b.textContent='NEW'; span.appendChild(b); }
       li.appendChild(sb); li.appendChild(span);
       modalTaskList.appendChild(li);
     }
@@ -2888,8 +2892,6 @@ async function openWardNoteComposer() {
   });
 
   // Add new task from modal
-  let newTaskIds = [];
-  let newTaskTitles = [];
   miniForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const v = (miniInput.value||'').trim(); if (!v) return;
