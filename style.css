@@ -1082,8 +1082,9 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
   inset: 0;
   background: rgba(0,0,0,0.4);
   display: flex;
-  align-items: center;
+  align-items: flex-start; /* keep modal top anchored */
   justify-content: center;
+  padding-top: clamp(24px, 6vh, 64px); /* consistent top offset on expand/collapse */
   z-index: 1000;
 }
 .modal {
