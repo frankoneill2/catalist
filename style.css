@@ -1319,3 +1319,21 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
 .note-row textarea::placeholder { color: #9ca3af; }
 .case-header-actions { display: flex; gap: 8px; align-items: center; }
 .case-header-actions .btn { height: 32px; padding: 0 12px; }
+.composer-accordion { border-top: 1px solid #e5e7eb; padding: 4px 0; }
+.composer-accordion:first-of-type { border-top: none; }
+.composer-accordion .acc-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 4px 2px; font-size: 12px; color: var(--muted);
+}
+.composer-accordion .acc-title { display: inline-flex; align-items: center; gap: 6px; }
+.composer-accordion .acc-title .chev { font-size: 10px; }
+.composer-accordion .acc-summary { font-size: 12px; color: #6b7280; }
+.composer-accordion .acc-body { padding: 6px 0; }
+.composer-accordion .acc-toggle { background: none; border: none; color: inherit; padding: 0; cursor: pointer; }
+
+/* Ward note emphasis */
+.wardnote-label { font-weight: 600; margin-top: 6px; }
+.wardnote-help { font-size: 12px; color: var(--muted); margin: 4px 0 6px; }
+.wardnote-area {
+  width: 100%; min-height: 45vh; padding: 12px 14px; font-size: 16px; line-height: 1.5;
+}

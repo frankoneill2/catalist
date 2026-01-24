@@ -2727,18 +2727,18 @@ async function openWardNoteComposer() {
   const title = document.createElement('h3'); title.textContent='New Ward Note'; modal.appendChild(title);
   const form = document.createElement('div'); form.className='stack'; modal.appendChild(form);
 
-  // Heading
-  const headingWrap = document.createElement('label'); headingWrap.textContent='Heading / Introduction';
-  const headingInput = document.createElement('textarea'); headingInput.placeholder='Enter heading…'; headingWrap.appendChild(headingInput); form.appendChild(headingWrap);
+  // Heading (hidden by default; toggled via compact controls)
+  const headingWrap = document.createElement('label'); headingWrap.textContent='Heading';
+  const headingInput = document.createElement('input'); headingInput.type='text'; headingInput.placeholder='Heading…'; headingWrap.appendChild(headingInput); headingWrap.style.display='none'; form.appendChild(headingWrap);
 
   // Diagnoses (A)
-  const dxWrap = document.createElement('div'); dxWrap.className='section';
+  const dxWrap = document.createElement('div'); dxWrap.className='section'; dxWrap.style.display='none';
   const dxTitle = document.createElement('div'); dxTitle.textContent='Diagnoses (Δ)'; dxTitle.style.fontWeight='600'; dxWrap.appendChild(dxTitle);
   const dxList = document.createElement('div'); dxList.className='note-items'; dxWrap.appendChild(dxList);
   form.appendChild(dxWrap);
 
   // Issues (E)
-  const issuesWrap = document.createElement('div'); issuesWrap.className='section';
+  const issuesWrap = document.createElement('div'); issuesWrap.className='section'; issuesWrap.style.display='none';
   const issuesHeader = document.createElement('div'); issuesHeader.style.display='flex'; issuesHeader.style.gap='8px'; issuesHeader.style.alignItems='center';
   const issuesTitle = document.createElement('div'); issuesTitle.textContent='Issues'; issuesTitle.style.fontWeight='600'; issuesHeader.appendChild(issuesTitle);
   const showAllBtn = document.createElement('button'); showAllBtn.type='button'; showAllBtn.className='icon-btn small'; showAllBtn.textContent='Show all'; issuesHeader.appendChild(showAllBtn);
@@ -2748,11 +2748,24 @@ async function openWardNoteComposer() {
   form.appendChild(issuesWrap);
 
   // Other
-  const otherWrap = document.createElement('label'); otherWrap.textContent='Other (free text — not shown in table)';
-  const otherInput = document.createElement('textarea'); otherInput.placeholder='Add Other text…'; otherWrap.appendChild(otherInput); form.appendChild(otherWrap);
+  // Compact controls row above the main note
+  const ctrls = document.createElement('div'); ctrls.style.display='flex'; ctrls.style.gap='12px'; ctrls.style.alignItems='center'; ctrls.style.fontSize='12px'; ctrls.style.color='#6b7280';
+  const mkLink = (label) => { const b=document.createElement('button'); b.type='button'; b.textContent=label; b.style.background='none'; b.style.border='none'; b.style.padding='0'; b.style.cursor='pointer'; b.style.color='#6b7280'; return b; };
+  const headingBtn = mkLink('Add heading');
+  const dxBtn = mkLink('Diagnoses (Δ)');
+  const issuesBtn = mkLink('Issues');
+  form.appendChild(ctrls);
+  ctrls.appendChild(headingBtn);
+  ctrls.appendChild(dxBtn);
+  ctrls.appendChild(issuesBtn);
+  // Main Ward note field
+  const otherWrap = document.createElement('div');
+  const otherLabel = document.createElement('div'); otherLabel.className='wardnote-label'; otherLabel.textContent='Ward note'; otherWrap.appendChild(otherLabel);
+  const otherHelp = document.createElement('div'); otherHelp.className='wardnote-help'; otherHelp.textContent = 'This free text is the main body of the note; it doesn’t appear in the table.'; otherWrap.appendChild(otherHelp);
+  const otherInput = document.createElement('textarea'); otherInput.className='wardnote-area'; otherInput.placeholder='Write your note…'; otherWrap.appendChild(otherInput); form.appendChild(otherWrap);
 
   // Tasks
-  const tasksWrap = document.createElement('div'); tasksWrap.className='section';
+  const tasksWrap = document.createElement('div'); tasksWrap.className='section'; tasksWrap.style.display='none';
   const includeRow = document.createElement('label'); includeRow.style.display='flex'; includeRow.style.gap='8px'; includeRow.style.alignItems='center';
   const includeChk = document.createElement('input'); includeChk.type='checkbox'; includeChk.checked = true; includeRow.appendChild(includeChk);
   includeRow.appendChild(document.createTextNode('Include existing open tasks in this note'));
@@ -2761,6 +2774,13 @@ async function openWardNoteComposer() {
   const newTaskInput = document.createElement('textarea'); newTaskInput.placeholder='E.g. Take bloods\nOrder CXR'; newTaskLabel.appendChild(newTaskInput);
   tasksWrap.appendChild(newTaskLabel);
   form.appendChild(tasksWrap);
+  const tasksBtn = mkLink('Tasks (include open: on)'); ctrls.appendChild(tasksBtn);
+
+  // Toggle handlers for compact controls
+  headingBtn.addEventListener('click', ()=>{ const show = headingWrap.style.display==='none'; headingWrap.style.display = show ? '' : 'none'; if (show) headingInput.focus(); });
+  dxBtn.addEventListener('click', ()=>{ dxWrap.style.display = dxWrap.style.display==='none' ? '' : 'none'; });
+  issuesBtn.addEventListener('click', ()=>{ issuesWrap.style.display = issuesWrap.style.display==='none' ? '' : 'none'; });
+  tasksBtn.addEventListener('click', ()=>{ tasksWrap.style.display = tasksWrap.style.display==='none' ? '' : 'none'; });
 
   // Actions
   const actions = document.createElement('div'); actions.className='actions';
@@ -2813,6 +2833,9 @@ async function openWardNoteComposer() {
   renderIssues();
   showAllBtn.addEventListener('click', ()=>{ issueItems.forEach(it=>{ const st = issueState.get(it.id)||{}; st.show = true; issueState.set(it.id, st); }); renderIssues(); });
   hideAllBtn.addEventListener('click', ()=>{ issueItems.forEach(it=>{ const st = issueState.get(it.id)||{}; st.show = false; issueState.set(it.id, st); }); renderIssues(); });
+  // Reflect tasks include state in compact link
+  includeChk.addEventListener('change', ()=>{ tasksBtn.textContent = `Tasks (include open: ${includeChk.checked ? 'on':'off'})`; });
+  tasksBtn.textContent = `Tasks (include open: ${includeChk.checked ? 'on':'off'})`;
 
   const close = () => overlay.remove();
   cancel.addEventListener('click', close);
@@ -2912,6 +2935,10 @@ async function openWardNoteComposer() {
       showToast('Failed to save note');
     }
   });
+
+  // Emphasize main note input
+  setTimeout(()=>{ try { otherInput.focus(); otherInput.setSelectionRange(otherInput.value.length, otherInput.value.length); } catch {} }, 0);
+  overlay.addEventListener('keydown', (e) => { if ((e.key === 'Enter') && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save.click(); } });
 }
 
 // Apply toolbar filters to current case tasks and render
