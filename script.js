@@ -2902,7 +2902,7 @@ async function openWardNoteComposer() {
     } catch {}
   });
 
-  const close = () => overlay.remove();
+  const close = () => { if (modalTasksUnsub) { try { modalTasksUnsub(); } catch {} } overlay.remove(); };
   cancel.addEventListener('click', close);
   save.addEventListener('click', async () => {
     try {
