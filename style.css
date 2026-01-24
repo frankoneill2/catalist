@@ -94,6 +94,20 @@ ul {
   border: 1px solid #e5e7eb;
 }
 
+/* Overview layout: notes and tasks side by side on desktop */
+.overview-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+@media (min-width: 900px) {
+  .overview-grid { grid-template-columns: 1fr 1fr; align-items: start; }
+}
+
+/* Ward Notes tab */
+.ward-notes-toolbar { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+.ward-notes-list { display: grid; gap: 8px; }
+.ward-note-item { border: 1px solid #e5e7eb; border-radius: var(--radius); padding: 8px 10px; background: #fff; }
+.ward-note-head { display: flex; gap: 8px; align-items: baseline; }
+.ward-note-head .meta { color: var(--muted); font-size: 12px; }
+.ward-note-preview { color: #374151; font-size: 14px; margin-top: 6px; white-space: pre-wrap; }
+
 .stack > * + * {
   margin-top: 0.75rem;
 }
