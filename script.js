@@ -328,7 +328,7 @@ function showCaseList() {
   compactOrderByCase = new Map();
 }
 
-async function openCase(id, title, source = 'list', initialTab = 'notes') {
+async function openCase(id, title, source = 'list', initialTab = 'overview') {
   currentCaseId = id;
   backTarget = source === 'user' ? 'user' : (source === 'table' ? 'table' : (source === 'updates' ? 'updates' : 'list'));
   caseTitleEl.textContent = title;
@@ -340,8 +340,8 @@ async function openCase(id, title, source = 'list', initialTab = 'notes') {
   startRealtimeTasks(id);
   startRealtimeCaseFields(id);
   // Notes embedded tasks removed
-  // Open chosen tab
-  showTab(initialTab);
+  // Open Overview by default
+  showCaseSection('overview');
   // Update URL for deep link
   try {
     const url = new URL(window.location.href); url.searchParams.set('case', id); window.history.pushState({ caseId: id }, '', url.toString());
@@ -1451,7 +1451,7 @@ function renderUpdatesList() {
     }
     return true;
   });
-  if (filtered.length===0) { const d=document.createElement('div'); d.className='update-empty'; d.textContent='No issues yet.'; updatesListEl.appendChild(d); return; }
+  if (filtered.length===0) { const d=document.createElement('div'); d.className='update-empty'; d.textContent='No updates yet.'; updatesListEl.appendChild(d); return; }
   // Group by day and then group contiguous items by same caseId
   let prevDay = '';
   let currentCase = '';
@@ -2623,42 +2623,292 @@ function renderNotesSection(container, letter, items) {
 }
 
 // --- Form bindings
-function bindTabs() {
-  tabTasksBtn.addEventListener('click', () => showTab('tasks'));
-  tabNotesBtn.addEventListener('click', () => showTab('notes'));
-}
-
-function isDesktopCaseLayout() {
-  try { return window.matchMedia('(min-width: 900px)').matches; } catch { return false; }
-}
-
-function applyCasePanelsVisibility() {
-  const tasks = document.getElementById('tasks');
-  const notes = document.getElementById('notes');
-  if (!tasks || !notes) return;
-  if (isDesktopCaseLayout()) {
-    // Desktop: show both panels
-    tasks.hidden = false;
-    notes.hidden = false;
+function showCaseSection(which) {
+  const isOverview = which === 'overview';
+  if (tabOverviewBtn) {
+    tabOverviewBtn.classList.toggle('active', isOverview);
+    tabOverviewBtn.setAttribute('aria-selected', String(isOverview));
+  }
+  if (tabWardNotesBtn) {
+    tabWardNotesBtn.classList.toggle('active', !isOverview);
+    tabWardNotesBtn.setAttribute('aria-selected', String(!isOverview));
+  }
+  const overview = document.getElementById('overview');
+  const wardNotes = document.getElementById('ward-notes');
+  if (overview) overview.hidden = !isOverview;
+  if (wardNotes) wardNotes.hidden = isOverview;
+  if (!isOverview) {
+    if (!unsubWardNotes) startRealtimeWardNotes();
   } else {
-    // Mobile: show the active tab only
-    const tasksActive = tabTasksBtn && tabTasksBtn.classList.contains('active');
-    tasks.hidden = !tasksActive;
-    notes.hidden = tasksActive;
+    if (unsubWardNotes) { try { unsubWardNotes(); } catch {} unsubWardNotes = null; }
   }
 }
 
-function showTab(which) {
-  const isTasks = which === 'tasks';
-  if (tabTasksBtn) {
-    tabTasksBtn.classList.toggle('active', isTasks);
-    tabTasksBtn.setAttribute('aria-selected', String(isTasks));
-  }
-  if (tabNotesBtn) {
-    tabNotesBtn.classList.toggle('active', !isTasks);
-    tabNotesBtn.setAttribute('aria-selected', String(!isTasks));
-  }
-  applyCasePanelsVisibility();
+function bindCaseTabs() {
+  if (tabOverviewBtn) tabOverviewBtn.addEventListener('click', () => showCaseSection('overview'));
+  if (tabWardNotesBtn) tabWardNotesBtn.addEventListener('click', () => showCaseSection('ward-notes'));
+}
+
+function startRealtimeWardNotes() {
+  if (!currentCaseId) return;
+  const list = wardNotesListEl;
+  if (!list) return;
+  const ref = collection(db, 'cases', currentCaseId, 'wardNotes');
+  const qn = query(ref, orderBy('createdAt', 'desc'));
+  if (unsubWardNotes) { try { unsubWardNotes(); } catch {} }
+  unsubWardNotes = onSnapshot(qn, async (snap) => {
+    list.innerHTML = '';
+    if (snap.empty) {
+      const d = document.createElement('div'); d.className='update-empty'; d.textContent='No notes yet.'; list.appendChild(d); return;
+    }
+    for (const d of snap.docs) {
+      const li = document.createElement('li'); li.className='ward-note-item';
+      const data = d.data();
+      const head = document.createElement('div'); head.className='ward-note-head';
+      const title = document.createElement('strong');
+      let heading = '';
+      try { if (data.headingCipher && data.headingIv) heading = await decryptText(data.headingCipher, data.headingIv); } catch {}
+      title.textContent = heading || 'Ward Note'; head.appendChild(title);
+      const meta = document.createElement('span'); meta.className='meta';
+      const author = data.author || 'Unknown';
+      const ts = data.createdAt && data.createdAt.toDate ? data.createdAt.toDate() : null;
+      meta.textContent = ` by ${author}` + (ts ? ` — ${ts.toLocaleString()}` : '');
+      head.appendChild(meta);
+      li.appendChild(head);
+      const preview = document.createElement('div'); preview.className='ward-note-preview';
+      try { if (data.compiledCipher && data.compiledIv) {
+        const body = await decryptText(data.compiledCipher, data.compiledIv);
+        preview.textContent = body.slice(0, 240) + (body.length>240?'…':'');
+      } } catch {}
+      li.appendChild(preview);
+      list.appendChild(li);
+    }
+  });
+}
+
+// Append helper: adds a blank line + text if existing body present
+function appendWithSpacing(existing, added) {
+  const a = (added || '').trim();
+  if (!a) return existing || '';
+  const e = (existing || '').trim();
+  if (!e) return a;
+  return e + "\n\n" + a;
+}
+
+async function saveCaseOtherBody(caseId, addedText) {
+  if (!caseId) return;
+  try {
+    const ref = doc(db, 'cases', caseId);
+    const snap = await getDoc(ref);
+    let current = '';
+    if (snap.exists()) {
+      const data = snap.data();
+      if (data.issuesOtherBodyCipher && data.issuesOtherBodyIv) {
+        try { current = await decryptText(data.issuesOtherBodyCipher, data.issuesOtherBodyIv); } catch {}
+      }
+    }
+    const next = appendWithSpacing(current, addedText);
+    if (!next) {
+      await updateDoc(ref, { issuesOtherBodyCipher: null, issuesOtherBodyIv: null });
+    } else {
+      const e = await encryptText(next);
+      await updateDoc(ref, { issuesOtherBodyCipher: e.cipher, issuesOtherBodyIv: e.iv });
+    }
+  } catch (err) { console.error('Failed to save Other body', err); showToast('Failed to save'); }
+}
+
+async function openWardNoteComposer() {
+  if (!currentCaseId) return;
+  const overlay = document.createElement('div'); overlay.className='modal-overlay';
+  const modal = document.createElement('div'); modal.className='modal modal-wide'; overlay.appendChild(modal);
+  const title = document.createElement('h3'); title.textContent='New Ward Note'; modal.appendChild(title);
+  const form = document.createElement('div'); form.className='stack'; modal.appendChild(form);
+
+  // Heading
+  const headingWrap = document.createElement('label'); headingWrap.textContent='Heading / Introduction';
+  const headingInput = document.createElement('textarea'); headingInput.placeholder='Enter heading…'; headingWrap.appendChild(headingInput); form.appendChild(headingWrap);
+
+  // Diagnoses (A)
+  const dxWrap = document.createElement('div'); dxWrap.className='section';
+  const dxTitle = document.createElement('div'); dxTitle.textContent='Diagnoses (Δ)'; dxTitle.style.fontWeight='600'; dxWrap.appendChild(dxTitle);
+  const dxList = document.createElement('div'); dxList.className='note-items'; dxWrap.appendChild(dxList);
+  form.appendChild(dxWrap);
+
+  // Issues (E)
+  const issuesWrap = document.createElement('div'); issuesWrap.className='section';
+  const issuesHeader = document.createElement('div'); issuesHeader.style.display='flex'; issuesHeader.style.gap='8px'; issuesHeader.style.alignItems='center';
+  const issuesTitle = document.createElement('div'); issuesTitle.textContent='Issues'; issuesTitle.style.fontWeight='600'; issuesHeader.appendChild(issuesTitle);
+  const showAllBtn = document.createElement('button'); showAllBtn.type='button'; showAllBtn.className='icon-btn small'; showAllBtn.textContent='Show all'; issuesHeader.appendChild(showAllBtn);
+  const hideAllBtn = document.createElement('button'); hideAllBtn.type='button'; hideAllBtn.className='icon-btn small'; hideAllBtn.textContent='Hide all'; issuesHeader.appendChild(hideAllBtn);
+  issuesWrap.appendChild(issuesHeader);
+  const issuesList = document.createElement('div'); issuesList.className='note-items'; issuesWrap.appendChild(issuesList);
+  form.appendChild(issuesWrap);
+
+  // Other
+  const otherWrap = document.createElement('label'); otherWrap.textContent='Other (free text — not shown in table)';
+  const otherInput = document.createElement('textarea'); otherInput.placeholder='Add Other text…'; otherWrap.appendChild(otherInput); form.appendChild(otherWrap);
+
+  // Tasks
+  const tasksWrap = document.createElement('div'); tasksWrap.className='section';
+  const includeRow = document.createElement('label'); includeRow.style.display='flex'; includeRow.style.gap='8px'; includeRow.style.alignItems='center';
+  const includeChk = document.createElement('input'); includeChk.type='checkbox'; includeChk.checked = true; includeRow.appendChild(includeChk);
+  includeRow.appendChild(document.createTextNode('Include existing open tasks in this note'));
+  tasksWrap.appendChild(includeRow);
+  const newTaskLabel = document.createElement('label'); newTaskLabel.textContent='Add new tasks (one per line)';
+  const newTaskInput = document.createElement('textarea'); newTaskInput.placeholder='E.g. Take bloods\nOrder CXR'; newTaskLabel.appendChild(newTaskInput);
+  tasksWrap.appendChild(newTaskLabel);
+  form.appendChild(tasksWrap);
+
+  // Actions
+  const actions = document.createElement('div'); actions.className='actions';
+  const cancel = document.createElement('button'); cancel.className='btn'; cancel.textContent='Cancel'; actions.appendChild(cancel);
+  const save = document.createElement('button'); save.className='btn primary'; save.textContent='Save Note'; actions.appendChild(save);
+  modal.appendChild(actions);
+  document.body.appendChild(overlay);
+
+  // Load Dx and Issues
+  let dxItems = [];
+  let issueItems = [];
+  try {
+    const snap = await getDoc(doc(db,'cases', currentCaseId));
+    const data = snap.data() || {};
+    dxItems = await decryptItems(data, 'A');
+    issueItems = (await decryptItems(data, 'E')).slice(0,8);
+  } catch {}
+  const renderDx = () => {
+    dxList.innerHTML='';
+    dxItems.slice(0,8).forEach((it, idx) => {
+      const row = document.createElement('div'); row.className='note-item';
+      const inp = document.createElement('input'); inp.type='text'; inp.value = it.title || ''; inp.placeholder='Diagnosis';
+      inp.addEventListener('input', ()=>{ it.title = inp.value; });
+      row.appendChild(inp);
+      const del = document.createElement('button'); del.type='button'; del.className='icon-btn small'; del.textContent='🗑'; del.addEventListener('click', ()=>{ dxItems.splice(idx,1); renderDx(); }); row.appendChild(del);
+      dxList.appendChild(row);
+    });
+    const add = document.createElement('button'); add.type='button'; add.className='icon-btn small'; add.textContent='+ Add diagnosis'; add.addEventListener('click', ()=>{ if (dxItems.length>=8) return; dxItems.push(newItem('','')); renderDx(); }); dxList.appendChild(add);
+  };
+  renderDx();
+
+  // Issues rows with Show toggle + per-issue added text
+  const issueState = new Map(); // id -> { show: bool, added: string }
+  const renderIssues = () => {
+    issuesList.innerHTML='';
+    issueItems.forEach(it => {
+      if (!issueState.has(it.id)) issueState.set(it.id, { show: true, added: '' });
+      const st = issueState.get(it.id);
+      const row = document.createElement('div'); row.className='note-item';
+      const head = document.createElement('div'); head.style.display='flex'; head.style.justifyContent='space-between'; head.style.alignItems='center';
+      const title = document.createElement('input'); title.type='text'; title.value = it.title || ''; title.placeholder='Issue header'; title.addEventListener('input', ()=>{ it.title = title.value; }); head.appendChild(title);
+      const tog = document.createElement('label'); tog.style.display='flex'; tog.style.gap='6px'; tog.style.alignItems='center';
+      const cb = document.createElement('input'); cb.type='checkbox'; cb.checked = !!st.show; cb.addEventListener('change', ()=>{ st.show = cb.checked; }); tog.appendChild(cb); tog.appendChild(document.createTextNode('Show in note'));
+      head.appendChild(tog);
+      row.appendChild(head);
+      const body = document.createElement('textarea'); body.placeholder='Add note for this issue (appends to Overview)'; body.value = st.added || ''; body.addEventListener('input', ()=>{ st.added = body.value; }); row.appendChild(body);
+      issuesList.appendChild(row);
+    });
+  };
+  renderIssues();
+  showAllBtn.addEventListener('click', ()=>{ issueItems.forEach(it=>{ const st = issueState.get(it.id)||{}; st.show = true; issueState.set(it.id, st); }); renderIssues(); });
+  hideAllBtn.addEventListener('click', ()=>{ issueItems.forEach(it=>{ const st = issueState.get(it.id)||{}; st.show = false; issueState.set(it.id, st); }); renderIssues(); });
+
+  const close = () => overlay.remove();
+  cancel.addEventListener('click', close);
+  save.addEventListener('click', async () => {
+    try {
+      // 1) Save Dx (A)
+      const cleanDx = dxItems.filter(it => (it.title||'').trim()).map(it => ({ id: it.id||Math.random().toString(36).slice(2,10), title: (it.title||'').trim(), body: '' }));
+      await saveItems(currentCaseId, 'A', cleanDx);
+
+      // 2) Save Issue headers change + append per-issue added text to case E bodies
+      const cleanIssues = issueItems.filter(it => (it.title||'').trim());
+      // Merge added text into body
+      const merged = cleanIssues.map(it => {
+        const st = issueState.get(it.id)||{ show:true, added:'' };
+        const added = (st.added||'').trim();
+        const nextBody = appendWithSpacing(it.body||'', added);
+        return { id: it.id, title: (it.title||'').trim(), body: nextBody };
+      });
+      await saveItems(currentCaseId, 'E', merged);
+
+      // 3) Save Other body append
+      const otherText = (otherInput.value||'').trim();
+      if (otherText) await saveCaseOtherBody(currentCaseId, otherText);
+
+      // 4) Tasks: include existing open + add new
+      const includeExisting = !!includeChk.checked;
+      const includedTaskIds = [];
+      const includedTaskTitles = [];
+      if (includeExisting) {
+        try {
+          for (const t of currentCaseTasks || []) {
+            if ((t.status||'') === 'open') { includedTaskIds.push(t.id); includedTaskTitles.push(t.text||''); }
+          }
+        } catch {}
+      }
+      const newTaskIds = [];
+      const newTaskTitles = [];
+      const newTasksRaw = (newTaskInput.value||'').split(/\n+/).map(s=>s.trim()).filter(Boolean).slice(0,20);
+      for (const tt of newTasksRaw) {
+        const { cipher: textCipher, iv: textIv } = await encryptText(tt);
+        const { cipher: statusCipher, iv: statusIv } = await encryptText('open');
+        const ref = await addDoc(collection(db,'cases',currentCaseId,'tasks'), { textCipher, textIv, statusCipher, statusIv, createdAt: serverTimestamp(), username, assignee: null, priority: null });
+        newTaskIds.push(ref.id); newTaskTitles.push(tt);
+      }
+
+      // 5) Build compiled body
+      const parts = [];
+      const heading = (headingInput.value||'').trim();
+      if (heading) parts.push(heading);
+      const dxLine = (cleanDx.length>0) ? ('Δ ' + cleanDx.map(d=>d.title).join('; ')) : 'Δ Diagnosis not specified';
+      parts.push(dxLine);
+      // Issues included
+      for (const it of merged) {
+        const st = issueState.get(it.id)||{ show:true, added:'' };
+        const added = (st.added||'').trim();
+        if (!st.show) continue;
+        if (!it.title || !added) continue;
+        parts.push(it.title);
+        parts.push(added);
+      }
+      if (otherText) { parts.push('Other'); parts.push(otherText); }
+      const taskLines = [];
+      if (includeExisting) taskLines.push(...includedTaskTitles.map(t=>`• ${t}`));
+      taskLines.push(...newTaskTitles.map(t=>`• ${t}`));
+      if (taskLines.length) { parts.push('Tasks'); parts.push(taskLines.join('\n')); }
+      const compiled = parts.join('\n\n');
+
+      // 6) Save ward note doc (immutable)
+      const wnRef = collection(db,'cases',currentCaseId,'wardNotes');
+      const eHead = await encryptText(heading);
+      const eComp = await encryptText(compiled);
+      const eDx = await encryptText(dxLine);
+      const issuesAdded = [];
+      for (const it of merged) {
+        const st = issueState.get(it.id)||{ show:true, added:'' };
+        const added = (st.added||'').trim();
+        if (!added) continue;
+        const enc = await encryptText(added);
+        issuesAdded.push({ id: it.id, cipher: enc.cipher, iv: enc.iv, show: !!st.show });
+      }
+      await addDoc(wnRef, {
+        headingCipher: eHead.cipher, headingIv: eHead.iv,
+        compiledCipher: eComp.cipher, compiledIv: eComp.iv,
+        diagnosesLineCipher: eDx.cipher, diagnosesLineIv: eDx.iv,
+        issuesAdded,
+        includeExistingOpenTasks: includeExisting,
+        includedTaskIds,
+        newTaskIds,
+        author: username || null,
+        createdAt: serverTimestamp(),
+      });
+
+      showToast('Ward note saved');
+      close();
+    } catch (err) {
+      console.error('Failed to save ward note', err);
+      showToast('Failed to save note');
+    }
+  });
 }
 
 // Apply toolbar filters to current case tasks and render
@@ -2970,8 +3220,11 @@ window.addEventListener('DOMContentLoaded', async () => {
   colDBody = document.getElementById('colD-body');
   colEBody = document.getElementById('colE-body');
   // Notes embedded tasks removed
-  tabTasksBtn = document.getElementById('tab-tasks');
-  tabNotesBtn = document.getElementById('tab-notes');
+  tabOverviewBtn = document.getElementById('tab-overview');
+  tabWardNotesBtn = document.getElementById('tab-wardnotes');
+  wardNotesSection = document.getElementById('ward-notes');
+  wardNotesListEl = document.getElementById('ward-notes-list');
+  newWardNoteBtn = document.getElementById('new-ward-note');
   // Main tabs
   const mainTabTable = document.getElementById('tab-table');
   const mainTabCases = document.getElementById('tab-cases');
@@ -3041,10 +3294,10 @@ window.addEventListener('DOMContentLoaded', async () => {
   bindTaskForm();
   bindNoteForm();
   bindNotesFields();
-  bindTabs();
-  // Ensure correct visibility on load and on resize (desktop shows both)
-  applyCasePanelsVisibility();
-  window.addEventListener('resize', applyCasePanelsVisibility);
+  if (newWardNoteBtn) newWardNoteBtn.addEventListener('click', openWardNoteComposer);
+  bindCaseTabs();
+  // Ensure Overview visible by default
+  showCaseSection('overview');
   // Main tab bindings
   if (mainTabTable) mainTabTable.addEventListener('click', () => showMainTab('table'));
   if (mainTabUpdates) mainTabUpdates.addEventListener('click', () => showMainTab('updates'));

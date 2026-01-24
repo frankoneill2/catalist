@@ -44,7 +44,7 @@
     <div id="main-tabs" class="tabs">
       <button id="tab-table" class="tab active" role="tab" aria-selected="true" aria-controls="table-section">Table</button>
       <button id="tab-my" class="tab" role="tab" aria-selected="false" aria-controls="user-detail">My Tasks</button>
-      <button id="tab-updates" class="tab" role="tab" aria-selected="false" aria-controls="updates-section">Issues</button>
+      <button id="tab-updates" class="tab" role="tab" aria-selected="false" aria-controls="updates-section">Updates</button>
     </div>
 
     <section id="table-section" class="card" hidden>
@@ -84,12 +84,14 @@
       <div id="case-header-actions" class="case-header-actions"></div>
       <div id="case-tag-chips" class="tag-chips" aria-label="Case tags"></div>
       <div class="tabs" role="tablist" aria-label="Case sections">
-        <button id="tab-notes" class="tab" role="tab" aria-controls="notes" aria-selected="false">Notes</button>
-        <button id="tab-tasks" class="tab active" role="tab" aria-controls="tasks" aria-selected="true">Tasks</button>
+        <button id="tab-overview" class="tab active" role="tab" aria-controls="overview" aria-selected="true">Overview</button>
+        <button id="tab-wardnotes" class="tab" role="tab" aria-controls="ward-notes" aria-selected="false">Notes</button>
       </div>
 
       <div id="case-panels">
-      <section id="tasks" role="tabpanel" aria-labelledby="tab-tasks">
+      <section id="overview" role="tabpanel" aria-labelledby="tab-overview">
+        <div class="overview-grid">
+        <section id="tasks" aria-label="Tasks">
         <div id="task-toolbar-root" style="margin-bottom: 8px"></div>
         <form id="task-form" class="composer" autocomplete="off">
           <button type="button" class="icon-btn" aria-hidden="true" tabindex="-1">+</button>
@@ -114,9 +116,9 @@
           </label>
         </div>
         <ul id="task-list"></ul>
-      </section>
+        </section>
 
-      <section id="notes" role="tabpanel" aria-labelledby="tab-notes" hidden>
+        <section id="notes" aria-label="Overview notes">
         <div class="stack" id="af-fields">
           <div class="notes" aria-label="Notes A to E">
             <div class="note-row">
@@ -157,6 +159,15 @@
           </div>
           
         </div>
+        </section>
+        </div>
+      </section>
+
+      <section id="ward-notes" role="tabpanel" aria-labelledby="tab-wardnotes" hidden>
+        <div class="ward-notes-toolbar">
+          <button id="new-ward-note" class="btn primary" type="button">New Note</button>
+        </div>
+        <ul id="ward-notes-list" class="ward-notes-list" aria-live="polite" role="list"></ul>
       </section>
       </div>
     </section>
@@ -168,12 +179,12 @@
     </section>
 
     <section id="updates-section" class="card" hidden>
-      <div id="updates-toolbar" class="c-toolbar c-toolbar--stack" aria-label="Issues filters">
+      <div id="updates-toolbar" class="c-toolbar c-toolbar--stack" aria-label="Updates filters">
         <div class="c-row">
           <select id="updates-user-filter" title="Filter by user" style="max-width: 220px">
             <option value="">All users</option>
           </select>
-          <input id="updates-search" class="c-field--grow" type="search" placeholder="Search issues">
+          <input id="updates-search" class="c-field--grow" type="search" placeholder="Search updates">
         </div>
       </div>
       <ul id="updates-list" class="updates-list" aria-live="polite" role="list"></ul>
