@@ -1741,6 +1741,14 @@ function startRealtimeTable() {
       const editBtn = document.createElement('button'); editBtn.type='button'; editBtn.className='edit-tags-btn'; editBtn.textContent='Tags';
       editBtn.addEventListener('click', (e) => { e.stopPropagation(); openTagPanelForCase(d.id, tdName); });
       nameRow.appendChild(editBtn);
+      // New Note quick action (subtle)
+      const newNoteBtn = document.createElement('button'); newNoteBtn.type='button'; newNoteBtn.className='icon-btn small'; newNoteBtn.textContent='📝'; newNoteBtn.title='New note';
+      newNoteBtn.addEventListener('click', async (e) => { e.stopPropagation();
+        // Open case in background if needed to ensure currentCaseId is set
+        currentCaseId = d.id; caseTitleEl.textContent = title;
+        openWardNoteComposer();
+      });
+      nameRow.appendChild(newNoteBtn);
       // Delete case button in table row
       const delBtn = document.createElement('button'); delBtn.type='button'; delBtn.className='icon-btn delete-btn'; delBtn.textContent='🗑'; delBtn.title='Delete case';
       delBtn.addEventListener('click', async (e) => {
