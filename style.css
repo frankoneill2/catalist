@@ -98,6 +98,9 @@ ul {
 .overview-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
 @media (min-width: 900px) {
   .overview-grid { grid-template-columns: 1fr 1fr; align-items: start; }
+  /* Keep Tasks on the right, Notes on the left */
+  .overview-grid #notes { order: 1; }
+  .overview-grid #tasks { order: 2; }
 }
 
 /* Ward Notes tab */
