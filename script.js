@@ -3175,6 +3175,77 @@ async function openWardNoteComposerV2() {
     }
   });
 
+  // Keyboard navigation and editing shortcuts
+  const placeCaretAtStart = (el) => { try { const range=document.createRange(); range.selectNodeContents(el); range.collapse(true); const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(range); } catch {} };
+  const getBlocks = () => Array.from(editor.querySelectorAll('.issue-block'));
+  const focusIssueHeader = (block) => { const el = block.querySelector('.issue-title'); if (el) { el.focus(); placeCaretAtEnd(el); } };
+  const focusIssueBody = (block, atEnd=true) => { const el = block.querySelector('.issue-body'); if (el) { el.focus(); if (atEnd) placeCaretAtEnd(el); else placeCaretAtStart(el); } };
+  const selInfo = () => { const sel = window.getSelection(); if (!sel || sel.rangeCount===0) return null; const r=sel.getRangeAt(0); return { sel, range: r } };
+  const caretAtStart = (el) => { const s = selInfo(); if (!s) return false; const r = s.range.cloneRange(); const test = document.createRange(); test.selectNodeContents(el); test.collapse(true); return r.compareBoundaryPoints(Range.START_TO_START, test) === 0 && r.collapsed; };
+  const caretAtEnd = (el) => { const s = selInfo(); if (!s) return false; const r = s.range.cloneRange(); const test = document.createRange(); test.selectNodeContents(el); test.collapse(false); return r.compareBoundaryPoints(Range.END_TO_END, test) === 0 && r.collapsed; };
+  const textLen = (el) => (el.innerText || '').length;
+
+  editor.addEventListener('keydown', (e) => {
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    const block = target.closest('.issue-block');
+    const isTitle = block && target.classList.contains('issue-title');
+    const isBody = block && target.classList.contains('issue-body');
+
+    // Alt+Up/Down navigation across blocks; Alt+Left/Right between header/body
+    if ((e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) && (isTitle || isBody)) {
+      const blocks = getBlocks();
+      const idx = blocks.indexOf(block);
+      if (e.key === 'ArrowUp') { e.preventDefault(); if (idx > 0) focusIssueBody(blocks[idx-1]); else headingEl.focus(); return; }
+      if (e.key === 'ArrowDown') { e.preventDefault(); if (idx < blocks.length-1) focusIssueBody(blocks[idx+1]); else { otherArea.focus(); placeCaretAtEnd(otherArea); } return; }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); focusIssueHeader(block); return; }
+      if (e.key === 'ArrowRight') { e.preventDefault(); focusIssueBody(block); return; }
+    }
+
+    // Cmd/Ctrl+Shift+Up/Down → reorder blocks
+    if ((e.shiftKey && (e.metaKey || e.ctrlKey)) && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && block) {
+      e.preventDefault();
+      const blocks = getBlocks();
+      const idx = blocks.indexOf(block);
+      if (e.key === 'ArrowUp' && idx > 0) { editor.insertBefore(block, blocks[idx-1]); focusIssueHeader(block); }
+      else if (e.key === 'ArrowDown' && idx < blocks.length-1) { editor.insertBefore(blocks[idx+1], block); focusIssueHeader(block); }
+      return;
+    }
+
+    // Title field behaviors
+    if (isTitle) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); focusIssueBody(block); return; }
+      if (e.key === 'Backspace' && textLen(target) === 0) {
+        e.preventDefault();
+        const blocks = getBlocks(); const idx = blocks.indexOf(block); const prev = blocks[idx-1];
+        block.remove();
+        if (prev) focusIssueBody(prev); else { otherArea.focus(); placeCaretAtEnd(otherArea); }
+        return;
+      }
+    }
+
+    // Body field behaviors
+    if (isBody) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        if (caretAtEnd(target)) {
+          const count = Number(target.dataset.enterEndCount || '0') + 1;
+          target.dataset.enterEndCount = String(count);
+          if (count >= 2) { e.preventDefault(); target.dataset.enterEndCount = '0'; otherArea.focus(); placeCaretAtEnd(otherArea); return; }
+        } else { target.dataset.enterEndCount = '0'; }
+        return; // allow newline
+      }
+      if (e.key !== 'Enter') target.dataset.enterEndCount = '0';
+      if (e.key === 'Backspace' && caretAtStart(target) && textLen(target) === 0) {
+        e.preventDefault();
+        const titleEl = block.querySelector('.issue-title');
+        if (titleEl && textLen(titleEl) > 0) { focusIssueHeader(block); return; }
+        const blocks = getBlocks(); const idx = blocks.indexOf(block); const prev = blocks[idx-1];
+        block.remove(); if (prev) focusIssueBody(prev); else { otherArea.focus(); placeCaretAtEnd(otherArea); }
+        return;
+      }
+    }
+  });
+
   // Tasks realtime list
   let newTaskIds = [];
   let newTaskTitles = [];
