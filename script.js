@@ -3044,9 +3044,14 @@ async function openWardNoteComposerV2() {
 
   // Editor field
   const editorWrap = document.createElement('div'); editorWrap.className='rich-editor-wrap';
-  const otherHint = document.createElement('div'); otherHint.className='rich-editor-hint'; otherHint.textContent='Type here to add to Other…';
   const editor = document.createElement('div'); editor.className='rich-editor'; editor.setAttribute('contenteditable','true'); editor.setAttribute('role','textbox'); editor.setAttribute('aria-label','Ward note body');
-  editorWrap.appendChild(otherHint); editorWrap.appendChild(editor); form.appendChild(editorWrap);
+  form.appendChild(editorWrap);
+  editorWrap.appendChild(editor);
+  // Other section lives at the bottom of the same editor
+  const otherDivider = document.createElement('div'); otherDivider.className='other-divider'; otherDivider.textContent='Other';
+  const otherArea = document.createElement('div'); otherArea.className='other-area'; otherArea.dataset.placeholder = 'Type here to add to Other…';
+  editor.appendChild(otherDivider);
+  editor.appendChild(otherArea);
 
   // Tasks panel
   const tasksWrap = document.createElement('div'); tasksWrap.className='section'; tasksWrap.style.display='none';
@@ -3103,7 +3108,8 @@ async function openWardNoteComposerV2() {
     const existingIds = new Set(Array.from(editor.querySelectorAll('.issue-block')).map(b=>b.dataset.issueId));
     const frag = document.createDocumentFragment();
     for (const it of issueItems) { if (!existingIds.has(it.id)) frag.appendChild(createIssueBlock(it)); }
-    editor.insertBefore(frag, editor.firstChild);
+    // Insert Issues before the Other divider so Other stays below
+    editor.insertBefore(frag, otherDivider);
     updateOtherHint();
   };
   const flattenIssuesToMarkers = () => {
@@ -3139,8 +3145,8 @@ async function openWardNoteComposerV2() {
     updateOtherHint();
   };
   const updateOtherHint = () => {
-    const hasNonIssueContent = Array.from(editor.childNodes).some(n => !isIssueBlock(n) && (n.textContent||'').trim().length > 0);
-    otherHint.style.display = hasNonIssueContent ? 'none' : '';
+    // Show placeholder styling on Other area only
+    // No external floating hint required
   };
 
   // Default: Issues On
@@ -3153,9 +3159,18 @@ async function openWardNoteComposerV2() {
   showAllBtn.addEventListener('click', () => { editor.querySelectorAll('.issue-block').forEach(b=>{ b.classList.remove('collapsed'); const cBtn=b.querySelector('.issue-actions button'); if(cBtn) cBtn.textContent='▾'; }); });
   hideAllBtn.addEventListener('click', () => { editor.querySelectorAll('.issue-block').forEach(b=>{ b.classList.add('collapsed'); const cBtn=b.querySelector('.issue-actions button'); if(cBtn) cBtn.textContent='▸'; }); });
 
-  editor.appendChild(document.createElement('div'));
+  // Insert Issue blocks above the Other section and default to Issues On
   insertIssuesIntoEditor();
   setIssuesToggle(true);
+  // If user clicks the editor background, move caret to end of Other
+  const placeCaretAtEnd = (el) => { try { const range=document.createRange(); range.selectNodeContents(el); range.collapse(false); const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(range); } catch {} };
+  editor.addEventListener('mousedown', (e) => {
+    const target = e.target;
+    if (target === editor || (!isIssueBlock(target) && !otherArea.contains(target))) {
+      // After click ends, place caret in Other area
+      setTimeout(()=>placeCaretAtEnd(otherArea), 0);
+    }
+  });
 
   // Tasks realtime list
   let newTaskIds = [];
@@ -3213,9 +3228,8 @@ async function openWardNoteComposerV2() {
       // Collect issue additions and Other text
       const mergedIssues = [];
       const issuesAdded = [];
-      let otherText = '';
-      for (const n of Array.from(editor.childNodes)) {
-        if (isIssueBlock(n)) {
+      // Collect from Issue blocks in the editor (above Other)
+      for (const n of Array.from(editor.querySelectorAll('.issue-block'))) {
           const id = n.dataset.issueId;
           const title = (n.querySelector('.issue-title')?.textContent||'').trim();
           const added = (n.querySelector('.issue-body')?.innerText||'').trim();
@@ -3224,11 +3238,9 @@ async function openWardNoteComposerV2() {
           const nextBody = appendWithSpacing(orig.body||'', added);
           mergedIssues.push({ id: orig.id, title: title || (orig.title||''), body: nextBody });
           if (added) issuesAdded.push({ id: orig.id, added, show });
-        } else {
-          const txt = (n.textContent||'').trim();
-          if (txt) otherText = appendWithSpacing(otherText, txt);
-        }
       }
+      // Gather Other text from the dedicated area only
+      const otherText = (otherArea.innerText || '').trim();
 
       // Dx line from current A items
       const cleanDx = dxItems.filter(it => (it.title||'').trim()).map(it => ({ id: it.id||Math.random().toString(36).slice(2,10), title: (it.title||'').trim(), body: '' }));
