@@ -1362,18 +1362,21 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
 .other-area { min-height: 60px; outline: none; padding-top: 6px; }
 .other-area:empty::before { content: attr(data-placeholder); color: #9ca3af; }
 
-/* Desktop compaction for issue blocks */
+/* Desktop: focus on compact headers/icons, keep roomy text areas */
 @media (min-width: 900px) {
-  .rich-editor-wrap { padding: 8px; }
-  .rich-editor { font-size: 13px; line-height: 1.4; }
-  .issue-block { padding: 6px 8px; margin-bottom: 6px; }
-  .issue-header { gap: 6px; }
-  .issue-pill { font-size: 11px; padding: 0 6px; }
-  .issue-title { font-size: 13px; }
+  .rich-editor-wrap { padding: 10px; }
+  .rich-editor { font-size: 14px; line-height: 1.45; }
+  .issue-block { padding: 4px 8px 8px; margin-bottom: 6px; }
+  .issue-header { gap: 4px; line-height: 1.1; }
+  .issue-pill { font-size: 10px; padding: 0 5px; }
+  .issue-title { font-size: 12px; }
+  .issue-actions { opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
+  .issue-block:hover .issue-actions,
+  .issue-block:focus-within .issue-actions { opacity: 1; pointer-events: auto; }
   .issue-actions .icon-btn.small { padding: 0 4px; }
-  .issue-body { margin-top: 4px; padding: 4px 6px; min-height: 32px; }
+  .issue-body { margin-top: 4px; padding: 6px 8px; min-height: 40px; }
   .other-divider { margin-top: 6px; padding-top: 6px; font-size: 11px; }
-  .other-area { min-height: 48px; padding-top: 4px; }
+  .other-area { min-height: 60px; padding-top: 4px; }
 }
 
 /* Ward note emphasis */
