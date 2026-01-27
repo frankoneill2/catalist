@@ -3165,9 +3165,12 @@ async function openWardNoteComposerV2() {
   // If user clicks the editor background, move caret to end of Other
   const placeCaretAtEnd = (el) => { try { const range=document.createRange(); range.selectNodeContents(el); range.collapse(false); const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(range); } catch {} };
   editor.addEventListener('mousedown', (e) => {
-    const target = e.target;
-    if (target === editor || (!isIssueBlock(target) && !otherArea.contains(target))) {
-      // After click ends, place caret in Other area
+    const t = e.target;
+    const withinIssue = (t instanceof Element) && !!t.closest('.issue-block');
+    const withinOther = (t instanceof Element) && (t === otherArea || otherArea.contains(t));
+    const onEditorChrome = t === editor || t === editorWrap;
+    if (onEditorChrome || (!withinIssue && !withinOther)) {
+      // Only force caret to Other when clicking editor chrome/empty space
       setTimeout(()=>placeCaretAtEnd(otherArea), 0);
     }
   });
