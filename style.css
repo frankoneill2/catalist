@@ -1366,17 +1366,20 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
 @media (min-width: 900px) {
   .rich-editor-wrap { padding: 10px; }
   .rich-editor { font-size: 14px; line-height: 1.45; }
-  .issue-block { padding: 4px 8px 8px; margin-bottom: 6px; }
+  /* Less framing for issues: flat, minimal chrome */
+  .issue-block { padding: 2px 0 6px; margin-bottom: 4px; border: none; background: transparent; }
+  .issue-block + .issue-block { border-top: 1px solid #e5e7eb; }
   .issue-header { gap: 4px; line-height: 1.1; }
-  .issue-pill { font-size: 10px; padding: 0 5px; }
+  .issue-pill { font-size: 10px; padding: 0 4px; background: none; border: none; color: #6b7280; }
   .issue-title { font-size: 12px; }
   .issue-actions { opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
   .issue-block:hover .issue-actions,
   .issue-block:focus-within .issue-actions { opacity: 1; pointer-events: auto; }
   .issue-actions .icon-btn.small { padding: 0 4px; }
-  .issue-body { margin-top: 4px; padding: 6px 8px; min-height: 40px; }
-  .other-divider { margin-top: 6px; padding-top: 6px; font-size: 11px; }
-  .other-area { min-height: 60px; padding-top: 4px; }
+  .issue-body { margin-top: 2px; padding: 4px 0; min-height: 40px; border: none; }
+  /* Big, clean Other box */
+  .other-divider { margin-top: 8px; margin-bottom: 6px; padding-top: 0; border-top: none; font-size: 12px; color: #6b7280; }
+  .other-area { min-height: 160px; padding: 12px 14px; border: 1px solid #e5e7eb; border-radius: 12px; background: #fff; }
 }
 
 /* Ward note emphasis */
