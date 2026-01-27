@@ -1343,6 +1343,22 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
 .composer-accordion .acc-body { padding: 6px 0; }
 .composer-accordion .acc-toggle { background: none; border: none; color: inherit; padding: 0; cursor: pointer; }
 
+/* Rich editor for Ward Notes (inline issue blocks) */
+.rich-editor-toolbar { display: flex; gap: 12px; align-items: center; font-size: 12px; color: var(--muted); }
+.rich-editor-wrap { border: 1px solid #e5e7eb; border-radius: 12px; background: #fff; padding: 10px; min-height: 160px; position: relative; }
+.rich-editor { min-height: 120px; outline: none; font-size: 14px; line-height: 1.45; }
+.rich-editor-hint { position: absolute; top: 10px; right: 12px; font-size: 12px; color: #9ca3af; pointer-events: none; }
+.issue-block { border: 1px solid #e5e7eb; border-radius: 10px; padding: 8px; margin-bottom: 8px; background: #fafafa; }
+.issue-block.collapsed .issue-body { display: none; }
+.issue-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.issue-pill { background: #eef2ff; color: #1e3a8a; border: 1px solid #c7d2fe; border-radius: 999px; font-size: 12px; padding: 0px 6px; }
+.issue-title { font-weight: 600; outline: none; }
+.issue-actions { display: inline-flex; gap: 4px; }
+.issue-body { margin-top: 6px; padding: 6px; border-radius: 8px; border: 1px dashed #e5e7eb; min-height: 40px; outline: none; }
+.issue-body:empty::before { content: attr(data-placeholder); color: #9ca3af; }
+.wardnote-title { font-size: 16px; font-weight: 600; padding: 6px 0; outline: none; }
+.wardnote-help { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+
 /* Ward note emphasis */
 .wardnote-label { font-weight: 600; margin-top: 6px; }
 .wardnote-title { width: 100%; font-size: 20px; font-weight: 700; padding: 4px 0; margin: 6px 0; border: none; background: transparent; outline: none; cursor: text; }

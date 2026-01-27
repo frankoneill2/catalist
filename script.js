@@ -1746,7 +1746,7 @@ function startRealtimeTable() {
       newNoteBtn.addEventListener('click', async (e) => { e.stopPropagation();
         // Open case in background if needed to ensure currentCaseId is set
         currentCaseId = d.id; caseTitleEl.textContent = title;
-        openWardNoteComposer();
+        openWardNoteComposerV2();
       });
       nameRow.appendChild(newNoteBtn);
       // Delete case button in table row
@@ -3016,6 +3016,280 @@ async function openWardNoteComposer() {
   overlay.addEventListener('keydown', (e) => { if ((e.key === 'Enter') && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save.click(); } });
 }
 
+// New inline-block rich editor version for Ward Notes
+async function openWardNoteComposerV2() {
+  if (!currentCaseId) return;
+  const overlay = document.createElement('div'); overlay.className='modal-overlay';
+  const modal = document.createElement('div'); modal.className='modal modal-wide'; overlay.appendChild(modal);
+  const form = document.createElement('div'); form.className='stack'; modal.appendChild(form);
+
+  // Toolbar
+  const ctrls = document.createElement('div'); ctrls.className = 'rich-editor-toolbar';
+  const mkLink = (label) => { const b=document.createElement('button'); b.type='button'; b.textContent=label; b.className='compact-link'; return b; };
+  const issuesToggleBtn = mkLink('Issues: On');
+  const showAllBtn = mkLink('Show all');
+  const hideAllBtn = mkLink('Hide all');
+  const tasksBtn = mkLink('Tasks (include open: on)');
+  ctrls.appendChild(issuesToggleBtn); ctrls.appendChild(showAllBtn); ctrls.appendChild(hideAllBtn); ctrls.appendChild(tasksBtn);
+  form.appendChild(ctrls);
+
+  // Heading
+  const headingEl = document.createElement('div');
+  headingEl.className = 'wardnote-title';
+  headingEl.setAttribute('contenteditable','true');
+  headingEl.setAttribute('role','textbox');
+  headingEl.setAttribute('aria-label','Note heading');
+  headingEl.textContent = 'Ward note';
+  form.appendChild(headingEl);
+
+  // Editor field
+  const editorWrap = document.createElement('div'); editorWrap.className='rich-editor-wrap';
+  const otherHint = document.createElement('div'); otherHint.className='rich-editor-hint'; otherHint.textContent='Type here to add to Other…';
+  const editor = document.createElement('div'); editor.className='rich-editor'; editor.setAttribute('contenteditable','true'); editor.setAttribute('role','textbox'); editor.setAttribute('aria-label','Ward note body');
+  editorWrap.appendChild(otherHint); editorWrap.appendChild(editor); form.appendChild(editorWrap);
+
+  // Tasks panel
+  const tasksWrap = document.createElement('div'); tasksWrap.className='section'; tasksWrap.style.display='none';
+  const includeRow = document.createElement('label'); includeRow.style.display='flex'; includeRow.style.gap='8px'; includeRow.style.alignItems='center';
+  const includeChk = document.createElement('input'); includeChk.type='checkbox'; includeChk.checked = true; includeRow.appendChild(includeChk);
+  includeRow.appendChild(document.createTextNode('Include existing open tasks in this note'));
+  tasksWrap.appendChild(includeRow);
+  const miniForm = document.createElement('form'); miniForm.className='composer'; miniForm.autocomplete='off'; miniForm.style.marginTop='8px';
+  const plus = document.createElement('button'); plus.type='button'; plus.className='icon-btn'; plus.setAttribute('aria-hidden','true'); plus.tabIndex=-1; plus.textContent='+';
+  const miniInput = document.createElement('input'); miniInput.placeholder='Add a task…'; miniInput.setAttribute('aria-label','Task description');
+  const miniAdd = document.createElement('button'); miniAdd.type='submit'; miniAdd.className='primary'; miniAdd.textContent='Add';
+  miniForm.appendChild(plus); miniForm.appendChild(miniInput); miniForm.appendChild(miniAdd);
+  tasksWrap.appendChild(miniForm);
+  const modalTaskList = document.createElement('ul'); modalTaskList.style.marginTop='6px'; tasksWrap.appendChild(modalTaskList);
+  form.appendChild(tasksWrap);
+
+  function setActive(btn, on) { btn.classList.toggle('active', !!on); }
+  tasksBtn.addEventListener('click', ()=>{ const show = tasksWrap.style.display==='none'; tasksWrap.style.display = show ? '' : 'none'; setActive(tasksBtn, show); });
+  includeChk.addEventListener('change', ()=>{ tasksBtn.textContent = `Tasks (include open: ${includeChk.checked ? 'on':'off'})`; renderModalTasks(); });
+
+  // Data
+  let dxItems = [];
+  let issueItems = [];
+  let modalTasks = [];
+  let modalTasksUnsub = null;
+  try {
+    const snap = await getDoc(doc(db,'cases', currentCaseId));
+    const data = snap.data() || {};
+    dxItems = await decryptItems(data, 'A');
+    issueItems = (await decryptItems(data, 'E')).slice(0,8);
+  } catch {}
+
+  // Inline blocks
+  const issueState = new Map();
+  const ISSUE_MARKER_START = '## Issue:';
+  const isIssueBlock = (el) => el && el.classList && el.classList.contains('issue-block');
+  const createIssueBlock = (it) => {
+    if (!issueState.has(it.id)) issueState.set(it.id, { show: true });
+    const block = document.createElement('div'); block.className = 'issue-block'; block.dataset.issueId = it.id;
+    const header = document.createElement('div'); header.className='issue-header';
+    const pill = document.createElement('span'); pill.className='issue-pill'; pill.textContent='Issue'; header.appendChild(pill);
+    const title = document.createElement('span'); title.className='issue-title'; title.setAttribute('contenteditable','true'); title.textContent = (it.title||'').trim(); header.appendChild(title);
+    const actions = document.createElement('div'); actions.className='issue-actions';
+    const collapse = document.createElement('button'); collapse.type='button'; collapse.className='icon-btn small'; collapse.textContent='▾'; actions.appendChild(collapse);
+    const remove = document.createElement('button'); remove.type='button'; remove.className='icon-btn small'; remove.textContent='✖'; actions.appendChild(remove);
+    header.appendChild(actions);
+    const body = document.createElement('div'); body.className='issue-body'; body.setAttribute('contenteditable','true'); body.dataset.placeholder='Type here to add to this issue…';
+    block.appendChild(header); block.appendChild(body);
+    collapse.addEventListener('click', () => { const c = block.classList.toggle('collapsed'); collapse.textContent = c ? '▸' : '▾'; });
+    remove.addEventListener('click', () => { block.remove(); updateOtherHint(); });
+    return block;
+  };
+  const insertIssuesIntoEditor = () => {
+    const existingIds = new Set(Array.from(editor.querySelectorAll('.issue-block')).map(b=>b.dataset.issueId));
+    const frag = document.createDocumentFragment();
+    for (const it of issueItems) { if (!existingIds.has(it.id)) frag.appendChild(createIssueBlock(it)); }
+    editor.insertBefore(frag, editor.firstChild);
+    updateOtherHint();
+  };
+  const flattenIssuesToMarkers = () => {
+    const blocks = Array.from(editor.querySelectorAll('.issue-block'));
+    for (const b of blocks) {
+      const title = (b.querySelector('.issue-title')?.textContent||'').trim();
+      const body = (b.querySelector('.issue-body')?.innerText||'').trim();
+      const repl = document.createElement('div');
+      repl.textContent = body ? `${ISSUE_MARKER_START} ${title}\n${body}` : `${ISSUE_MARKER_START} ${title}`;
+      editor.insertBefore(repl, b);
+      b.remove();
+    }
+    updateOtherHint();
+  };
+  const rehydrateIssuesFromMarkers = () => {
+    const nodes = Array.from(editor.childNodes);
+    for (const el of nodes) {
+      if (!(el instanceof Element)) continue;
+      const txt = el.innerText || '';
+      if (txt.startsWith(ISSUE_MARKER_START)) {
+        const lines = txt.split('\n');
+        const title = lines[0].replace(ISSUE_MARKER_START, '').trim();
+        const bodyText = lines.slice(1).join('\n');
+        let it = issueItems.find(i => (i.title||'').trim() === title) || issueItems.find(i => !editor.querySelector(`.issue-block[data-issue-id="${i.id}"]`));
+        if (!it) { it = { id: Math.random().toString(36).slice(2,10), title }; }
+        const block = createIssueBlock(it);
+        block.querySelector('.issue-title').textContent = title;
+        block.querySelector('.issue-body').textContent = bodyText;
+        editor.insertBefore(block, el);
+        el.remove();
+      }
+    }
+    updateOtherHint();
+  };
+  const updateOtherHint = () => {
+    const hasNonIssueContent = Array.from(editor.childNodes).some(n => !isIssueBlock(n) && (n.textContent||'').trim().length > 0);
+    otherHint.style.display = hasNonIssueContent ? 'none' : '';
+  };
+
+  // Default: Issues On
+  let issuesOn = true;
+  const setIssuesToggle = (on) => {
+    issuesOn = !!on; issuesToggleBtn.textContent = 'Issues: ' + (issuesOn ? 'On' : 'Off');
+    if (issuesOn) { rehydrateIssuesFromMarkers(); insertIssuesIntoEditor(); } else { flattenIssuesToMarkers(); }
+  };
+  issuesToggleBtn.addEventListener('click', () => setIssuesToggle(!issuesOn));
+  showAllBtn.addEventListener('click', () => { editor.querySelectorAll('.issue-block').forEach(b=>{ b.classList.remove('collapsed'); const cBtn=b.querySelector('.issue-actions button'); if(cBtn) cBtn.textContent='▾'; }); });
+  hideAllBtn.addEventListener('click', () => { editor.querySelectorAll('.issue-block').forEach(b=>{ b.classList.add('collapsed'); const cBtn=b.querySelector('.issue-actions button'); if(cBtn) cBtn.textContent='▸'; }); });
+
+  editor.appendChild(document.createElement('div'));
+  insertIssuesIntoEditor();
+  setIssuesToggle(true);
+
+  // Tasks realtime list
+  let newTaskIds = [];
+  let newTaskTitles = [];
+  const qTasks = query(collection(db,'cases',currentCaseId,'tasks'), orderBy('createdAt','desc'));
+  const statusIcon = (s) => s === 'complete' ? '☑' : (s === 'in progress' ? '◐' : '☐');
+  function renderModalTasks() {
+    modalTaskList.innerHTML = '';
+    for (const t of modalTasks) {
+      const li = document.createElement('li'); li.className = 'modal-task' + (newTaskIds.includes(t.id) ? ' modal-task--new' : '');
+      li.style.display='grid'; li.style.gridTemplateColumns='auto 1fr'; li.style.alignItems='center'; li.style.gap='6px';
+      const sb = document.createElement('span'); sb.textContent = statusIcon(t.status||'open'); li.appendChild(sb);
+      const tt = document.createElement('span'); tt.textContent = t.text||''; li.appendChild(tt);
+      modalTaskList.appendChild(li);
+    }
+  }
+  renderModalTasks();
+  modalTasksUnsub = onSnapshot(qTasks, async (snap) => {
+    const list = [];
+    for (const d of snap.docs) {
+      const data = d.data();
+      let text = '';
+      let status = '';
+      try { if (data.textCipher && data.textIv) text = await decryptText(data.textCipher, data.textIv); } catch {}
+      try { if (data.statusCipher && data.statusIv) status = await decryptText(data.statusCipher, data.statusIv); } catch {}
+      list.push({ id: d.id, text, status });
+    }
+    modalTasks = list;
+    renderModalTasks();
+  });
+  miniForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      const v = (miniInput.value||'').trim(); if (!v) return;
+      const { cipher: textCipher, iv: textIv } = await encryptText(v);
+      const { cipher: statusCipher, iv: statusIv } = await encryptText('open');
+      const ref = await addDoc(collection(db, 'cases', currentCaseId, 'tasks'), { textCipher, textIv, statusCipher, statusIv, createdAt: serverTimestamp(), username });
+      newTaskIds.push(ref.id); newTaskTitles.push(v);
+      miniInput.value='';
+    } catch {}
+  });
+
+  // Actions
+  const actions = document.createElement('div'); actions.className='actions';
+  const cancel = document.createElement('button'); cancel.className='btn'; cancel.textContent='Cancel'; actions.appendChild(cancel);
+  const save = document.createElement('button'); save.className='btn primary'; save.textContent='Save Note'; actions.appendChild(save);
+  modal.appendChild(actions);
+
+  document.body.appendChild(overlay);
+
+  const close = () => { if (modalTasksUnsub) { try { modalTasksUnsub(); } catch {} } overlay.remove(); };
+  cancel.addEventListener('click', close);
+  save.addEventListener('click', async () => {
+    try {
+      // Collect issue additions and Other text
+      const mergedIssues = [];
+      const issuesAdded = [];
+      let otherText = '';
+      for (const n of Array.from(editor.childNodes)) {
+        if (isIssueBlock(n)) {
+          const id = n.dataset.issueId;
+          const title = (n.querySelector('.issue-title')?.textContent||'').trim();
+          const added = (n.querySelector('.issue-body')?.innerText||'').trim();
+          const show = !n.classList.contains('collapsed');
+          const orig = issueItems.find(i=>i.id===id) || { id, title: title, body: '' };
+          const nextBody = appendWithSpacing(orig.body||'', added);
+          mergedIssues.push({ id: orig.id, title: title || (orig.title||''), body: nextBody });
+          if (added) issuesAdded.push({ id: orig.id, added, show });
+        } else {
+          const txt = (n.textContent||'').trim();
+          if (txt) otherText = appendWithSpacing(otherText, txt);
+        }
+      }
+
+      // Dx line from current A items
+      const cleanDx = dxItems.filter(it => (it.title||'').trim()).map(it => ({ id: it.id||Math.random().toString(36).slice(2,10), title: (it.title||'').trim(), body: '' }));
+      await saveItems(currentCaseId, 'A', cleanDx);
+      await saveItems(currentCaseId, 'E', mergedIssues.length ? mergedIssues : issueItems);
+      if (otherText) await saveCaseOtherBody(currentCaseId, otherText);
+
+      // Tasks
+      const includeExisting = !!includeChk.checked;
+      const includedTaskIds = [];
+      const includedTaskTitles = [];
+      if (includeExisting) {
+        for (const t of modalTasks || []) { if ((t.status||'') === 'open') { includedTaskIds.push(t.id); includedTaskTitles.push(t.text||''); } }
+      }
+
+      // Compile
+      const parts = [];
+      const heading = (headingEl.textContent||'').trim();
+      const dxLine = (cleanDx.length>0) ? ('Δ ' + cleanDx.map(d=>d.title).join('; ')) : 'Δ Diagnosis not specified';
+      parts.push(dxLine);
+      for (const it of mergedIssues) {
+        const ia = issuesAdded.find(x=>x.id===it.id);
+        const added = ia ? (ia.added||'').trim() : '';
+        const shown = ia ? !!ia.show : true;
+        if (!shown) continue;
+        if (!it.title || !added) continue;
+        parts.push(it.title);
+        parts.push(added);
+      }
+      if (otherText) {
+        const hasIssueAddsShown = issuesAdded.some(x => x.show && (x.added||'').trim());
+        if (hasIssueAddsShown) { parts.push('Other'); parts.push(otherText); }
+        else { parts.push(otherText); }
+      }
+      const taskLines = [];
+      if (includeExisting) taskLines.push(...includedTaskTitles.map(t=>`• ${t}`));
+      taskLines.push(...newTaskTitles.map(t=>`• ${t}`));
+      if (taskLines.length) { parts.push('Tasks'); parts.push(taskLines.join('\n')); }
+      const compiled = parts.join('\n\n');
+
+      const wnRef = collection(db,'cases',currentCaseId,'wardNotes');
+      const eHead = await encryptText(heading);
+      const eComp = await encryptText(compiled);
+      const eDx = await encryptText(dxLine);
+      const encIssuesAdded = [];
+      for (const ia of issuesAdded) { if (!ia.added) continue; const enc = await encryptText(ia.added); encIssuesAdded.push({ id: ia.id, cipher: enc.cipher, iv: enc.iv, show: !!ia.show }); }
+      await addDoc(wnRef, { headingCipher: eHead.cipher, headingIv: eHead.iv, compiledCipher: eComp.cipher, compiledIv: eComp.iv, diagnosesLineCipher: eDx.cipher, diagnosesLineIv: eDx.iv, issuesAdded: encIssuesAdded, includeExistingOpenTasks: includeExisting, includedTaskIds, newTaskIds, author: username || null, createdAt: serverTimestamp() });
+
+      showToast('Ward note saved');
+      close();
+    } catch (err) {
+      console.error('Failed to save ward note', err);
+      showToast('Failed to save note');
+    }
+  });
+
+  // Focus editor
+  setTimeout(()=>{ try { editor.focus(); } catch {} }, 0);
+  overlay.addEventListener('keydown', (e) => { if ((e.key === 'Enter') && (e.metaKey || e.ctrlKey)) { e.preventDefault(); form.querySelector('.btn.primary')?.click(); } });
+}
+
 // Apply toolbar filters to current case tasks and render
 function renderCaseTasks() {
   if (caseTasksEditing) { caseTasksRebuildPending = true; return; }
@@ -3351,7 +3625,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       nn.className = 'btn';
       nn.type = 'button';
       nn.textContent = 'New Note';
-      nn.addEventListener('click', openWardNoteComposer);
+      nn.addEventListener('click', openWardNoteComposerV2);
       actionsWrap.appendChild(nn);
     }
     const btn = document.createElement('button');
@@ -3409,7 +3683,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   bindTaskForm();
   bindNoteForm();
   bindNotesFields();
-  if (newWardNoteBtn) newWardNoteBtn.addEventListener('click', openWardNoteComposer);
+  if (newWardNoteBtn) newWardNoteBtn.addEventListener('click', openWardNoteComposerV2);
   bindCaseTabs();
   // Ensure Overview visible by default
   showCaseSection('overview');
