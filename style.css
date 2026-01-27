@@ -1362,6 +1362,20 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
 .other-area { min-height: 60px; outline: none; padding-top: 6px; }
 .other-area:empty::before { content: attr(data-placeholder); color: #9ca3af; }
 
+/* Desktop compaction for issue blocks */
+@media (min-width: 900px) {
+  .rich-editor-wrap { padding: 8px; }
+  .rich-editor { font-size: 13px; line-height: 1.4; }
+  .issue-block { padding: 6px 8px; margin-bottom: 6px; }
+  .issue-header { gap: 6px; }
+  .issue-pill { font-size: 11px; padding: 0 6px; }
+  .issue-title { font-size: 13px; }
+  .issue-actions .icon-btn.small { padding: 0 4px; }
+  .issue-body { margin-top: 4px; padding: 4px 6px; min-height: 32px; }
+  .other-divider { margin-top: 6px; padding-top: 6px; font-size: 11px; }
+  .other-area { min-height: 48px; padding-top: 4px; }
+}
+
 /* Ward note emphasis */
 .wardnote-label { font-weight: 600; margin-top: 6px; }
 .wardnote-title { width: 100%; font-size: 20px; font-weight: 700; padding: 4px 0; margin: 6px 0; border: none; background: transparent; outline: none; cursor: text; }
