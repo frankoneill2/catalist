@@ -2667,6 +2667,69 @@ function startRealtimeWardNotes() {
   const ref = collection(db, 'cases', currentCaseId, 'wardNotes');
   const qn = query(ref, orderBy('createdAt', 'desc'));
   if (unsubWardNotes) { try { unsubWardNotes(); } catch {} }
+  const renderWardNoteBody = (container, body) => {
+    container.innerHTML = '';
+    if (!body) return;
+    const blocks = body
+      .split(/\n\s*\n/)
+      .map(s => (s || '').trim())
+      .filter(Boolean);
+    if (!blocks.length) return;
+
+    const dxLine = blocks[0] || '';
+    const dxText = dxLine.replace(/^Δ\s*/, '').trim();
+    const dx = document.createElement('div'); dx.className = 'ward-note-section ward-note-section--dx';
+    const dxLabel = document.createElement('div'); dxLabel.className = 'ward-note-label'; dxLabel.textContent = 'Diagnosis';
+    const dxValue = document.createElement('div'); dxValue.className = 'ward-note-text'; dxValue.textContent = dxText || 'Not specified';
+    dx.appendChild(dxLabel); dx.appendChild(dxValue);
+    container.appendChild(dx);
+
+    const issues = [];
+    let otherText = '';
+    let tasksText = '';
+    for (let i = 1; i < blocks.length; i += 2) {
+      const head = blocks[i];
+      const next = blocks[i + 1] || '';
+      if (head === 'Other') { otherText = next; continue; }
+      if (head === 'Tasks') { tasksText = next; continue; }
+      issues.push({ title: head, body: next });
+    }
+
+    if (issues.length) {
+      const group = document.createElement('div'); group.className = 'ward-note-group';
+      const groupHead = document.createElement('div'); groupHead.className = 'ward-note-group-head'; groupHead.textContent = 'Issues';
+      group.appendChild(groupHead);
+      for (const it of issues) {
+        const section = document.createElement('div'); section.className = 'ward-note-section';
+        const title = document.createElement('div'); title.className = 'ward-note-subhead'; title.textContent = it.title || 'Untitled issue';
+        const bodyEl = document.createElement('div'); bodyEl.className = 'ward-note-text'; bodyEl.textContent = it.body || '';
+        section.appendChild(title); section.appendChild(bodyEl);
+        group.appendChild(section);
+      }
+      container.appendChild(group);
+    }
+
+    if (otherText) {
+      const other = document.createElement('div'); other.className = 'ward-note-section ward-note-section--other';
+      const label = document.createElement('div'); label.className = 'ward-note-label'; label.textContent = 'Other';
+      const text = document.createElement('div'); text.className = 'ward-note-text'; text.textContent = otherText;
+      other.appendChild(label); other.appendChild(text);
+      container.appendChild(other);
+    }
+
+    if (tasksText) {
+      const tasks = document.createElement('div'); tasks.className = 'ward-note-section ward-note-section--tasks';
+      const label = document.createElement('div'); label.className = 'ward-note-label'; label.textContent = 'Tasks';
+      const list = document.createElement('ul'); list.className = 'ward-note-tasks';
+      const lines = tasksText.split('\n').map(s => s.trim()).filter(Boolean);
+      for (const line of lines) {
+        const li = document.createElement('li'); li.textContent = line.replace(/^•\s*/, '');
+        list.appendChild(li);
+      }
+      tasks.appendChild(label); tasks.appendChild(list);
+      container.appendChild(tasks);
+    }
+  };
   unsubWardNotes = onSnapshot(qn, async (snap) => {
     list.innerHTML = '';
     if (snap.empty) {
@@ -2689,7 +2752,7 @@ function startRealtimeWardNotes() {
       const preview = document.createElement('div'); preview.className='ward-note-preview';
       try { if (data.compiledCipher && data.compiledIv) {
         const body = await decryptText(data.compiledCipher, data.compiledIv);
-        preview.textContent = body.slice(0, 240) + (body.length>240?'…':'');
+        renderWardNoteBody(preview, body);
       } } catch {}
       li.appendChild(preview);
       list.appendChild(li);
