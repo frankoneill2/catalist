@@ -37,6 +37,7 @@ let notesTasksList, notesTasksForm, notesTasksInput; // Notes embedded tasks
 let tableSection, tableRoot; // Table view
 let updatesSection, updatesListEl; // Updates feed
 let updatesToolbarEl, updatesUserFilterEl, updatesSearchEl, updatesLoadMoreBtn;
+let wardNotesPrintBtn;
 // Tag controls
 let filterLocationSel, filterConsultantSel, sortByTagSel, clearTagFiltersBtn;
 let tabOverviewBtn, tabWardNotesBtn;
@@ -154,6 +155,12 @@ let activeTagSortDir = 'asc'; // 'asc' | 'desc' for segmented control
 
 function encodeSet(set) { return Array.from(set || []).join(','); }
 function decodeSet(s) { return new Set((s || '').split(',').map(x=>x.trim()).filter(Boolean)); }
+function autoResizeTextarea(el) {
+  if (!el) return;
+  el.style.height = 'auto';
+  const next = el.scrollHeight;
+  if (next) el.style.height = `${next}px`;
+}
 
 function saveTagFilterState() {
   try {
@@ -223,6 +230,7 @@ function setTableFiltersHidden(hidden) {
     btn.textContent = 'Show Filters';
     btn.addEventListener('click', () => setTableFiltersHidden(false));
     ph.appendChild(btn);
+    ph.appendChild(createWardNotesPrintButton());
     try { localStorage.setItem('tableFiltersHidden', '1'); } catch {}
   } else {
     bar.style.display = '';
@@ -2594,7 +2602,7 @@ function renderNotesSection(container, letter, items) {
     items.forEach((it, idx) => {
       const row = document.createElement('div'); row.className = 'note-item'; row.dataset.id = it.id;
       const header = document.createElement('input'); header.type='text'; header.className='note-item-header'; header.placeholder='Header'; header.value = it.title || '';
-      const body = document.createElement('textarea'); body.className='note-item-body'; body.placeholder='Add details…'; body.value = it.body || '';
+      const body = document.createElement('textarea'); body.className='note-item-body auto-grow'; body.placeholder='Add details…'; body.value = it.body || '';
       const actions = document.createElement('div'); actions.className='note-actions';
       const up = document.createElement('button'); up.type='button'; up.className='icon-btn small'; up.textContent='↑'; up.title='Move up'; up.disabled = idx===0;
       const down = document.createElement('button'); down.type='button'; down.className='icon-btn small'; down.textContent='↓'; down.title='Move down'; down.disabled = idx===items.length-1;
@@ -2602,7 +2610,9 @@ function renderNotesSection(container, letter, items) {
       actions.appendChild(up); actions.appendChild(down); actions.appendChild(del);
       row.appendChild(header); row.appendChild(body); row.appendChild(actions);
       container.appendChild(row);
+      autoResizeTextarea(body);
       header.addEventListener('blur', () => { it.title = header.value; persistDebounced(); });
+      body.addEventListener('input', () => { autoResizeTextarea(body); });
       body.addEventListener('blur', () => { it.body = body.value; persistDebounced(); });
       const normalizeOrder = () => { for (let i=0;i<items.length;i++) { items[i].order = (items[i].order && Number.isFinite(items[i].order)) ? items[i].order : 0; } };
       const resequence = () => { // ensure a simple increasing sequence to reflect UI order
@@ -2652,12 +2662,80 @@ function showCaseSection(which) {
     if (!unsubWardNotes) startRealtimeWardNotes();
   } else {
     if (unsubWardNotes) { try { unsubWardNotes(); } catch {} unsubWardNotes = null; }
+    if (overview) overview.querySelectorAll('textarea.auto-grow').forEach(autoResizeTextarea);
   }
 }
 
 function bindCaseTabs() {
   if (tabOverviewBtn) tabOverviewBtn.addEventListener('click', () => showCaseSection('overview'));
   if (tabWardNotesBtn) tabWardNotesBtn.addEventListener('click', () => showCaseSection('ward-notes'));
+}
+
+function renderWardNoteBody(container, body) {
+  if (!container) return;
+  const doc = container.ownerDocument || document;
+  const mk = (tag) => doc.createElement(tag);
+  container.innerHTML = '';
+  if (!body) return;
+  const blocks = body
+    .split(/\n\s*\n/)
+    .map(s => (s || '').trim())
+    .filter(Boolean);
+  if (!blocks.length) return;
+
+  const dxLine = blocks[0] || '';
+  const dxText = dxLine.replace(/^Δ\s*/, '').trim();
+  const dx = mk('div'); dx.className = 'ward-note-section ward-note-section--dx';
+  const dxLabel = mk('div'); dxLabel.className = 'ward-note-label'; dxLabel.textContent = 'Diagnosis';
+  const dxValue = mk('div'); dxValue.className = 'ward-note-text'; dxValue.textContent = dxText || 'Not specified';
+  dx.appendChild(dxLabel); dx.appendChild(dxValue);
+  container.appendChild(dx);
+
+  const issues = [];
+  let otherText = '';
+  let tasksText = '';
+  for (let i = 1; i < blocks.length; i += 2) {
+    const head = blocks[i];
+    const next = blocks[i + 1] || '';
+    if (head === 'Other') { otherText = next; continue; }
+    if (head === 'Tasks') { tasksText = next; continue; }
+    issues.push({ title: head, body: next });
+  }
+
+  if (issues.length) {
+    const group = mk('div'); group.className = 'ward-note-group';
+    const groupHead = mk('div'); groupHead.className = 'ward-note-group-head'; groupHead.textContent = 'Issues';
+    group.appendChild(groupHead);
+    for (const it of issues) {
+      const section = mk('div'); section.className = 'ward-note-section';
+      const title = mk('div'); title.className = 'ward-note-subhead'; title.textContent = it.title || 'Untitled issue';
+      const bodyEl = mk('div'); bodyEl.className = 'ward-note-text'; bodyEl.textContent = it.body || '';
+      section.appendChild(title); section.appendChild(bodyEl);
+      group.appendChild(section);
+    }
+    container.appendChild(group);
+  }
+
+  if (otherText) {
+    const other = mk('div'); other.className = 'ward-note-section ward-note-section--other';
+    const label = mk('div'); label.className = 'ward-note-label'; label.textContent = 'Other';
+    const text = mk('div'); text.className = 'ward-note-text'; text.textContent = otherText;
+    other.appendChild(label); other.appendChild(text);
+    container.appendChild(other);
+  }
+
+  if (tasksText) {
+    const tasks = mk('div'); tasks.className = 'ward-note-section ward-note-section--tasks';
+    const label = mk('div'); label.className = 'ward-note-label'; label.textContent = 'Tasks';
+    const list = mk('ul'); list.className = 'ward-note-tasks';
+    const lines = tasksText.split('\n').map(s => s.trim()).filter(Boolean);
+    for (const line of lines) {
+      const li = mk('li'); li.textContent = line.replace(/^•\s*/, '');
+      list.appendChild(li);
+    }
+    tasks.appendChild(label); tasks.appendChild(list);
+    container.appendChild(tasks);
+  }
 }
 
 function startRealtimeWardNotes() {
@@ -2667,69 +2745,6 @@ function startRealtimeWardNotes() {
   const ref = collection(db, 'cases', currentCaseId, 'wardNotes');
   const qn = query(ref, orderBy('createdAt', 'desc'));
   if (unsubWardNotes) { try { unsubWardNotes(); } catch {} }
-  const renderWardNoteBody = (container, body) => {
-    container.innerHTML = '';
-    if (!body) return;
-    const blocks = body
-      .split(/\n\s*\n/)
-      .map(s => (s || '').trim())
-      .filter(Boolean);
-    if (!blocks.length) return;
-
-    const dxLine = blocks[0] || '';
-    const dxText = dxLine.replace(/^Δ\s*/, '').trim();
-    const dx = document.createElement('div'); dx.className = 'ward-note-section ward-note-section--dx';
-    const dxLabel = document.createElement('div'); dxLabel.className = 'ward-note-label'; dxLabel.textContent = 'Diagnosis';
-    const dxValue = document.createElement('div'); dxValue.className = 'ward-note-text'; dxValue.textContent = dxText || 'Not specified';
-    dx.appendChild(dxLabel); dx.appendChild(dxValue);
-    container.appendChild(dx);
-
-    const issues = [];
-    let otherText = '';
-    let tasksText = '';
-    for (let i = 1; i < blocks.length; i += 2) {
-      const head = blocks[i];
-      const next = blocks[i + 1] || '';
-      if (head === 'Other') { otherText = next; continue; }
-      if (head === 'Tasks') { tasksText = next; continue; }
-      issues.push({ title: head, body: next });
-    }
-
-    if (issues.length) {
-      const group = document.createElement('div'); group.className = 'ward-note-group';
-      const groupHead = document.createElement('div'); groupHead.className = 'ward-note-group-head'; groupHead.textContent = 'Issues';
-      group.appendChild(groupHead);
-      for (const it of issues) {
-        const section = document.createElement('div'); section.className = 'ward-note-section';
-        const title = document.createElement('div'); title.className = 'ward-note-subhead'; title.textContent = it.title || 'Untitled issue';
-        const bodyEl = document.createElement('div'); bodyEl.className = 'ward-note-text'; bodyEl.textContent = it.body || '';
-        section.appendChild(title); section.appendChild(bodyEl);
-        group.appendChild(section);
-      }
-      container.appendChild(group);
-    }
-
-    if (otherText) {
-      const other = document.createElement('div'); other.className = 'ward-note-section ward-note-section--other';
-      const label = document.createElement('div'); label.className = 'ward-note-label'; label.textContent = 'Other';
-      const text = document.createElement('div'); text.className = 'ward-note-text'; text.textContent = otherText;
-      other.appendChild(label); other.appendChild(text);
-      container.appendChild(other);
-    }
-
-    if (tasksText) {
-      const tasks = document.createElement('div'); tasks.className = 'ward-note-section ward-note-section--tasks';
-      const label = document.createElement('div'); label.className = 'ward-note-label'; label.textContent = 'Tasks';
-      const list = document.createElement('ul'); list.className = 'ward-note-tasks';
-      const lines = tasksText.split('\n').map(s => s.trim()).filter(Boolean);
-      for (const line of lines) {
-        const li = document.createElement('li'); li.textContent = line.replace(/^•\s*/, '');
-        list.appendChild(li);
-      }
-      tasks.appendChild(label); tasks.appendChild(list);
-      container.appendChild(tasks);
-    }
-  };
   unsubWardNotes = onSnapshot(qn, async (snap) => {
     list.innerHTML = '';
     if (snap.empty) {
@@ -2758,6 +2773,246 @@ function startRealtimeWardNotes() {
       list.appendChild(li);
     }
   });
+}
+
+function createWardNotesPrintButton() {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'icon-btn small';
+  btn.textContent = 'Ward Notes';
+  btn.title = 'View or print ward notes by date';
+  btn.addEventListener('click', openWardNotesRangeModal);
+  return btn;
+}
+
+function formatLocalDateInput(d) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function parseDateInput(value) {
+  if (!value) return null;
+  const parts = value.split('-').map(v => parseInt(v, 10));
+  if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
+  const [y, m, d] = parts;
+  return new Date(y, m - 1, d);
+}
+
+function formatDateLabel(d) {
+  if (!d || !(d instanceof Date) || Number.isNaN(d.getTime())) return 'Unknown date';
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: '2-digit' });
+}
+
+function formatDateTimeLabel(d) {
+  if (!d || !(d instanceof Date) || Number.isNaN(d.getTime())) return 'Unknown time';
+  return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function buildWardNoteBodyHtml(body) {
+  const wrap = document.createElement('div');
+  renderWardNoteBody(wrap, body);
+  return wrap.innerHTML;
+}
+
+function buildWardNotePrintItemHtml(note) {
+  const article = document.createElement('article');
+  article.className = 'ward-note-item ward-note-page';
+
+  const head = document.createElement('div');
+  head.className = 'ward-note-page-header';
+
+  const titleWrap = document.createElement('div');
+  titleWrap.className = 'ward-note-page-title';
+  const patient = document.createElement('div');
+  patient.className = 'ward-note-patient';
+  patient.textContent = note.caseTitle || 'Unknown patient';
+  const heading = document.createElement('div');
+  heading.className = 'ward-note-heading';
+  heading.textContent = note.heading || 'Ward Note';
+  titleWrap.appendChild(patient);
+  titleWrap.appendChild(heading);
+
+  const meta = document.createElement('div');
+  meta.className = 'ward-note-page-meta';
+  const author = note.author || 'Unknown';
+  const when = note.createdAt ? formatDateTimeLabel(note.createdAt) : 'Unknown time';
+  meta.textContent = `${author} — ${when}`;
+
+  head.appendChild(titleWrap);
+  head.appendChild(meta);
+  article.appendChild(head);
+
+  const body = document.createElement('div');
+  body.className = 'ward-note-preview';
+  body.innerHTML = buildWardNoteBodyHtml(note.compiled || '');
+  article.appendChild(body);
+
+  return article.outerHTML;
+}
+
+async function fetchWardNotesRange(start, end) {
+  const ref = collectionGroup(db, 'wardNotes');
+  const qn = query(ref, where('createdAt', '>=', start), where('createdAt', '<=', end), orderBy('createdAt', 'desc'));
+  const snap = await getDocs(qn);
+
+  const raw = [];
+  const caseIds = new Set();
+  for (const d of snap.docs) {
+    const data = d.data();
+    const caseRef = d.ref.parent && d.ref.parent.parent;
+    const caseId = caseRef ? caseRef.id : null;
+    if (!caseId) continue;
+    caseIds.add(caseId);
+    raw.push({ id: d.id, caseId, data });
+  }
+
+  const caseTitles = new Map();
+  await Promise.all(Array.from(caseIds).map(async (caseId) => {
+    try {
+      const snap = await getDoc(doc(db, 'cases', caseId));
+      if (snap.exists()) {
+        const data = snap.data();
+        let title = '';
+        try { title = await decryptText(data.titleCipher, data.titleIv); } catch {}
+        caseTitles.set(caseId, title || 'Unknown patient');
+      } else {
+        caseTitles.set(caseId, 'Unknown patient');
+      }
+    } catch {
+      caseTitles.set(caseId, 'Unknown patient');
+    }
+  }));
+
+  const notes = await Promise.all(raw.map(async (item) => {
+    const data = item.data || {};
+    let heading = '';
+    let compiled = '';
+    try { if (data.headingCipher && data.headingIv) heading = await decryptText(data.headingCipher, data.headingIv); } catch {}
+    try { if (data.compiledCipher && data.compiledIv) compiled = await decryptText(data.compiledCipher, data.compiledIv); } catch {}
+    const createdAt = data.createdAt && data.createdAt.toDate ? data.createdAt.toDate() : null;
+    return {
+      id: item.id,
+      caseId: item.caseId,
+      caseTitle: caseTitles.get(item.caseId) || 'Unknown patient',
+      author: data.author || 'Unknown',
+      createdAt,
+      heading,
+      compiled,
+    };
+  }));
+
+  return notes;
+}
+
+function openWardNotesPrintWindow({ start, end, notes, autoPrint }) {
+  const rangeLabel = `${formatDateLabel(start)}${formatDateLabel(start) === formatDateLabel(end) ? '' : ` – ${formatDateLabel(end)}`}`;
+  const countLabel = `${notes.length} note${notes.length === 1 ? '' : 's'}`;
+  const itemsHtml = notes.length
+    ? notes.map(buildWardNotePrintItemHtml).join('')
+    : `<div class="update-empty" style="padding:12px;">No ward notes found for this date range.</div>`;
+
+  const autoPrintScript = autoPrint
+    ? `<script>window.addEventListener('load',function(){ setTimeout(function(){ window.print(); }, 50); });</script>`
+    : '';
+
+  const html = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Ward Notes (${rangeLabel})</title>
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="ward-notes-print-header">
+      <div>
+        <div class="ward-notes-print-title">Ward notes</div>
+        <div class="ward-notes-print-range">${rangeLabel} • ${countLabel}</div>
+      </div>
+      <button class="btn print-btn" type="button" onclick="window.print()">Print</button>
+    </div>
+    <div class="ward-notes-print">${itemsHtml}</div>
+    ${autoPrintScript}
+  </body>
+</html>`;
+
+  const w = window.open('', '_blank');
+  if (!w) { showToast('Pop-up blocked. Allow pop-ups to view notes.'); return; }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+}
+
+function openWardNotesRangeModal() {
+  const overlay = document.createElement('div'); overlay.className = 'modal-overlay';
+  const modal = document.createElement('div'); modal.className = 'modal'; overlay.appendChild(modal);
+  const title = document.createElement('h3'); title.textContent = 'Ward notes by date'; modal.appendChild(title);
+  const form = document.createElement('div'); form.className = 'stack'; modal.appendChild(form);
+
+  const startLabel = document.createElement('label'); startLabel.textContent = 'Start date';
+  const startInput = document.createElement('input'); startInput.type = 'date'; startInput.setAttribute('aria-label', 'Start date');
+  startLabel.appendChild(startInput);
+  form.appendChild(startLabel);
+
+  const endLabel = document.createElement('label'); endLabel.textContent = 'End date';
+  const endInput = document.createElement('input'); endInput.type = 'date'; endInput.setAttribute('aria-label', 'End date');
+  endLabel.appendChild(endInput);
+  form.appendChild(endLabel);
+
+  const help = document.createElement('div');
+  help.style.fontSize = '12px';
+  help.style.color = '#6b7280';
+  help.textContent = 'Dates are inclusive. Notes are grouped across all patients.';
+  form.appendChild(help);
+
+  const today = new Date();
+  startInput.value = formatLocalDateInput(today);
+  endInput.value = formatLocalDateInput(today);
+
+  const actions = document.createElement('div'); actions.className = 'actions';
+  const cancel = document.createElement('button'); cancel.className = 'btn'; cancel.textContent = 'Cancel';
+  const viewBtn = document.createElement('button'); viewBtn.className = 'btn primary'; viewBtn.textContent = 'View notes';
+  const printBtn = document.createElement('button'); printBtn.className = 'btn'; printBtn.textContent = 'Print now';
+  actions.appendChild(cancel);
+  actions.appendChild(printBtn);
+  actions.appendChild(viewBtn);
+  modal.appendChild(actions);
+  document.body.appendChild(overlay);
+
+  const setBusy = (on) => {
+    viewBtn.disabled = on;
+    printBtn.disabled = on;
+    cancel.disabled = on;
+    viewBtn.textContent = on ? 'Loading…' : 'View notes';
+    printBtn.textContent = on ? 'Loading…' : 'Print now';
+  };
+
+  const run = async (autoPrint) => {
+    const startVal = startInput.value;
+    const endVal = endInput.value || startVal;
+    const startDate = parseDateInput(startVal);
+    const endDate = parseDateInput(endVal);
+    if (!startDate || !endDate) { showToast('Select a start and end date'); return; }
+    const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0);
+    const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
+    if (end < start) { showToast('End date must be on or after start date'); return; }
+
+    setBusy(true);
+    try {
+      const notes = await fetchWardNotesRange(start, end);
+      openWardNotesPrintWindow({ start, end, notes, autoPrint });
+      overlay.remove();
+    } catch (err) {
+      console.error('Failed to load ward notes', err);
+      showToast('Failed to load ward notes');
+      setBusy(false);
+    }
+  };
+
+  cancel.addEventListener('click', () => overlay.remove());
+  viewBtn.addEventListener('click', () => run(false));
+  printBtn.addEventListener('click', () => run(true));
+  endInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); viewBtn.click(); }});
+  startInput.focus();
 }
 
 // Append helper: adds a blank line + text if existing body present
@@ -2861,7 +3116,7 @@ async function openWardNoteComposer() {
   // Toggle handlers for compact controls
   function setActive(btn, on) { btn.classList.toggle('active', !!on); }
   dxBtn.addEventListener('click', ()=>{ const show = dxWrap.style.display==='none'; dxWrap.style.display = show ? '' : 'none'; setActive(dxBtn, show); });
-  issuesBtn.addEventListener('click', ()=>{ const show = issuesWrap.style.display==='none'; issuesWrap.style.display = show ? '' : 'none'; setActive(issuesBtn, show); });
+  issuesBtn.addEventListener('click', ()=>{ const show = issuesWrap.style.display==='none'; issuesWrap.style.display = show ? '' : 'none'; setActive(issuesBtn, show); if (show) { issuesWrap.querySelectorAll('textarea.auto-grow').forEach(autoResizeTextarea); } });
   tasksBtn.addEventListener('click', ()=>{ const show = tasksWrap.style.display==='none'; tasksWrap.style.display = show ? '' : 'none'; setActive(tasksBtn, show); });
 
   // Actions
@@ -2910,8 +3165,9 @@ async function openWardNoteComposer() {
       const cb = document.createElement('input'); cb.type='checkbox'; cb.checked = !!st.show; cb.addEventListener('change', ()=>{ st.show = cb.checked; }); tog.appendChild(cb); tog.appendChild(document.createTextNode('Show in note'));
       head.appendChild(tog);
       row.appendChild(head);
-      const body = document.createElement('textarea'); body.placeholder='Add note for this issue (appends to Overview)'; body.value = st.added || ''; body.addEventListener('input', ()=>{ st.added = body.value; }); row.appendChild(body);
+      const body = document.createElement('textarea'); body.className='auto-grow'; body.placeholder='Add note for this issue (appends to Overview)'; body.value = st.added || ''; body.addEventListener('input', ()=>{ st.added = body.value; autoResizeTextarea(body); }); row.appendChild(body);
       issuesList.appendChild(row);
+      autoResizeTextarea(body);
     });
   };
   renderIssues();
@@ -3822,6 +4078,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   const hideFiltersBtn = document.getElementById('hide-filters-btn');
   const showFiltersBtn = document.getElementById('show-filters-btn');
   const printOpenBtn = document.getElementById('print-open-btn');
+  wardNotesPrintBtn = document.getElementById('ward-notes-print-btn');
   // Tag controls
   filterLocationSel = document.getElementById('filter-location');
   filterConsultantSel = document.getElementById('filter-consultant');
@@ -3843,6 +4100,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   if (updatesSearchEl) updatesSearchEl.addEventListener('input', () => { updatesSearch = updatesSearchEl.value.trim(); renderUpdatesList(); });
   if (updatesLoadMoreBtn) updatesLoadMoreBtn.addEventListener('click', loadMoreUpdates);
   if (mainTabMy) mainTabMy.addEventListener('click', () => showMainTab('my'));
+  if (wardNotesPrintBtn) wardNotesPrintBtn.addEventListener('click', openWardNotesRangeModal);
   // Filters show/hide
   const filtersKey = 'tableFiltersHidden';
   if (hideFiltersBtn) hideFiltersBtn.addEventListener('click', () => setTableFiltersHidden(true));
