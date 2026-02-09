@@ -8,8 +8,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <script type="module" crossorigin src="/catalist/assets/index-YGp1_kBX.js"></script>
-  <link rel="stylesheet" crossorigin href="/catalist/assets/index-CucOy6Dz.css">
+  <script type="module" crossorigin src="/catalist/assets/index-DClTriBV.js"></script>
+  <link rel="stylesheet" crossorigin href="/catalist/assets/index-Bismea24.css">
 </head>
 <body>
   <header class="topbar">
@@ -56,48 +56,22 @@
       <button id="tab-updates" class="tab" role="tab" aria-selected="false" aria-controls="updates-section">Updates</button>
     </div>
 
-    <section id="workspace-overview" class="workspace-overview" aria-label="Workspace overview">
-      <div class="overview-top">
-        <div class="overview-copy">
-          <p class="overview-kicker">Operations</p>
-          <h1 class="overview-title">Clinical Workflow Dashboard</h1>
-          <p class="overview-text">Keep active cases, tasks, and note quality aligned across the whole ward team.</p>
-        </div>
-        <div class="overview-actions">
-          <button id="quick-new-case-btn" class="btn primary" type="button">New Case</button>
-          <button id="quick-ward-notes-btn" class="btn" type="button">Ward Notes</button>
-          <button id="quick-shortcuts-btn" class="btn" type="button">Shortcuts</button>
-        </div>
+    <section id="workspace-overview" class="workspace-overview workspace-overview--minimal" aria-label="Workspace overview">
+      <div class="workspace-line">
+        <span class="workspace-item"><strong>Catalist workspace</strong></span>
+        <span class="workspace-item"><strong id="metric-visible-cases">0</strong> cases</span>
+        <span class="workspace-item"><strong id="metric-open-tasks">0</strong> open</span>
+        <span class="workspace-item"><strong id="metric-progress-tasks">0</strong> in progress</span>
+        <span class="workspace-item"><strong id="metric-complete-tasks">0</strong> complete</span>
+        <span class="workspace-item"><strong id="metric-users">0</strong> users</span>
+        <span class="workspace-item"><strong id="metric-locations">0</strong> locations</span>
+        <span id="metrics-throughput" class="workspace-item">Completion rate: --</span>
+        <span id="metrics-updated" class="workspace-item">Last updated: --</span>
       </div>
-      <div class="overview-metrics">
-        <article class="metric-card">
-          <div class="metric-label">Visible Cases</div>
-          <div id="metric-visible-cases" class="metric-value">0</div>
-        </article>
-        <article class="metric-card">
-          <div class="metric-label">Open Tasks</div>
-          <div id="metric-open-tasks" class="metric-value">0</div>
-        </article>
-        <article class="metric-card">
-          <div class="metric-label">In Progress</div>
-          <div id="metric-progress-tasks" class="metric-value">0</div>
-        </article>
-        <article class="metric-card">
-          <div class="metric-label">Completed Tasks</div>
-          <div id="metric-complete-tasks" class="metric-value">0</div>
-        </article>
-        <article class="metric-card">
-          <div class="metric-label">Active Users</div>
-          <div id="metric-users" class="metric-value">0</div>
-        </article>
-        <article class="metric-card">
-          <div class="metric-label">Locations</div>
-          <div id="metric-locations" class="metric-value">0</div>
-        </article>
-      </div>
-      <div class="overview-meta">
-        <span id="metrics-throughput">Completion rate: --</span>
-        <span id="metrics-updated">Last updated: --</span>
+      <div class="workspace-actions-inline">
+        <button id="quick-new-case-btn" class="btn primary" type="button">New Case</button>
+        <button id="quick-ward-notes-btn" class="btn" type="button">Ward Notes</button>
+        <button id="quick-shortcuts-btn" class="btn" type="button">Shortcuts</button>
       </div>
     </section>
 

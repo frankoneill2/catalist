@@ -2203,3 +2203,88 @@ kbd {
     box-shadow: none;
   }
 }
+
+/* Minimal workspace strip */
+.workspace-overview.workspace-overview--minimal {
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--text);
+  border: 1px solid rgba(22, 76, 105, 0.14);
+  border-radius: 12px;
+  box-shadow: 0 6px 16px rgba(10, 42, 64, 0.08);
+  padding: 8px 12px;
+  margin-bottom: 10px;
+}
+
+.workspace-overview.workspace-overview--minimal::before {
+  display: none;
+}
+
+.workspace-overview.workspace-overview--minimal .workspace-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 0.83rem;
+  color: #3f5e75;
+}
+
+.workspace-overview.workspace-overview--minimal .workspace-item {
+  white-space: nowrap;
+}
+
+.workspace-overview.workspace-overview--minimal .workspace-item strong {
+  color: #143f5d;
+}
+
+.workspace-overview.workspace-overview--minimal .workspace-actions-inline {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.workspace-overview.workspace-overview--minimal .workspace-actions-inline .btn {
+  min-height: 30px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  border: 1px solid rgba(17, 74, 106, 0.2);
+  background: #fff;
+  color: #2e5269;
+}
+
+.workspace-overview.workspace-overview--minimal .workspace-actions-inline .btn.primary {
+  background: #0f5f88;
+  border-color: #0f5f88;
+  color: #fff;
+}
+
+.workspace-overview.workspace-overview--minimal .workspace-actions-inline .btn:disabled,
+.workspace-overview.workspace-overview--minimal .workspace-actions-inline .btn[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+@media (max-width: 680px) {
+  .workspace-overview.workspace-overview--minimal {
+    padding: 8px 10px;
+  }
+
+  .workspace-overview.workspace-overview--minimal .workspace-line {
+    gap: 8px;
+    font-size: 0.8rem;
+  }
+
+  .workspace-overview.workspace-overview--minimal .workspace-actions-inline {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .workspace-overview.workspace-overview--minimal .workspace-actions-inline .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
