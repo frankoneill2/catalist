@@ -105,6 +105,24 @@ let currentUserSearch = '';
 let userStatusEls = [];
 let userPriorityFilterEl, userSortEl;
 let userFilterByName = new Map(); // username -> { statuses: [...], priority: 'all'|'high'|'medium'|'low', sort: 'none'|'pri-asc'|'pri-desc' }
+let headerClockEl, sessionUserChipEl;
+let quickNewCaseBtn, quickWardNotesBtn, quickShortcutsBtn;
+let metricVisibleCasesEl, metricOpenTasksEl, metricProgressTasksEl, metricCompleteTasksEl, metricUsersEl, metricLocationsEl;
+let metricsThroughputEl, metricsUpdatedEl;
+let headerClockTimer = null;
+let workspaceEnhancementsBound = false;
+let shortcutsOpen = false;
+let unsubDashboardTasks = null;
+let dashboardSnapshotSeq = 0;
+const dashboardTaskStatusByPath = new Map();
+const dashboardStats = {
+  visibleCases: 0,
+  openTasks: 0,
+  progressTasks: 0,
+  completeTasks: 0,
+  users: 0,
+  locations: 0,
+};
 
 // Gentle cell background colors for table cells
 const CELL_COLORS = [
@@ -209,6 +227,187 @@ function loadTagFilterState() {
     activeTagSort = localStorage.getItem('table.sort.key') || 'none';
     activeTagSortDir = localStorage.getItem('table.sort.dir') || 'asc';
   } catch {}
+}
+
+function isEditableTarget(target) {
+  if (!(target instanceof Element)) return false;
+  if (target.isContentEditable) return true;
+  return !!target.closest('input, textarea, select, [contenteditable="true"]');
+}
+
+function setWorkspaceOverviewVisible(visible) {
+  const panel = document.getElementById('workspace-overview');
+  if (!panel) return;
+  panel.hidden = !visible;
+}
+
+function updateSessionUserBadge(name = username) {
+  if (!sessionUserChipEl) return;
+  const label = (name || '').trim();
+  sessionUserChipEl.textContent = label ? `User: ${label}` : 'User: --';
+}
+
+function tickHeaderClock() {
+  if (!headerClockEl) return;
+  const now = new Date();
+  headerClockEl.textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  headerClockEl.dateTime = now.toISOString();
+}
+
+function startHeaderClock() {
+  if (headerClockTimer) clearInterval(headerClockTimer);
+  tickHeaderClock();
+  headerClockTimer = setInterval(tickHeaderClock, 30000);
+}
+
+function updateDashboardStats(partial = {}) {
+  Object.assign(dashboardStats, partial);
+  const totalTasks = dashboardStats.openTasks + dashboardStats.progressTasks + dashboardStats.completeTasks;
+  const completion = totalTasks ? Math.round((dashboardStats.completeTasks / totalTasks) * 100) : 0;
+  if (metricVisibleCasesEl) metricVisibleCasesEl.textContent = String(dashboardStats.visibleCases || 0);
+  if (metricOpenTasksEl) metricOpenTasksEl.textContent = String(dashboardStats.openTasks || 0);
+  if (metricProgressTasksEl) metricProgressTasksEl.textContent = String(dashboardStats.progressTasks || 0);
+  if (metricCompleteTasksEl) metricCompleteTasksEl.textContent = String(dashboardStats.completeTasks || 0);
+  if (metricUsersEl) metricUsersEl.textContent = String(dashboardStats.users || 0);
+  if (metricLocationsEl) metricLocationsEl.textContent = String(dashboardStats.locations || 0);
+  if (metricsThroughputEl) {
+    metricsThroughputEl.textContent = `Completion rate: ${completion}% (${dashboardStats.completeTasks}/${totalTasks || 0})`;
+  }
+  if (metricsUpdatedEl) {
+    metricsUpdatedEl.textContent = `Last updated: ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
+  }
+}
+
+function startRealtimeDashboardTasks() {
+  if (unsubDashboardTasks) { try { unsubDashboardTasks(); } catch {} unsubDashboardTasks = null; }
+  dashboardTaskStatusByPath.clear();
+  dashboardSnapshotSeq += 1;
+  const q = collectionGroup(db, 'tasks');
+  unsubDashboardTasks = onSnapshot(q, async (snap) => {
+    const seq = ++dashboardSnapshotSeq;
+    const changes = snap.docChanges();
+    const targets = changes.length ? changes : snap.docs.map((d) => ({ type: 'added', doc: d }));
+    await Promise.all(targets.map(async (change) => {
+      const path = change.doc.ref.path;
+      if (change.type === 'removed') {
+        dashboardTaskStatusByPath.delete(path);
+        return;
+      }
+      const data = change.doc.data() || {};
+      let status = 'open';
+      try {
+        if (data.statusCipher && data.statusIv) status = await decryptText(data.statusCipher, data.statusIv);
+      } catch {}
+      dashboardTaskStatusByPath.set(path, status);
+    }));
+    if (seq !== dashboardSnapshotSeq) return;
+    let openTasks = 0;
+    let progressTasks = 0;
+    let completeTasks = 0;
+    for (const status of dashboardTaskStatusByPath.values()) {
+      if (status === 'complete') completeTasks += 1;
+      else if (status === 'in progress') progressTasks += 1;
+      else openTasks += 1;
+    }
+    updateDashboardStats({ openTasks, progressTasks, completeTasks });
+  }, (err) => {
+    console.error('Dashboard task metrics listener error', err);
+  });
+}
+
+function openShortcutsModal() {
+  if (shortcutsOpen) return;
+  shortcutsOpen = true;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  const modal = document.createElement('div');
+  modal.className = 'modal shortcuts-modal';
+  overlay.appendChild(modal);
+  const title = document.createElement('h3');
+  title.textContent = 'Keyboard Shortcuts';
+  modal.appendChild(title);
+  const list = document.createElement('div');
+  list.className = 'shortcuts-grid';
+  list.innerHTML = [
+    '<div><kbd>Shift</kbd><span>+</span><kbd>N</kbd></div><p>Create a new case</p>',
+    '<div><kbd>Shift</kbd><span>+</span><kbd>W</kbd></div><p>Open ward notes print flow</p>',
+    '<div><kbd>?</kbd></div><p>Open this shortcuts panel</p>',
+    '<div><kbd>Esc</kbd></div><p>Close active modal/panel</p>',
+  ].join('');
+  modal.appendChild(list);
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'btn primary';
+  closeBtn.textContent = 'Close';
+  actions.appendChild(closeBtn);
+  modal.appendChild(actions);
+  document.body.appendChild(overlay);
+
+  const close = () => {
+    if (!shortcutsOpen) return;
+    shortcutsOpen = false;
+    overlay.remove();
+    document.removeEventListener('keydown', onKeyDown, true);
+  };
+  const onKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      close();
+    }
+  };
+  closeBtn.addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  document.addEventListener('keydown', onKeyDown, true);
+}
+
+function setWorkspaceActionState(enabled) {
+  const disabled = !enabled;
+  for (const btn of [quickNewCaseBtn, quickWardNotesBtn]) {
+    if (!btn) continue;
+    btn.disabled = disabled;
+    btn.setAttribute('aria-disabled', String(disabled));
+  }
+}
+
+function setupWorkspaceEnhancements() {
+  if (workspaceEnhancementsBound) return;
+  workspaceEnhancementsBound = true;
+  if (quickNewCaseBtn) quickNewCaseBtn.addEventListener('click', () => {
+    if (!key || !username) { showToast('Sign in first to create a case'); return; }
+    openNewCaseModal();
+  });
+  if (quickWardNotesBtn) quickWardNotesBtn.addEventListener('click', () => {
+    if (!key || !username) { showToast('Sign in first to open notes'); return; }
+    openWardNotesRangeModal();
+  });
+  if (quickShortcutsBtn) quickShortcutsBtn.addEventListener('click', () => openShortcutsModal());
+  document.addEventListener('keydown', (e) => {
+    if (e.defaultPrevented) return;
+    const pressed = (e.key || '').toLowerCase();
+    if (isEditableTarget(e.target) && !(pressed === 'escape')) return;
+    if (pressed === '?' || (e.shiftKey && pressed === '/')) {
+      e.preventDefault();
+      openShortcutsModal();
+      return;
+    }
+    if (e.shiftKey && pressed === 'n') {
+      e.preventDefault();
+      if (!key || !username) { showToast('Sign in first to create a case'); return; }
+      openNewCaseModal();
+      return;
+    }
+    if (e.shiftKey && pressed === 'w') {
+      e.preventDefault();
+      if (!key || !username) { showToast('Sign in first to open notes'); return; }
+      openWardNotesRangeModal();
+    }
+  });
+  setWorkspaceActionState(false);
+  startHeaderClock();
+  updateSessionUserBadge();
+  updateDashboardStats({});
 }
 
 // Global helper to hide/show the filters bar and align the Show button
@@ -330,6 +529,7 @@ async function decryptText(cipher, iv) {
 // --- UI helpers
 function showCaseList() {
   // Legacy: route to table view now
+  setWorkspaceOverviewVisible(true);
   if (tableSection) tableSection.hidden = false;
   caseDetailEl.hidden = true;
   userDetailEl.hidden = true;
@@ -342,6 +542,7 @@ function showCaseList() {
 async function openCase(id, title, source = 'list', initialTab = 'overview') {
   currentCaseId = id;
   backTarget = source === 'user' ? 'user' : (source === 'table' ? 'table' : (source === 'updates' ? 'updates' : 'list'));
+  setWorkspaceOverviewVisible(false);
   caseTitleEl.textContent = title;
   if (tableSection) tableSection.hidden = true;
   if (updatesSection) updatesSection.hidden = true; // ensure updates is hidden when opening a case
@@ -381,6 +582,7 @@ function showMainTab(which) {
     mainTabUpdates.setAttribute('aria-selected', String(isUpdates));
   }
   if (isTable) {
+    setWorkspaceOverviewVisible(true);
     if (caseListSection) caseListSection.style.display = 'none';
     caseDetailEl.hidden = true;
     userDetailEl.hidden = true;
@@ -389,12 +591,14 @@ function showMainTab(which) {
     if (!unsubTable) startRealtimeTable();
     if (unsubUpdates) { try { unsubUpdates(); } catch {} unsubUpdates = null; }
   } else if (isMy) {
+    setWorkspaceOverviewVisible(true);
     if (tableSection) tableSection.hidden = true;
     if (unsubTable) { unsubTable(); unsubTable = null; }
     if (updatesSection) updatesSection.hidden = true;
     if (unsubUpdates) { try { unsubUpdates(); } catch {} unsubUpdates = null; }
     openUser(username);
   } else if (isUpdates) {
+    setWorkspaceOverviewVisible(true);
     if (tableSection) tableSection.hidden = true;
     if (unsubTable) { unsubTable(); unsubTable = null; }
     caseDetailEl.hidden = true;
@@ -403,6 +607,7 @@ function showMainTab(which) {
     if (!unsubUpdates) startRealtimeUpdates();
   } else {
     // default: hide everything except table
+    setWorkspaceOverviewVisible(true);
     if (updatesSection) updatesSection.hidden = true;
     if (unsubUpdates) { try { unsubUpdates(); } catch {} unsubUpdates = null; }
     if (tableSection) tableSection.hidden = false;
@@ -645,6 +850,7 @@ function startRealtimeTags() {
     for (const [t, arr] of byType) arr.sort((a,b)=> a.order - b.order || a.name.localeCompare(b.name));
     tagsByType = byType;
     tagsReady = true;
+    updateDashboardStats({ locations: (tagsByType.get('location') || []).length });
     fillTagFilters();
     document.dispatchEvent(new CustomEvent('tags:updated'));
   }, (err) => console.error('Tags listener error', err));
@@ -1733,6 +1939,7 @@ function startRealtimeTable() {
       docs = scored.map(s=>s.d);
     }
 
+    let visibleCases = 0;
     for (const d of docs) {
       const data = d.data();
       let title = '';
@@ -2071,8 +2278,10 @@ function startRealtimeTable() {
         // skip
       } else {
         tbody.appendChild(tr);
+        visibleCases += 1;
       }
     }
+  updateDashboardStats({ visibleCases });
   // Atomically replace table to prevent duplicated DOM
   tableRoot.innerHTML = '';
   tableRoot.appendChild(table);
@@ -4019,6 +4228,20 @@ window.addEventListener('DOMContentLoaded', async () => {
   userTaskListEl = document.getElementById('user-task-list');
   userBackBtn = document.getElementById('user-back-btn');
   brandHome = document.getElementById('brand-home');
+  headerClockEl = document.getElementById('header-clock');
+  sessionUserChipEl = document.getElementById('session-user-chip');
+  quickNewCaseBtn = document.getElementById('quick-new-case-btn');
+  quickWardNotesBtn = document.getElementById('quick-ward-notes-btn');
+  quickShortcutsBtn = document.getElementById('quick-shortcuts-btn');
+  metricVisibleCasesEl = document.getElementById('metric-visible-cases');
+  metricOpenTasksEl = document.getElementById('metric-open-tasks');
+  metricProgressTasksEl = document.getElementById('metric-progress-tasks');
+  metricCompleteTasksEl = document.getElementById('metric-complete-tasks');
+  metricUsersEl = document.getElementById('metric-users');
+  metricLocationsEl = document.getElementById('metric-locations');
+  metricsThroughputEl = document.getElementById('metrics-throughput');
+  metricsUpdatedEl = document.getElementById('metrics-updated');
+  setupWorkspaceEnhancements();
   // Add a Delete Case button next to the case title if not present
   // Case header overflow menu (⋯) with Delete
   const actionsWrap = document.getElementById('case-header-actions');
@@ -4140,6 +4363,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       currentCaseId = null;
       caseDetailEl.hidden = true;
       userDetailEl.hidden = false;
+      setWorkspaceOverviewVisible(true);
       if (caseListSection) caseListSection.style.display = 'none';
       backTarget = 'list';
     } else if (backTarget === 'updates' && updatesSection) {
@@ -4150,6 +4374,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       currentCaseId = null;
       caseDetailEl.hidden = true;
       showMainTab('updates');
+      setWorkspaceOverviewVisible(true);
       // Clear case param
       try { const url = new URL(window.location.href); url.searchParams.delete('case'); window.history.pushState({}, '', url.toString()); } catch {}
     } else {
@@ -4160,6 +4385,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       currentCaseId = null;
       caseDetailEl.hidden = true;
       if (tableSection) tableSection.hidden = false;
+      setWorkspaceOverviewVisible(true);
       // Restore scroll and clear URL param
       try { window.scrollTo(0, tableScrollY || 0); const url = new URL(window.location.href); url.searchParams.delete('case'); window.history.pushState({}, '', url.toString()); } catch {}
     }
@@ -4170,9 +4396,11 @@ window.addEventListener('DOMContentLoaded', async () => {
       // Return to prior view: case detail if one is open, else table
       if (currentCaseId) {
         caseDetailEl.hidden = false;
+        setWorkspaceOverviewVisible(false);
         if (caseListSection) caseListSection.style.display = 'none';
       } else {
         if (tableSection) tableSection.hidden = false;
+        setWorkspaceOverviewVisible(true);
       }
       if (Array.isArray(unsubUserTasks)) {
         for (const u of unsubUserTasks) try { u(); } catch {}
@@ -4186,6 +4414,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       if (tableSection) tableSection.hidden = false;
       caseDetailEl.hidden = true;
       userDetailEl.hidden = true;
+      setWorkspaceOverviewVisible(true);
     });
   
   // React toolbar events -> filter/sort case tasks
@@ -4274,6 +4503,9 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Then pick a user from dropdown modal fed by live users list
   username = await showUserSelectModal();
   if (!username) return;
+  updateSessionUserBadge(username);
+  setWorkspaceActionState(true);
+  startRealtimeDashboardTasks();
   // Now that we're signed in and have a user, start tags + build filter UI
   startRealtimeTags();
   bindTagControls();
@@ -4307,6 +4539,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         // Show table
         caseDetailEl.hidden = true;
         if (tableSection) tableSection.hidden = false;
+        setWorkspaceOverviewVisible(true);
       }
     } catch {}
   });
@@ -4426,6 +4659,7 @@ function startRealtimeUsers() {
       li.appendChild(del);
       list.appendChild(li);
     }
+    updateDashboardStats({ users: usersCache.length });
     // Update composer assignee select with latest users
     populateComposerAssignees();
     // Inform My Tasks toolbar about users for the assignee selector
@@ -4711,6 +4945,7 @@ async function moveRoom(parentId, index, delta) {
 
 function openUser(name) {
   currentUserPageName = name;
+  updateSessionUserBadge(name);
   // Title with inline change link
   setUserHeader();
   if (caseListSection) caseListSection.style.display = 'none';
