@@ -264,7 +264,7 @@ async function openNewCaseModal() {
   await refreshRooms(); const roomCandidates = Array.from(activeTagFilters.room||[]); if (roomCandidates.length===1) roomSel.value = roomCandidates[0];
   locSel.addEventListener('change', async ()=>{ await refreshRooms(); roomSel.value=''; });
 
-  const close = () => { if (modalTasksUnsub) { try { modalTasksUnsub(); } catch {} } overlay.remove(); };
+  const close = () => { overlay.remove(); };
   cancel.addEventListener('click', close);
   create.addEventListener('click', async () => {
     const t = (nameInput.value||'').trim(); if (!t) { nameInput.focus(); return; }
