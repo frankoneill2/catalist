@@ -1999,3 +1999,207 @@ kbd {
     animation: none !important;
   }
 }
+
+/* --- Table refinement pass --- */
+#table-section .table-root {
+  border: 1px solid rgba(19, 74, 104, 0.2);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(247, 252, 255, 0.9) 0%, rgba(239, 248, 253, 0.72) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    0 10px 22px rgba(10, 42, 64, 0.09);
+}
+
+#table-section .table-root > .data-table {
+  min-width: 1040px;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+#table-section .data-table th,
+#table-section .data-table td {
+  vertical-align: top;
+  border-color: rgba(30, 87, 119, 0.18);
+  padding: 7px 8px;
+}
+
+#table-section .data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: linear-gradient(180deg, #f4f9fd 0%, #ebf4fb 100%);
+  color: #335b77;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+#table-section .data-table thead th:nth-child(1),
+#table-section .data-table tbody td:nth-child(1) {
+  position: sticky;
+  left: 0;
+}
+
+#table-section .data-table thead th:nth-child(1) {
+  z-index: 7;
+  background: linear-gradient(180deg, #edf6fc 0%, #e3eff8 100%);
+}
+
+#table-section .data-table tbody td:nth-child(1) {
+  z-index: 3;
+  background: #f7fbfe;
+  box-shadow: 1px 0 0 rgba(30, 87, 119, 0.16);
+}
+
+#table-section .data-table tbody td:nth-child(7) {
+  background: #fcfeff;
+}
+
+#table-section .data-table tbody tr:nth-child(even) td:not([style*="background"]) {
+  background: #fbfdff;
+}
+
+#table-section .data-table tbody tr:nth-child(even) td:nth-child(1):not([style*="background"]) {
+  background: #f4f9fd;
+}
+
+#table-section .data-table tbody tr:hover td:not([style*="background"]) {
+  background: #eef7fc;
+}
+
+#table-section .data-table tbody tr:hover td:nth-child(1):not([style*="background"]) {
+  background: #e6f2f9;
+}
+
+#table-section .name-cell {
+  gap: 6px;
+}
+
+#table-section .name-row {
+  gap: 7px;
+}
+
+#table-section .patient-link {
+  display: inline-flex;
+  align-items: center;
+  text-align: left;
+  max-width: 100%;
+  color: #0e4f70;
+  font-size: 0.91rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+#table-section .patient-link:hover {
+  color: #0a658c;
+  text-decoration: none;
+}
+
+#table-section .tag-chips {
+  gap: 5px;
+}
+
+#table-section .tag-chip {
+  background: #eef7ff;
+  border-color: #c7deee;
+  color: #2b4f69;
+}
+
+#table-section .tag-order {
+  color: #5d7790;
+}
+
+#table-section .cell-items {
+  gap: 4px;
+  min-height: 26px;
+}
+
+#table-section .cell-line {
+  gap: 6px;
+}
+
+#table-section .cell-bullet {
+  margin-top: 8px;
+  background: #6d90a8;
+}
+
+#table-section .cell-line .cell-title {
+  padding: 3px 6px;
+  border-radius: 6px;
+}
+
+#table-section .line-info-btn {
+  opacity: 0;
+  transform: translateX(-2px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+#table-section .cell-line:hover .line-info-btn {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+#table-section .cell-tasks {
+  max-height: 360px;
+  padding: 2px;
+  border-radius: 9px;
+  background: linear-gradient(180deg, #f8fbfe 0%, #f0f7fc 100%);
+}
+
+#table-section .cell-tasks ul {
+  gap: 6px;
+  max-height: 250px;
+}
+
+#table-section .cell-tasks .case-task {
+  border: 1px solid rgba(32, 87, 117, 0.14);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(10, 42, 64, 0.07);
+  padding: 4px 6px;
+}
+
+#table-section .cell-tasks .status-btn {
+  color: #2a4a62;
+}
+
+#table-section .cell-tasks .composer input {
+  height: 30px;
+  border: 1px solid rgba(40, 97, 127, 0.2);
+  background: #ffffff;
+}
+
+#table-section .new-case-footer {
+  margin-top: 10px;
+  padding: 14px 8px 6px;
+  border-top: 1px dashed rgba(30, 87, 119, 0.24);
+}
+
+#table-section .new-case-footer .btn {
+  min-height: 40px;
+  border-radius: 999px;
+}
+
+@media (max-width: 1024px) {
+  #table-section .data-table thead th:nth-child(1),
+  #table-section .data-table tbody td:nth-child(1) {
+    position: static;
+    box-shadow: none;
+  }
+}
+
+@media print {
+  #table-section .table-root {
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    background: transparent;
+  }
+
+  #table-section .data-table thead th:nth-child(1),
+  #table-section .data-table tbody td:nth-child(1) {
+    position: static;
+    box-shadow: none;
+  }
+}
