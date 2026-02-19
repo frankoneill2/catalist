@@ -2506,6 +2506,13 @@ kbd {
   z-index: 10;
 }
 
+@media (min-width: 900px) {
+  /* Allow column headers to stick to the viewport (not the table scroller). */
+  #table-section .table-root {
+    overflow: visible;
+  }
+}
+
 #table-section .table-nav-cell {
   outline: none;
 }
