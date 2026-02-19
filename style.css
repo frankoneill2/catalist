@@ -2487,10 +2487,23 @@ kbd {
 /* --- Task assignment + discharge UX --- */
 :root {
   --table-sticky-offset: 72px;
+  --table-filters-offset: 0px;
+}
+
+#table-tags-controls {
+  position: sticky;
+  top: var(--table-sticky-offset, 72px);
+  z-index: 8;
+  backdrop-filter: blur(6px);
 }
 
 #table-section .data-table thead th {
-  top: var(--table-sticky-offset, 72px);
+  top: calc(var(--table-sticky-offset, 72px) + var(--table-filters-offset, 0px));
+  z-index: 9;
+}
+
+#table-section .data-table thead th:nth-child(1) {
+  z-index: 10;
 }
 
 #table-section .table-nav-cell {

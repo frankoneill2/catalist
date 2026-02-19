@@ -350,14 +350,24 @@ function clearPendingDischargeState() {
 }
 
 let tableStickyOffsetCache = -1;
+let tableFiltersOffsetCache = -1;
 let tableStickyOffsetFrame = 0;
 
 function updateTableStickyOffset() {
   const topbar = document.querySelector('.topbar');
-  const next = topbar ? Math.max(0, Math.ceil(topbar.getBoundingClientRect().bottom)) : 0;
-  if (next === tableStickyOffsetCache) return;
-  tableStickyOffsetCache = next;
-  document.documentElement.style.setProperty('--table-sticky-offset', `${next}px`);
+  const nextTop = topbar ? Math.max(0, Math.ceil(topbar.getBoundingClientRect().bottom)) : 0;
+  if (nextTop !== tableStickyOffsetCache) {
+    tableStickyOffsetCache = nextTop;
+    document.documentElement.style.setProperty('--table-sticky-offset', `${nextTop}px`);
+  }
+
+  const filtersBar = document.getElementById('table-tags-controls');
+  const filtersVisible = !!(filtersBar && !filtersBar.hidden && filtersBar.style.display !== 'none' && filtersBar.getClientRects().length);
+  const nextFilters = filtersVisible ? Math.ceil(filtersBar.getBoundingClientRect().height + 2) : 0;
+  if (nextFilters !== tableFiltersOffsetCache) {
+    tableFiltersOffsetCache = nextFilters;
+    document.documentElement.style.setProperty('--table-filters-offset', `${nextFilters}px`);
+  }
 }
 
 function scheduleTableStickyOffsetUpdate() {
@@ -624,6 +634,7 @@ function setTableFiltersHidden(hidden) {
     if (ph) ph.remove();
     try { localStorage.setItem('tableFiltersHidden', '0'); } catch {}
   }
+  scheduleTableStickyOffsetUpdate();
 }
 
 // --- New Case modal (title + tags) and creation
@@ -4905,6 +4916,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   updateTableStickyOffset();
   window.addEventListener('resize', scheduleTableStickyOffsetUpdate, { passive: true });
   window.addEventListener('scroll', scheduleTableStickyOffsetUpdate, { passive: true });
+  window.addEventListener('load', scheduleTableStickyOffsetUpdate, { once: true });
   // Add a Delete Case button next to the case title if not present
   // Case header overflow menu (⋯) with Delete
   const actionsWrap = document.getElementById('case-header-actions');
