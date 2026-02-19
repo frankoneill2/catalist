@@ -363,7 +363,7 @@ function updateTableStickyOffset() {
 
   const filtersBar = document.getElementById('table-tags-controls');
   const filtersVisible = !!(filtersBar && !filtersBar.hidden && filtersBar.style.display !== 'none' && filtersBar.getClientRects().length);
-  const nextFilters = filtersVisible ? Math.ceil(filtersBar.getBoundingClientRect().height + 2) : 0;
+  const nextFilters = filtersVisible ? Math.ceil(filtersBar.getBoundingClientRect().height) : 0;
   if (nextFilters !== tableFiltersOffsetCache) {
     tableFiltersOffsetCache = nextFilters;
     document.documentElement.style.setProperty('--table-filters-offset', `${nextFilters}px`);
