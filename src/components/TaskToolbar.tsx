@@ -76,7 +76,7 @@ export const TaskToolbar: React.FC<TaskToolbarProps> = ({
               <select value={assignee || 'me'} onChange={(e) => onAssigneeChange(e.target.value)}>
                 <option value="me">Me</option>
                 <option value="all">All</option>
-                <option value="unassigned">Unassigned</option>
+                <option value="unassigned">Open tasks</option>
                 {Array.isArray(assigneeOptions) && assigneeOptions.map(u => (
                   <option key={u} value={`name:${u}`}>{u}</option>
                 ))}

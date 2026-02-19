@@ -2288,3 +2288,161 @@ kbd {
     justify-content: center;
   }
 }
+
+/* --- Task assignment + discharge UX --- */
+:root {
+  --table-sticky-offset: 64px;
+}
+
+#table-section .data-table thead th {
+  top: var(--table-sticky-offset, 64px);
+}
+
+#table-section .table-nav-cell {
+  outline: none;
+}
+
+#table-section .table-nav-cell:focus-visible {
+  box-shadow: inset 0 0 0 2px rgba(15, 95, 136, 0.35);
+  background: #e9f4fb;
+}
+
+#table-section .data-table tbody tr.case-row-discharge-pending td:not([style*="background"]) {
+  background: #fff8e8;
+}
+
+#table-section .data-table tbody tr.case-row-discharge-pending td:nth-child(1):not([style*="background"]) {
+  background: #fff2cf;
+}
+
+#table-section .data-table tbody tr.case-row-discharged td:not([style*="background"]) {
+  background: #f6f7f8;
+  color: #4b5563;
+}
+
+#table-section .data-table tbody tr.case-row-discharged td:nth-child(1):not([style*="background"]) {
+  background: #eef1f4;
+}
+
+#table-section .data-table.data-table--discharged thead th {
+  background: linear-gradient(180deg, #f3f4f6 0%, #eceff2 100%);
+  color: #4b5563;
+}
+
+.pending-discharge-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.case-discharge-meta {
+  font-size: 11px;
+  color: #6b7280;
+  margin-top: 2px;
+}
+
+.pending-discharge-banner {
+  margin-top: 8px;
+  border: 1px solid #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.discharged-table-section {
+  margin-top: 10px;
+  border-top: 1px dashed rgba(30, 87, 119, 0.28);
+  padding-top: 10px;
+}
+
+.discharged-table-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.discharged-empty {
+  margin-top: 8px;
+  border: 1px dashed #d1d5db;
+  border-radius: 10px;
+  padding: 10px;
+  color: #6b7280;
+  font-size: 12px;
+  background: #f9fafb;
+}
+
+#table-section .discharged-table-section .data-table {
+  margin-top: 8px;
+}
+
+.assignment-state-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid #dbeafe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 0 8px;
+}
+
+.assignment-state-chip.pending {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.assignment-state-chip.open {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.case-task.task-pending-acceptance {
+  border-left: 3px solid #f97316 !important;
+  background: #fff7ed !important;
+}
+
+.case-task .status-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.task-section + .task-section {
+  margin-top: 12px;
+}
+
+.task-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 0 2px;
+}
+
+.task-section-head h3 {
+  margin: 0;
+  color: #234157;
+  font-size: 0.95rem;
+}
+
+.task-section--pending .task-section-head h3 {
+  color: #9a3412;
+}
+
+.task-section--open .task-section-head h3 {
+  color: #0e7490;
+}

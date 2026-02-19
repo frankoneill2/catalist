@@ -67,6 +67,8 @@ let updatesSearch = '';
 let lastCasesDocs = null; // Array of document snapshots
 let renderTableFromDocs = null; // function(docsArray)
 let tableTaskUnsubs = new Map(); // per-case tasks listeners in table
+let pendingDischargeCaseIds = new Set(); // keep discharged rows in active table until navigation/refresh
+let showDischargedCases = false;
 let unsubUsers = null;
 let unsubLocations = null;
 let usersCache = [];
@@ -124,6 +126,12 @@ const dashboardStats = {
   locations: 0,
 };
 
+const TASK_ASSIGNMENT = {
+  OPEN: 'open',
+  PENDING: 'pending_acceptance',
+  ACCEPTED: 'accepted',
+};
+
 // Gentle cell background colors for table cells
 const CELL_COLORS = [
   '#fef3c7', // amber-100
@@ -178,6 +186,173 @@ function autoResizeTextarea(el) {
   el.style.height = 'auto';
   const next = el.scrollHeight;
   if (next) el.style.height = `${next}px`;
+}
+
+function placeCaret(el, atEnd = true) {
+  if (!el) return;
+  try {
+    const sel = window.getSelection();
+    if (!sel) return;
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(!atEnd);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } catch {}
+}
+
+function placeCaretAtEnd(el) { placeCaret(el, true); }
+function placeCaretAtStart(el) { placeCaret(el, false); }
+
+function normalizeTaskAssignmentState(data = {}) {
+  const raw = data && data.assignmentState;
+  if (raw === TASK_ASSIGNMENT.OPEN || raw === TASK_ASSIGNMENT.PENDING || raw === TASK_ASSIGNMENT.ACCEPTED) return raw;
+  return data && data.assignee ? TASK_ASSIGNMENT.ACCEPTED : TASK_ASSIGNMENT.OPEN;
+}
+
+function isTaskPendingAcceptance(data = {}) {
+  return !!(data && data.assignee) && normalizeTaskAssignmentState(data) === TASK_ASSIGNMENT.PENDING;
+}
+
+function isTaskOpenForTeam(data = {}) {
+  return !data?.assignee && normalizeTaskAssignmentState(data) === TASK_ASSIGNMENT.OPEN;
+}
+
+function isTaskAcceptedAssignment(data = {}) {
+  const state = normalizeTaskAssignmentState(data);
+  return state === TASK_ASSIGNMENT.ACCEPTED || (!!data?.assignee && state !== TASK_ASSIGNMENT.PENDING);
+}
+
+function taskAssignmentStatusLabel(data = {}) {
+  if (isTaskPendingAcceptance(data)) return `Awaiting ${data.assignee} acceptance`;
+  if (isTaskOpenForTeam(data)) return 'Open task';
+  return '';
+}
+
+function buildTaskCreationPayload({ textCipher, textIv, statusCipher, statusIv, assignee = null, priority = null }) {
+  const nextAssignee = assignee || null;
+  const isPending = !!nextAssignee;
+  return {
+    textCipher,
+    textIv,
+    statusCipher,
+    statusIv,
+    createdAt: serverTimestamp(),
+    username: username || null,
+    assignee: nextAssignee,
+    priority: priority || null,
+    assignmentState: isPending ? TASK_ASSIGNMENT.PENDING : TASK_ASSIGNMENT.OPEN,
+    assignedBy: isPending ? (username || null) : null,
+    assignedAt: isPending ? serverTimestamp() : null,
+    acceptedBy: null,
+    acceptedAt: null,
+  };
+}
+
+function buildTaskAssignmentPatch(nextAssignee) {
+  const assignee = nextAssignee || null;
+  if (!assignee) {
+    return {
+      assignee: null,
+      assignmentState: TASK_ASSIGNMENT.OPEN,
+      assignedBy: null,
+      assignedAt: null,
+      acceptedBy: null,
+      acceptedAt: null,
+    };
+  }
+  return {
+    assignee,
+    assignmentState: TASK_ASSIGNMENT.PENDING,
+    assignedBy: username || null,
+    assignedAt: serverTimestamp(),
+    acceptedBy: null,
+    acceptedAt: null,
+  };
+}
+
+async function updateTaskAssignment(caseId, taskId, nextAssignee, opts = {}) {
+  const { caseTitle = null, taskText = null } = opts || {};
+  const patch = buildTaskAssignmentPatch(nextAssignee);
+  await updateDoc(doc(db, 'cases', caseId, 'tasks', taskId), patch);
+  if (nextAssignee) {
+    try {
+      const payload = { type: 'task_assigned', caseId, taskId, caseTitle: caseTitle || undefined, assignee: nextAssignee };
+      if (taskText) {
+        const tEnc = await encryptText(taskText);
+        payload.taskTextCipher = tEnc.cipher;
+        payload.taskTextIv = tEnc.iv;
+      }
+      await logUpdate(payload);
+    } catch {}
+  } else {
+    try {
+      const payload = { type: 'task_reopened', caseId, taskId, caseTitle: caseTitle || undefined };
+      if (taskText) {
+        const tEnc = await encryptText(taskText);
+        payload.taskTextCipher = tEnc.cipher;
+        payload.taskTextIv = tEnc.iv;
+      }
+      await logUpdate(payload);
+    } catch {}
+  }
+  if (nextAssignee) showToast(`Assigned to ${nextAssignee}. Awaiting acceptance.`);
+  else showToast('Task moved to open tasks.');
+}
+
+async function acceptTaskAssignment(caseId, taskId, opts = {}) {
+  const { caseTitle = null, taskText = null } = opts || {};
+  await updateDoc(doc(db, 'cases', caseId, 'tasks', taskId), {
+    assignmentState: TASK_ASSIGNMENT.ACCEPTED,
+    acceptedBy: username || null,
+    acceptedAt: serverTimestamp(),
+  });
+  try {
+    const payload = { type: 'task_assignment_accepted', caseId, taskId, caseTitle: caseTitle || undefined, assignee: username || null };
+    if (taskText) {
+      const tEnc = await encryptText(taskText);
+      payload.taskTextCipher = tEnc.cipher;
+      payload.taskTextIv = tEnc.iv;
+    }
+    await logUpdate(payload);
+  } catch {}
+}
+
+async function declineTaskAssignment(caseId, taskId, opts = {}) {
+  const { caseTitle = null, taskText = null } = opts || {};
+  await updateDoc(doc(db, 'cases', caseId, 'tasks', taskId), {
+    assignee: null,
+    assignmentState: TASK_ASSIGNMENT.OPEN,
+    assignedBy: null,
+    assignedAt: null,
+    acceptedBy: null,
+    acceptedAt: null,
+  });
+  try {
+    const payload = { type: 'task_assignment_declined', caseId, taskId, caseTitle: caseTitle || undefined, assignee: username || null };
+    if (taskText) {
+      const tEnc = await encryptText(taskText);
+      payload.taskTextCipher = tEnc.cipher;
+      payload.taskTextIv = tEnc.iv;
+    }
+    await logUpdate(payload);
+  } catch {}
+}
+
+function isCaseDischarged(data = {}) {
+  return !!data?.dischargedAt;
+}
+
+function clearPendingDischargeState() {
+  if (!pendingDischargeCaseIds.size) return;
+  pendingDischargeCaseIds.clear();
+  if (tableSection && !tableSection.hidden && lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs);
+}
+
+function updateTableStickyOffset() {
+  const top = document.querySelector('.topbar');
+  const offset = top ? Math.ceil(top.getBoundingClientRect().height + 8) : 64;
+  document.documentElement.style.setProperty('--table-sticky-offset', `${offset}px`);
 }
 
 function saveTagFilterState() {
@@ -526,6 +701,11 @@ async function decryptText(cipher, iv) {
   return dec.decode(plain);
 }
 
+async function safeDecryptText(cipher, iv) {
+  if (!cipher || !Array.isArray(iv) || iv.length !== 12) return null;
+  try { return await decryptText(cipher, iv); } catch { return null; }
+}
+
 // --- UI helpers
 function showCaseList() {
   // Legacy: route to table view now
@@ -540,6 +720,7 @@ function showCaseList() {
 }
 
 async function openCase(id, title, source = 'list', initialTab = 'overview') {
+  clearPendingDischargeState();
   currentCaseId = id;
   backTarget = source === 'user' ? 'user' : (source === 'table' ? 'table' : (source === 'updates' ? 'updates' : 'list'));
   setWorkspaceOverviewVisible(false);
@@ -588,9 +769,11 @@ function showMainTab(which) {
     userDetailEl.hidden = true;
     if (updatesSection) updatesSection.hidden = true;
     if (tableSection) tableSection.hidden = false;
+    updateTableStickyOffset();
     if (!unsubTable) startRealtimeTable();
     if (unsubUpdates) { try { unsubUpdates(); } catch {} unsubUpdates = null; }
   } else if (isMy) {
+    clearPendingDischargeState();
     setWorkspaceOverviewVisible(true);
     if (tableSection) tableSection.hidden = true;
     if (unsubTable) { unsubTable(); unsubTable = null; }
@@ -598,6 +781,7 @@ function showMainTab(which) {
     if (unsubUpdates) { try { unsubUpdates(); } catch {} unsubUpdates = null; }
     openUser(username);
   } else if (isUpdates) {
+    clearPendingDischargeState();
     setWorkspaceOverviewVisible(true);
     if (tableSection) tableSection.hidden = true;
     if (unsubTable) { unsubTable(); unsubTable = null; }
@@ -607,6 +791,7 @@ function showMainTab(which) {
     if (!unsubUpdates) startRealtimeUpdates();
   } else {
     // default: hide everything except table
+    clearPendingDischargeState();
     setWorkspaceOverviewVisible(true);
     if (updatesSection) updatesSection.hidden = true;
     if (unsubUpdates) { try { unsubUpdates(); } catch {} unsubUpdates = null; }
@@ -1084,18 +1269,18 @@ async function loadCompactTasks(caseId, caseTitle, ul, moreBtn) {
           b.addEventListener('click', async (ev) => {
             ev.stopPropagation();
             try {
-              await updateDoc(doc(db, 'cases', caseId, 'tasks', it.id), { assignee: value });
+              await updateTaskAssignment(caseId, it.id, value, { caseTitle, taskText: it.text });
               loadCompactTasks(caseId, caseTitle, ul, moreBtn);
             } catch (err) {
               console.error('Failed to reassign task', err);
-              showToast('Failed to reassign');
+              showToast('Failed to update assignee');
             } finally {
               panel.remove();
             }
           });
           panel.appendChild(b);
         };
-        addOpt('Unassigned', null);
+        addOpt('Open task', null);
         for (const u of usersCache) addOpt(u.username, u.username);
         document.body.appendChild(panel);
         // Position near the avatar (below, aligned to right if space)
@@ -1350,7 +1535,7 @@ function startRealtimeTasks(caseId) {
           }
           sel.value = (data.assignee || '');
           sel.addEventListener('change', async () => {
-            await updateDoc(doc(db, 'cases', caseId, 'tasks', docSnap.id), { assignee: sel.value || null });
+            await updateTaskAssignment(caseId, docSnap.id, sel.value || null, { caseTitle: (caseTitleEl && caseTitleEl.textContent) || null, taskText: titleSpan.textContent || '' });
             sel.remove();
             panel.hidden = true;
             showToast('Assignee updated');
@@ -1631,6 +1816,26 @@ function buildUpdateDom(item) {
     if (item.taskText) { const tn=document.createElement('span'); tn.className='task-name-chip'; tn.textContent=item.taskText; frag.appendChild(tn); } else { frag.appendChild(document.createTextNode('a task')); }
     frag.appendChild(document.createTextNode(' as complete in '));
     frag.appendChild(caseChip);
+  } else if (item.type==='task_assigned') {
+    frag.appendChild(document.createTextNode(' assigned '));
+    if (item.taskText) { const tn=document.createElement('span'); tn.className='task-name-chip'; tn.textContent=item.taskText; frag.appendChild(tn); } else { frag.appendChild(document.createTextNode('a task')); }
+    frag.appendChild(document.createTextNode(` to ${item.assignee || 'a teammate'} (pending acceptance) in `));
+    frag.appendChild(caseChip);
+  } else if (item.type==='task_assignment_accepted') {
+    frag.appendChild(document.createTextNode(' accepted '));
+    if (item.taskText) { const tn=document.createElement('span'); tn.className='task-name-chip'; tn.textContent=item.taskText; frag.appendChild(tn); } else { frag.appendChild(document.createTextNode('a task')); }
+    frag.appendChild(document.createTextNode(' in '));
+    frag.appendChild(caseChip);
+  } else if (item.type==='task_assignment_declined') {
+    frag.appendChild(document.createTextNode(' declined '));
+    if (item.taskText) { const tn=document.createElement('span'); tn.className='task-name-chip'; tn.textContent=item.taskText; frag.appendChild(tn); } else { frag.appendChild(document.createTextNode('a task')); }
+    frag.appendChild(document.createTextNode(' (returned to open) in '));
+    frag.appendChild(caseChip);
+  } else if (item.type==='task_reopened') {
+    frag.appendChild(document.createTextNode(' returned '));
+    if (item.taskText) { const tn=document.createElement('span'); tn.className='task-name-chip'; tn.textContent=item.taskText; frag.appendChild(tn); } else { frag.appendChild(document.createTextNode('a task')); }
+    frag.appendChild(document.createTextNode(' to open in '));
+    frag.appendChild(caseChip);
   } else if (item.type==='comment_added') {
     frag.appendChild(document.createTextNode(' commented in '));
     frag.appendChild(caseChip);
@@ -1697,6 +1902,19 @@ function renderUpdatesList() {
           frag.appendChild(document.createTextNode(' marked '));
           if (it.taskText) { const tn=document.createElement('span'); tn.className='task-name-chip'; tn.textContent=it.taskText; frag.appendChild(tn); } else { frag.appendChild(document.createTextNode('a task')); }
           frag.appendChild(document.createTextNode(' as complete'));
+        } else if (it.type==='task_assigned') {
+          frag.appendChild(document.createTextNode(' assigned '));
+          if (it.taskText) { const tn=document.createElement('span'); tn.className='task-name-chip'; tn.textContent=it.taskText; frag.appendChild(tn); } else { frag.appendChild(document.createTextNode('a task')); }
+          frag.appendChild(document.createTextNode(` to ${it.assignee || 'a teammate'} (pending)`));
+        } else if (it.type==='task_assignment_accepted') {
+          frag.appendChild(document.createTextNode(' accepted '));
+          if (it.taskText) { const tn=document.createElement('span'); tn.className='task-name-chip'; tn.textContent=it.taskText; frag.appendChild(tn); } else { frag.appendChild(document.createTextNode('a task')); }
+        } else if (it.type==='task_assignment_declined') {
+          frag.appendChild(document.createTextNode(' declined assignment'));
+          if (it.taskText) { const tn=document.createElement('span'); tn.className='task-name-chip'; tn.textContent=it.taskText; frag.appendChild(tn); }
+        } else if (it.type==='task_reopened') {
+          frag.appendChild(document.createTextNode(' reopened '));
+          if (it.taskText) { const tn=document.createElement('span'); tn.className='task-name-chip'; tn.textContent=it.taskText; frag.appendChild(tn); } else { frag.appendChild(document.createTextNode('a task')); }
         } else if (it.type==='comment_added') {
           frag.appendChild(document.createTextNode(' commented'));
           if (it.comment) { const chip=document.createElement('span'); chip.className='chip'; chip.textContent=it.comment; chip.style.maxWidth='220px'; chip.style.overflow='hidden'; chip.style.textOverflow='ellipsis'; chip.style.whiteSpace='nowrap'; frag.appendChild(document.createTextNode(' ')); frag.appendChild(chip); }
@@ -1739,9 +1957,9 @@ function startRealtimeUpdates() {
       updatesCache.clear();
       for (const d of snap.docs) {
         const data = d.data();
-        const it = { id: d.id, type: data.type, username: data.username||'', caseId: data.caseId||'', taskId: data.taskId||'', createdAt: data.createdAt||null, createdAtMs: data.createdAt?.toMillis ? data.createdAt.toMillis() : null };
+        const it = { id: d.id, type: data.type, username: data.username||'', assignee: data.assignee || '', caseId: data.caseId||'', taskId: data.taskId||'', createdAt: data.createdAt||null, createdAtMs: data.createdAt?.toMillis ? data.createdAt.toMillis() : null };
         try { if (data.caseTitleCipher && data.caseTitleIv) it.caseTitle = await decryptText(data.caseTitleCipher, data.caseTitleIv); } catch {}
-        if (it.type==='task_added' || it.type==='task_completed') {
+        if (['task_added','task_completed','task_assigned','task_assignment_accepted','task_assignment_declined','task_reopened'].includes(it.type)) {
           try { if (data.taskTextCipher && data.taskTextIv) it.taskText = await decryptText(data.taskTextCipher, data.taskTextIv); } catch {}
         } else if (it.type==='comment_added') {
           try { if (data.commentCipher && data.commentIv) it.comment = await decryptText(data.commentCipher, data.commentIv); } catch {}
@@ -1750,7 +1968,15 @@ function startRealtimeUpdates() {
           try { if (data.noteTitleCipher && data.noteTitleIv) it.noteTitle = await decryptText(data.noteTitleCipher, data.noteTitleIv); } catch {}
           try { if (data.noteTextCipher && data.noteTextIv) it.note = await decryptText(data.noteTextCipher, data.noteTextIv); } catch {}
         }
-        it.icon = (it.type==='task_added') ? '➕' : (it.type==='task_completed') ? '☑' : (it.type==='comment_added') ? '💬' : (it.type==='note_added') ? '📝' : '•';
+        if (it.type==='task_added') it.icon = '➕';
+        else if (it.type==='task_completed') it.icon = '☑';
+        else if (it.type==='task_assigned') it.icon = '📨';
+        else if (it.type==='task_assignment_accepted') it.icon = '✅';
+        else if (it.type==='task_assignment_declined') it.icon = '↩';
+        else if (it.type==='task_reopened') it.icon = '🔓';
+        else if (it.type==='comment_added') it.icon = '💬';
+        else if (it.type==='note_added') it.icon = '📝';
+        else it.icon = '•';
         updatesItems.push(it); updatesCache.set(d.id, it);
       }
       updatesLastDoc = snap.docs[snap.docs.length-1] || null;
@@ -1775,9 +2001,9 @@ async function loadMoreUpdates() {
     const more = [];
     for (const d of snap.docs) {
       const data = d.data();
-      const it = { id: d.id, type: data.type, username: data.username||'', caseId: data.caseId||'', taskId: data.taskId||'', createdAt: data.createdAt||null, createdAtMs: data.createdAt?.toMillis ? data.createdAt.toMillis() : null };
+      const it = { id: d.id, type: data.type, username: data.username||'', assignee: data.assignee || '', caseId: data.caseId||'', taskId: data.taskId||'', createdAt: data.createdAt||null, createdAtMs: data.createdAt?.toMillis ? data.createdAt.toMillis() : null };
       try { if (data.caseTitleCipher && data.caseTitleIv) it.caseTitle = await decryptText(data.caseTitleCipher, data.caseTitleIv); } catch {}
-      if (it.type==='task_added' || it.type==='task_completed') {
+      if (['task_added','task_completed','task_assigned','task_assignment_accepted','task_assignment_declined','task_reopened'].includes(it.type)) {
         try { if (data.taskTextCipher && data.taskTextIv) it.taskText = await decryptText(data.taskTextCipher, data.taskTextIv); } catch {}
       } else if (it.type==='comment_added') {
         try { if (data.commentCipher && data.commentIv) it.comment = await decryptText(data.commentCipher, data.commentIv); } catch {}
@@ -1786,7 +2012,15 @@ async function loadMoreUpdates() {
         try { if (data.noteTitleCipher && data.noteTitleIv) it.noteTitle = await decryptText(data.noteTitleCipher, data.noteTitleIv); } catch {}
         try { if (data.noteTextCipher && data.noteTextIv) it.note = await decryptText(data.noteTextCipher, data.noteTextIv); } catch {}
       }
-      it.icon = (it.type==='task_added') ? '➕' : (it.type==='task_completed') ? '☑' : (it.type==='comment_added') ? '💬' : (it.type==='note_added') ? '📝' : '•';
+      if (it.type==='task_added') it.icon = '➕';
+      else if (it.type==='task_completed') it.icon = '☑';
+      else if (it.type==='task_assigned') it.icon = '📨';
+      else if (it.type==='task_assignment_accepted') it.icon = '✅';
+      else if (it.type==='task_assignment_declined') it.icon = '↩';
+      else if (it.type==='task_reopened') it.icon = '🔓';
+      else if (it.type==='comment_added') it.icon = '💬';
+      else if (it.type==='note_added') it.icon = '📝';
+      else it.icon = '•';
       more.push(it); updatesCache.set(d.id, it);
     }
     updatesLastDoc = snap.docs[snap.docs.length-1] || null;
@@ -1882,10 +2116,12 @@ async function saveItems(caseId, letter, items) {
   await updateDoc(doc(db, 'cases', caseId), p);
 }
 
-function buildTableSkeleton() {
+function buildTableSkeleton(opts = {}) {
+  const { variant = 'active' } = opts || {};
   if (!tableRoot) return { table: null, tbody: null };
   const table = document.createElement('table');
-  table.className = 'data-table';
+  table.className = `data-table ${variant === 'discharged' ? 'data-table--discharged' : ''}`.trim();
+  table.dataset.variant = variant;
   const thead = document.createElement('thead');
   const tr = document.createElement('tr');
   const headers = ['Patient', 'Diagnosis', 'History', 'Meds', 'Investigations', 'Issues', 'Tasks'];
@@ -1895,6 +2131,83 @@ function buildTableSkeleton() {
   table.appendChild(thead);
   table.appendChild(tbody);
   return { table, tbody };
+}
+
+function attachTableKeyboardNavigation(table) {
+  if (!table) return;
+  const cells = Array.from(table.querySelectorAll('tbody td'));
+  cells.forEach((cell) => {
+    cell.tabIndex = 0;
+    cell.classList.add('table-nav-cell');
+  });
+
+  const getCellPosition = (cell) => {
+    const row = cell.parentElement;
+    if (!row || !row.parentElement) return null;
+    const rowIndex = Array.prototype.indexOf.call(row.parentElement.children, row);
+    const colIndex = cell.cellIndex;
+    if (rowIndex < 0 || colIndex < 0) return null;
+    return { rowIndex, colIndex };
+  };
+
+  const focusCell = (rowIndex, colIndex) => {
+    const row = table.querySelectorAll('tbody tr')[rowIndex];
+    if (!row) return null;
+    const cell = row.children[colIndex];
+    if (!cell) return null;
+    cell.focus();
+    return cell;
+  };
+
+  const focusPrimaryInCell = (cell, activate = false) => {
+    if (!cell) return;
+    const patientLink = cell.querySelector('.patient-link');
+    if (patientLink) {
+      if (activate) patientLink.click();
+      else patientLink.focus();
+      return;
+    }
+    const target = cell.querySelector('.cell-title, .cell-editable, .composer input, input, button, select, textarea, [contenteditable="true"]');
+    if (!target) return;
+    target.focus();
+    if (target.matches('.cell-title, .cell-editable, [contenteditable="true"]')) placeCaretAtEnd(target);
+  };
+
+  table.addEventListener('keydown', (e) => {
+    const cell = e.target instanceof Element ? e.target.closest('td') : null;
+    if (!cell || !table.contains(cell)) return;
+    const pos = getCellPosition(cell);
+    if (!pos) return;
+
+    const inEditor = isEditableTarget(e.target);
+    const needsModifier = inEditor && !e.altKey;
+    const key = e.key;
+
+    if (key === 'ArrowLeft' || key === 'ArrowRight' || key === 'ArrowUp' || key === 'ArrowDown') {
+      if (needsModifier) return;
+      e.preventDefault();
+      let nextRow = pos.rowIndex;
+      let nextCol = pos.colIndex;
+      if (key === 'ArrowLeft') nextCol -= 1;
+      if (key === 'ArrowRight') nextCol += 1;
+      if (key === 'ArrowUp') nextRow -= 1;
+      if (key === 'ArrowDown') nextRow += 1;
+      const next = focusCell(nextRow, nextCol);
+      if (next && e.shiftKey) focusPrimaryInCell(next, false);
+      return;
+    }
+
+    if (key === 'Enter' && !inEditor) {
+      e.preventDefault();
+      focusPrimaryInCell(cell, e.altKey);
+      return;
+    }
+
+    if (key === 'F2') {
+      e.preventDefault();
+      focusPrimaryInCell(cell, false);
+    }
+  });
 }
 
 function startRealtimeTable() {
@@ -1907,8 +2220,9 @@ function startRealtimeTable() {
     if (active && active.classList && (active.classList.contains('cell-editable') || active.classList.contains('cell-title'))) {
       pendingTableSnap = { docs: docsInput }; tableRebuildPending = true; return;
     }
-    const { table, tbody } = buildTableSkeleton();
-    if (!table || !tbody || !tableRoot) return;
+    const { table, tbody } = buildTableSkeleton({ variant: 'active' });
+    const { table: dischargedTable, tbody: dischargedTbody } = buildTableSkeleton({ variant: 'discharged' });
+    if (!table || !tbody || !tableRoot || !dischargedTable || !dischargedTbody) return;
     // Optionally sort by tag
     let docs = docsInput;
     if (activeTagSort && activeTagSort !== 'none') {
@@ -1939,13 +2253,26 @@ function startRealtimeTable() {
       docs = scored.map(s=>s.d);
     }
 
+    const presentTaskListeners = new Set();
     let visibleCases = 0;
+    let dischargedVisibleCases = 0;
     for (const d of docs) {
       const data = d.data();
       let title = '';
       try { title = await decryptText(data.titleCipher, data.titleIv); } catch {}
       if (!title || !title.trim()) continue;
+      if (!caseMatchesTagFilters(data.caseTags || {})) continue;
+      const isDischarged = isCaseDischarged(data);
+      const pendingDischarge = pendingDischargeCaseIds.has(d.id);
+      const renderAsDischarged = isDischarged && !pendingDischarge;
+      if (renderAsDischarged && !showDischargedCases) {
+        dischargedVisibleCases += 1;
+        continue;
+      }
       const tr = document.createElement('tr');
+      tr.dataset.caseId = d.id;
+      if (pendingDischarge) tr.classList.add('case-row-discharge-pending');
+      if (renderAsDischarged) tr.classList.add('case-row-discharged');
       const tdName = document.createElement('td');
       const nameWrap = document.createElement('div'); nameWrap.className = 'name-cell';
       const nameRow = document.createElement('div'); nameRow.className = 'name-row';
@@ -1964,28 +2291,98 @@ function startRealtimeTable() {
         openWardNoteComposerV2();
       });
       nameRow.appendChild(newNoteBtn);
-      // Delete case button in table row
-      const delBtn = document.createElement('button'); delBtn.type='button'; delBtn.className='icon-btn delete-btn'; delBtn.textContent='🗑'; delBtn.title='Delete case';
-      delBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        if (!confirm('Delete this case and all its items?')) return;
-        try {
-          await deleteCaseDeep(d.id);
-          if (currentCaseId === d.id) {
-            if (unsubTasks) { try { unsubTasks(); } catch {} unsubTasks = null; }
-            if (unsubNotes) { try { unsubNotes(); } catch {} unsubNotes = null; }
-            if (unsubCaseDoc) { try { unsubCaseDoc(); } catch {} unsubCaseDoc = null; }
-            currentCaseId = null;
-            caseDetailEl.hidden = true;
-            if (tableSection) tableSection.hidden = false;
+      const makeDeleteCaseBtn = () => {
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.className = 'icon-btn delete-btn';
+        delBtn.textContent = '🗑';
+        delBtn.title = 'Delete case permanently';
+        delBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (!confirm('Delete this case and all its items?')) return;
+          try {
+            await deleteCaseDeep(d.id);
+            if (currentCaseId === d.id) {
+              if (unsubTasks) { try { unsubTasks(); } catch {} unsubTasks = null; }
+              if (unsubNotes) { try { unsubNotes(); } catch {} unsubNotes = null; }
+              if (unsubCaseDoc) { try { unsubCaseDoc(); } catch {} unsubCaseDoc = null; }
+              currentCaseId = null;
+              caseDetailEl.hidden = true;
+              if (tableSection) tableSection.hidden = false;
+            }
+            showToast('Case deleted');
+          } catch (err) {
+            console.error('Failed to delete case', err);
+            showToast('Failed to delete case');
           }
-          showToast('Case deleted');
-        } catch (err) {
-          console.error('Failed to delete case', err);
-          showToast('Failed to delete case');
-        }
-      });
-      nameRow.appendChild(delBtn);
+        });
+        return delBtn;
+      };
+
+      if (renderAsDischarged) {
+        const reopenBtn = document.createElement('button');
+        reopenBtn.type = 'button';
+        reopenBtn.className = 'icon-btn small';
+        reopenBtn.textContent = 'Reopen';
+        reopenBtn.title = 'Move case back to active list';
+        reopenBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          try {
+            await updateDoc(doc(db, 'cases', d.id), { dischargedAt: null, dischargedBy: null });
+            showToast('Case moved back to active list');
+          } catch (err) {
+            console.error('Failed to reopen case', err);
+            showToast('Failed to reopen case');
+          }
+        });
+        nameRow.appendChild(reopenBtn);
+        nameRow.appendChild(makeDeleteCaseBtn());
+      } else if (pendingDischarge) {
+        const pendingChip = document.createElement('span');
+        pendingChip.className = 'pending-discharge-chip';
+        pendingChip.textContent = 'Discharge pending';
+        pendingChip.title = 'This case will move after refresh or navigation away';
+        nameRow.appendChild(pendingChip);
+        const undoBtn = document.createElement('button');
+        undoBtn.type = 'button';
+        undoBtn.className = 'icon-btn small';
+        undoBtn.textContent = 'Undo';
+        undoBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          try {
+            await updateDoc(doc(db, 'cases', d.id), { dischargedAt: null, dischargedBy: null });
+            pendingDischargeCaseIds.delete(d.id);
+            if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs);
+            showToast('Discharge cancelled');
+          } catch (err) {
+            console.error('Failed to cancel discharge', err);
+            showToast('Failed to cancel discharge');
+          }
+        });
+        nameRow.appendChild(undoBtn);
+      } else {
+        const dischargeBtn = document.createElement('button');
+        dischargeBtn.type = 'button';
+        dischargeBtn.className = 'icon-btn small';
+        dischargeBtn.textContent = 'Discharge';
+        dischargeBtn.title = 'Mark patient as discharged';
+        dischargeBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (!confirm(`Discharge ${title}?`)) return;
+          pendingDischargeCaseIds.add(d.id);
+          if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs);
+          try {
+            await updateDoc(doc(db, 'cases', d.id), { dischargedAt: serverTimestamp(), dischargedBy: username || null });
+            showToast('Discharge queued. It moves after refresh or navigation away.');
+          } catch (err) {
+            pendingDischargeCaseIds.delete(d.id);
+            if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs);
+            console.error('Failed to discharge case', err);
+            showToast('Failed to discharge case');
+          }
+        });
+        nameRow.appendChild(dischargeBtn);
+      }
       nameWrap.appendChild(nameRow);
       // Render tag chips (location/room/consultant)
       const chips = document.createElement('div'); chips.className = 'tag-chips';
@@ -2025,6 +2422,19 @@ function startRealtimeTable() {
       if (caseTags.room && caseTags.location) mkChip('Room', 'room', caseTags.room);
       mkChip('Consultant', 'consultant', caseTags.consultant || null);
       nameWrap.appendChild(chips);
+      if (renderAsDischarged || pendingDischarge) {
+        const dischargeMeta = document.createElement('div');
+        dischargeMeta.className = 'case-discharge-meta';
+        const at = (data.dischargedAt && data.dischargedAt.toDate) ? data.dischargedAt.toDate() : null;
+        if (pendingDischarge) {
+          dischargeMeta.textContent = 'Pending discharge. Changes apply after refresh or navigation.';
+        } else {
+          const when = at ? at.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'recently';
+          const who = (data.dischargedBy || '').trim();
+          dischargeMeta.textContent = who ? `Discharged by ${who} (${when})` : `Discharged (${when})`;
+        }
+        nameWrap.appendChild(dischargeMeta);
+      }
       tdName.appendChild(nameWrap);
       tr.appendChild(tdName);
       for (const letter of ['A','B','C','D','E','F']) {
@@ -2032,14 +2442,28 @@ function startRealtimeTable() {
         if (letter === 'F') {
           const wrap = document.createElement('div'); wrap.className = 'cell-tasks';
           const ul = document.createElement('ul'); wrap.appendChild(ul);
-          const form = document.createElement('form'); form.className = 'composer compact';
-          const inp = document.createElement('input'); inp.placeholder = 'Add task…'; inp.setAttribute('aria-label','Task description');
-          form.appendChild(inp);
-          form.addEventListener('submit', async (e) => { e.preventDefault(); const t=(inp.value||'').trim(); if(!t) return; const { cipher: textCipher, iv: textIv } = await encryptText(t); const { cipher: statusCipher, iv: statusIv } = await encryptText('open'); const ref = await addDoc(collection(db,'cases',d.id,'tasks'), { textCipher, textIv, statusCipher, statusIv, createdAt: serverTimestamp(), username: username || null, assignee: null, priority: null }); try { await logUpdate({ type: 'task_added', caseId: d.id, caseTitle: title, taskId: ref.id, taskTextCipher: textCipher, taskTextIv: textIv }); } catch {} inp.value=''; });
-          td.appendChild(wrap); td.appendChild(form);
+          td.appendChild(wrap);
+          if (!renderAsDischarged) {
+            const form = document.createElement('form'); form.className = 'composer compact';
+            const inp = document.createElement('input'); inp.placeholder = 'Add task…'; inp.setAttribute('aria-label','Task description');
+            form.appendChild(inp);
+            form.addEventListener('submit', async (e) => {
+              e.preventDefault();
+              const t = (inp.value || '').trim();
+              if (!t) return;
+              const { cipher: textCipher, iv: textIv } = await encryptText(t);
+              const { cipher: statusCipher, iv: statusIv } = await encryptText('open');
+              const payload = buildTaskCreationPayload({ textCipher, textIv, statusCipher, statusIv, assignee: null, priority: null });
+              const ref = await addDoc(collection(db, 'cases', d.id, 'tasks'), payload);
+              try { await logUpdate({ type: 'task_added', caseId: d.id, caseTitle: title, taskId: ref.id, taskTextCipher: textCipher, taskTextIv: textIv }); } catch {}
+              inp.value = '';
+            });
+            td.appendChild(form);
+          }
           if (tableTaskUnsubs.has(d.id)) { try { tableTaskUnsubs.get(d.id)(); } catch {} tableTaskUnsubs.delete(d.id); }
-          const unsub = attachTasksListRealtime(d.id, ul, { caseTitle: title });
+          const unsub = attachTasksListRealtime(d.id, ul, { caseTitle: title, readOnly: renderAsDischarged });
           tableTaskUnsubs.set(d.id, unsub);
+          presentTaskListeners.add(d.id);
         } else {
           // Multi-header cell with inline-editable header lines
           const container = document.createElement('div'); container.className = 'cell-items';
@@ -2067,7 +2491,7 @@ function startRealtimeTable() {
                   renderLines(true);
                   scheduleSave();
                   // Focus the newly created first line
-                  setTimeout(()=>{ const n=container.querySelector('.cell-title'); if (n) { n.focus(); } },0);
+                  setTimeout(()=>{ const n=container.querySelector('.cell-title'); if (n) { n.focus(); placeCaretAtEnd(n); } },0);
                 }
               });
               // Navigation keys on placeholder
@@ -2081,7 +2505,7 @@ function startRealtimeTable() {
                   items.splice(1,0,newItem('',''));
                   window._cellExpand.add(expandedKey);
                   renderLines(true); scheduleSave();
-                  setTimeout(()=>{ const n=container.querySelectorAll('.cell-title')[1]; if (n) { n.focus(); } },0);
+                  setTimeout(()=>{ const n=container.querySelectorAll('.cell-title')[1]; if (n) { n.focus(); placeCaretAtStart(n); } },0);
                 } else if ((e.key==='Enter') && (e.ctrlKey||e.metaKey)) {
                   e.preventDefault();
                   const cellIndex=td.cellIndex; const nextRow=tr.nextElementSibling; if (nextRow && nextRow.children[cellIndex]) { const n=nextRow.children[cellIndex].querySelector('.cell-title, .cell-editable'); if (n) n.focus(); }
@@ -2273,26 +2697,70 @@ function startRealtimeTable() {
         }
         tr.appendChild(td);
       }
-      // Apply tag filters: skip row if filters active and case doesn't match
-      if (!caseMatchesTagFilters(data.caseTags || {})) {
-        // skip
+      if (renderAsDischarged) {
+        dischargedTbody.appendChild(tr);
+        dischargedVisibleCases += 1;
       } else {
         tbody.appendChild(tr);
         visibleCases += 1;
       }
     }
-  updateDashboardStats({ visibleCases });
-  // Atomically replace table to prevent duplicated DOM
-  tableRoot.innerHTML = '';
-  tableRoot.appendChild(table);
-  // Footer new case button at bottom of table
-  const footer = document.createElement('div'); footer.className='new-case-footer';
-  const addBtn = document.createElement('button'); addBtn.type='button'; addBtn.className='btn primary'; addBtn.textContent='➕ New Case'; addBtn.addEventListener('click', openNewCaseModal);
-  footer.appendChild(addBtn);
-  tableRoot.appendChild(footer);
+    updateDashboardStats({ visibleCases });
+    // Atomically replace table to prevent duplicated DOM
+    tableRoot.innerHTML = '';
+    tableRoot.appendChild(table);
+    attachTableKeyboardNavigation(table);
+
+    // Footer new case button at bottom of table
+    const footer = document.createElement('div'); footer.className='new-case-footer';
+    const addBtn = document.createElement('button'); addBtn.type='button'; addBtn.className='btn primary'; addBtn.textContent='➕ New Case'; addBtn.addEventListener('click', openNewCaseModal);
+    footer.appendChild(addBtn);
+    tableRoot.appendChild(footer);
+
+    if (pendingDischargeCaseIds.size) {
+      const pendingBanner = document.createElement('div');
+      pendingBanner.className = 'pending-discharge-banner';
+      const count = pendingDischargeCaseIds.size;
+      pendingBanner.textContent = `${count} case${count === 1 ? '' : 's'} marked for discharge. Refresh or navigate away to move to discharged list.`;
+      tableRoot.appendChild(pendingBanner);
+    }
+
+    const dischargedSection = document.createElement('section');
+    dischargedSection.className = 'discharged-table-section';
+    const dischargedHeader = document.createElement('div');
+    dischargedHeader.className = 'discharged-table-header';
+    const dischargedToggle = document.createElement('button');
+    dischargedToggle.type = 'button';
+    dischargedToggle.className = 'icon-btn small';
+    dischargedToggle.textContent = `${showDischargedCases ? 'Hide' : 'Show'} discharged cases (${dischargedVisibleCases})`;
+    dischargedToggle.addEventListener('click', () => {
+      showDischargedCases = !showDischargedCases;
+      try { localStorage.setItem('table.showDischargedCases', showDischargedCases ? '1' : '0'); } catch {}
+      if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs);
+    });
+    dischargedHeader.appendChild(dischargedToggle);
+    dischargedSection.appendChild(dischargedHeader);
+    if (showDischargedCases) {
+      if (dischargedVisibleCases > 0) {
+        dischargedSection.appendChild(dischargedTable);
+        attachTableKeyboardNavigation(dischargedTable);
+      } else {
+        const empty = document.createElement('div');
+        empty.className = 'discharged-empty';
+        empty.textContent = 'No discharged cases in this view.';
+        dischargedSection.appendChild(empty);
+      }
+    }
+    tableRoot.appendChild(dischargedSection);
+
     // Clean up per-case task listeners for rows no longer present
-    const present = new Set(docsInput.map(s=>s.id));
-    for (const [cid, un] of Array.from(tableTaskUnsubs.entries())) { if (!present.has(cid)) { try { un(); } catch {} tableTaskUnsubs.delete(cid); } }
+    for (const [cid, un] of Array.from(tableTaskUnsubs.entries())) {
+      if (!presentTaskListeners.has(cid)) {
+        try { un(); } catch {}
+        tableTaskUnsubs.delete(cid);
+      }
+    }
+    updateTableStickyOffset();
   };
   unsubTable = onSnapshot(q, (snap) => {
     lastCasesDocs = snap.docs;
@@ -2562,23 +3030,32 @@ function attachTasksListRealtime(caseId, ul, opts = {}) {
 }
 
 function buildCompactTaskRow(caseId, it, opts = {}) {
+  const readOnly = !!opts.readOnly;
+  const data = it.data || {};
+  const assignmentState = normalizeTaskAssignmentState(data);
+  const pendingAcceptance = isTaskPendingAcceptance(data);
+  const pendingForMe = pendingAcceptance && (data.assignee || '') === (username || '');
   const li = document.createElement('li');
   const statusCls = it.status === 'in progress' ? 's-inprogress' : (it.status === 'complete' ? 's-complete' : 's-open');
-  li.className = 'case-task ' + statusCls;
+  li.className = 'case-task ' + statusCls + (pendingAcceptance ? ' task-pending-acceptance' : '');
   // Status toggle
   const statusBtn = document.createElement('button'); statusBtn.type='button'; statusBtn.className='status-btn';
   const icon = (s) => s === 'complete' ? '☑' : (s === 'in progress' ? '◐' : '☐');
   statusBtn.textContent = icon(it.status);
   statusBtn.setAttribute('aria-label', `Task status: ${it.status}`);
+  statusBtn.disabled = readOnly || pendingAcceptance;
+  if (statusBtn.disabled) statusBtn.title = pendingAcceptance ? 'Awaiting acceptance' : 'Read-only';
   statusBtn.addEventListener('click', async (e)=>{
     e.stopPropagation();
+    if (statusBtn.disabled) return;
     const order = ['open','in progress','complete'];
     const next = order[(order.indexOf(it.status)+1)%order.length];
-    try { const { cipher, iv } = await encryptText(next); await updateDoc(doc(db,'cases',caseId,'tasks',it.id),{ statusCipher:cipher, statusIv:iv }); it.status=next; statusBtn.textContent=icon(next); statusBtn.setAttribute('aria-label',`Task status: ${next}`); li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')); if (next==='complete') { try { const tEnc = await encryptText(it.text || ''); await logUpdate({ type: 'task_completed', caseId, caseTitle: (opts && opts.caseTitle) || 'Case', taskId: it.id, taskTextCipher: tEnc.cipher, taskTextIv: tEnc.iv }); } catch {} } } catch(err){ console.error('Failed to update status',err); showToast('Failed to update status'); }
+    try { const { cipher, iv } = await encryptText(next); await updateDoc(doc(db,'cases',caseId,'tasks',it.id),{ statusCipher:cipher, statusIv:iv }); it.status=next; statusBtn.textContent=icon(next); statusBtn.setAttribute('aria-label',`Task status: ${next}`); li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')) + (pendingAcceptance ? ' task-pending-acceptance' : ''); if (next==='complete') { try { const tEnc = await encryptText(it.text || ''); await logUpdate({ type: 'task_completed', caseId, caseTitle: (opts && opts.caseTitle) || 'Case', taskId: it.id, taskTextCipher: tEnc.cipher, taskTextIv: tEnc.iv }); } catch {} } } catch(err){ console.error('Failed to update status',err); showToast('Failed to update status'); }
   });
   const text = document.createElement('span'); text.className='task-text'; text.textContent = it.text;
   // Inline edit behavior: click to turn into a contenteditable field
   text.addEventListener('click', (e) => {
+    if (readOnly) return;
     e.stopPropagation();
     if (typeof opts._onEditStart === 'function') opts._onEditStart();
     const ed = document.createElement('div');
@@ -2609,25 +3086,109 @@ function buildCompactTaskRow(caseId, it, opts = {}) {
     text.insertAdjacentElement('afterend', ed);
     text.style.display = 'none';
     ed.focus();
+    placeCaretAtEnd(ed);
   });
   li.appendChild(statusBtn); li.appendChild(text);
-  if (it.data && it.data.priority) {
+  if (data && data.priority) {
     if (opts.compact) {
       const pri=document.createElement('span'); pri.style.fontSize='11px'; pri.style.color='#6b7280'; pri.title='Priority';
-      const p = (it.data.priority||'').toLowerCase();
+      const p = (data.priority||'').toLowerCase();
       pri.textContent = p === 'high' ? 'H' : p === 'medium' ? 'M' : p === 'low' ? 'L' : '';
       if (pri.textContent) li.appendChild(pri);
     } else {
-      const pri=document.createElement('span'); pri.className='mini-chip'; pri.textContent=it.data.priority; li.appendChild(pri);
+      const pri=document.createElement('span'); pri.className='mini-chip'; pri.textContent=data.priority; li.appendChild(pri);
     }
   }
-  const av=document.createElement('span'); av.className='mini-avatar'; const initials = it.data && it.data.assignee ? it.data.assignee.split(/\s+/).map(s=>s[0]).join('').slice(0,2).toUpperCase() : ''; av.textContent=initials||''; const col=colorForName((it.data && it.data.assignee)||''); av.style.background=col.bg; av.style.color=col.color; av.style.border=`1px solid ${col.border}`;
-  av.addEventListener('click',(e)=>{ e.stopPropagation(); const existing=document.querySelector('.assignee-panel'); if(existing) existing.remove(); const panel=document.createElement('div'); panel.className='assignee-panel'; panel.style.position='fixed'; panel.style.zIndex='2147483646'; const addOpt=(label,value)=>{ const b=document.createElement('button'); b.type='button'; b.className='assignee-option'; b.textContent=label; b.addEventListener('click', async (ev)=>{ ev.stopPropagation(); try{ await updateDoc(doc(db,'cases',caseId,'tasks',it.id),{ assignee:value }); } catch(err){ console.error('Failed to reassign',err); showToast('Failed to reassign'); } finally { panel.remove(); } }); panel.appendChild(b); }; addOpt('Unassigned', null); for (const u of usersCache) addOpt(u.username, u.username); document.body.appendChild(panel); const r=av.getBoundingClientRect(); requestAnimationFrame(()=>{ const w=panel.offsetWidth||160; const left=Math.min(Math.max(8, r.right-w), window.innerWidth - w - 8); const top=Math.min(window.innerHeight - panel.offsetHeight - 8, r.bottom + 6); panel.style.left=`${Math.round(left)}px`; panel.style.top=`${Math.round(top)}px`; }); const onDocClick=(evt)=>{ if(!panel || panel.contains(evt.target) || evt.target===av) return; panel.remove(); document.removeEventListener('click', onDocClick, true); }; setTimeout(()=>document.addEventListener('click', onDocClick, true),0); });
+  const assignmentLabel = taskAssignmentStatusLabel(data);
+  if (assignmentLabel) {
+    const assignmentChip = document.createElement('span');
+    assignmentChip.className = `assignment-state-chip ${pendingAcceptance ? 'pending' : 'open'}`;
+    assignmentChip.textContent = assignmentLabel;
+    li.appendChild(assignmentChip);
+  }
+
+  if (pendingForMe && !readOnly) {
+    const acceptBtn = document.createElement('button');
+    acceptBtn.type = 'button';
+    acceptBtn.className = 'icon-btn small';
+    acceptBtn.textContent = 'Accept';
+    acceptBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        await acceptTaskAssignment(caseId, it.id, { caseTitle: opts.caseTitle, taskText: it.text });
+        showToast('Task accepted');
+      } catch (err) {
+        console.error('Failed to accept task', err);
+        showToast('Failed to accept task');
+      }
+    });
+    const declineBtn = document.createElement('button');
+    declineBtn.type = 'button';
+    declineBtn.className = 'icon-btn small';
+    declineBtn.textContent = 'Decline';
+    declineBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        await declineTaskAssignment(caseId, it.id, { caseTitle: opts.caseTitle, taskText: it.text });
+        showToast('Task returned to open');
+      } catch (err) {
+        console.error('Failed to decline task', err);
+        showToast('Failed to decline task');
+      }
+    });
+    li.appendChild(acceptBtn);
+    li.appendChild(declineBtn);
+  }
+
+  const av=document.createElement('span'); av.className='mini-avatar'; const initials = data && data.assignee ? data.assignee.split(/\s+/).map(s=>s[0]).join('').slice(0,2).toUpperCase() : ''; av.textContent=initials||''; const col=colorForName((data && data.assignee)||''); av.style.background=col.bg; av.style.color=col.color; av.style.border=`1px solid ${col.border}`;
+  if (!readOnly) {
+    av.addEventListener('click',(e)=>{
+      e.stopPropagation();
+      const existing=document.querySelector('.assignee-panel');
+      if(existing) existing.remove();
+      const panel=document.createElement('div');
+      panel.className='assignee-panel';
+      panel.style.position='fixed';
+      panel.style.zIndex='2147483646';
+      const addOpt=(label,value)=>{
+        const b=document.createElement('button');
+        b.type='button';
+        b.className='assignee-option';
+        b.textContent=label;
+        b.addEventListener('click', async (ev)=>{
+          ev.stopPropagation();
+          try {
+            await updateTaskAssignment(caseId, it.id, value, { caseTitle: opts.caseTitle, taskText: it.text });
+          } catch(err){
+            console.error('Failed to reassign',err);
+            showToast('Failed to update assignee');
+          } finally {
+            panel.remove();
+          }
+        });
+        panel.appendChild(b);
+      };
+      addOpt('Open task', null);
+      for (const u of usersCache) addOpt(u.username, u.username);
+      document.body.appendChild(panel);
+      const r=av.getBoundingClientRect();
+      requestAnimationFrame(()=>{
+        const w=panel.offsetWidth||160;
+        const left=Math.min(Math.max(8, r.right-w), window.innerWidth - w - 8);
+        const top=Math.min(window.innerHeight - panel.offsetHeight - 8, r.bottom + 6);
+        panel.style.left=`${Math.round(left)}px`;
+        panel.style.top=`${Math.round(top)}px`;
+      });
+      const onDocClick=(evt)=>{ if(!panel || panel.contains(evt.target) || evt.target===av) return; panel.remove(); document.removeEventListener('click', onDocClick, true); };
+      setTimeout(()=>document.addEventListener('click', onDocClick, true),0);
+    });
+  }
   // Delete button
   const del = document.createElement('button'); del.type='button'; del.className='icon-btn delete-btn'; del.textContent='🗑'; del.title='Delete task';
+  del.hidden = readOnly;
   del.addEventListener('click', async (e) => { e.stopPropagation(); if (!confirm('Delete this task?')) return; try { await deleteDoc(doc(db, 'cases', caseId, 'tasks', it.id)); } catch (err) { console.error('Failed to delete task', err); showToast('Failed to delete task'); } });
   li.appendChild(av);
-  li.appendChild(del);
+  if (!readOnly) li.appendChild(del);
   return li;
 }
 
@@ -3434,7 +3995,8 @@ async function openWardNoteComposer() {
     try {
       const { cipher: textCipher, iv: textIv } = await encryptText(v);
       const { cipher: statusCipher, iv: statusIv } = await encryptText('open');
-      const ref = await addDoc(collection(db,'cases',currentCaseId,'tasks'), { textCipher, textIv, statusCipher, statusIv, createdAt: serverTimestamp(), username, assignee: null, priority: null });
+      const payload = buildTaskCreationPayload({ textCipher, textIv, statusCipher, statusIv, assignee: null, priority: null });
+      const ref = await addDoc(collection(db,'cases',currentCaseId,'tasks'), payload);
       newTaskIds.push(ref.id); newTaskTitles.push(v);
       miniInput.value='';
     } catch {}
@@ -3809,7 +4371,8 @@ async function openWardNoteComposerV2() {
       const v = (miniInput.value||'').trim(); if (!v) return;
       const { cipher: textCipher, iv: textIv } = await encryptText(v);
       const { cipher: statusCipher, iv: statusIv } = await encryptText('open');
-      const ref = await addDoc(collection(db, 'cases', currentCaseId, 'tasks'), { textCipher, textIv, statusCipher, statusIv, createdAt: serverTimestamp(), username });
+      const payload = buildTaskCreationPayload({ textCipher, textIv, statusCipher, statusIv, assignee: null, priority: null });
+      const ref = await addDoc(collection(db, 'cases', currentCaseId, 'tasks'), payload);
       newTaskIds.push(ref.id); newTaskTitles.push(v);
       miniInput.value='';
     } catch {}
@@ -3949,9 +4512,12 @@ function renderCaseTasks() {
 
 function buildTaskListItem(item, opts = {}) {
   const { caseId, id: taskId, text, status, data } = item;
+  const assignmentState = normalizeTaskAssignmentState(data || {});
+  const pendingAcceptance = isTaskPendingAcceptance(data || {});
+  const pendingForMe = pendingAcceptance && ((data?.assignee || '') === (username || ''));
   const li = document.createElement('li');
   const statusCls = status === 'in progress' ? 's-inprogress' : (status === 'complete' ? 's-complete' : 's-open');
-  li.className = 'case-task ' + statusCls;
+  li.className = 'case-task ' + statusCls + (pendingAcceptance ? ' task-pending-acceptance' : '');
   li.id = 'task-' + taskId;
   // Status button
   const statusBtn = document.createElement('button');
@@ -3960,8 +4526,11 @@ function buildTaskListItem(item, opts = {}) {
   const icon = (s) => s === 'complete' ? '☑' : (s === 'in progress' ? '◐' : '☐');
   statusBtn.textContent = icon(status);
   statusBtn.setAttribute('aria-label', `Task status: ${status}`);
+  statusBtn.disabled = pendingAcceptance;
+  if (pendingAcceptance) statusBtn.title = 'Awaiting acceptance';
   statusBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
+    if (statusBtn.disabled) return;
     const order = ['open','in progress','complete'];
     const next = order[(order.indexOf(statusBtn.getAttribute('aria-label')?.split(': ')[1] || status) + 1) % order.length];
     try {
@@ -3969,7 +4538,7 @@ function buildTaskListItem(item, opts = {}) {
       await updateDoc(doc(db, 'cases', caseId, 'tasks', taskId), { statusCipher: cipher, statusIv: iv });
       statusBtn.textContent = icon(next);
       statusBtn.setAttribute('aria-label', `Task status: ${next}`);
-      li.className = 'case-task ' + (next === 'in progress' ? 's-inprogress' : (next === 'complete' ? 's-complete' : 's-open'));
+      li.className = 'case-task ' + (next === 'in progress' ? 's-inprogress' : (next === 'complete' ? 's-complete' : 's-open')) + (pendingAcceptance ? ' task-pending-acceptance' : '');
       if (next === 'complete') {
         try {
           const tEnc = await encryptText(titleSpan.textContent || '');
@@ -4012,9 +4581,49 @@ function buildTaskListItem(item, opts = {}) {
     titleSpan.insertAdjacentElement('afterend', ed);
     titleSpan.style.display = 'none';
     ed.focus();
+    placeCaretAtEnd(ed);
   });
   li.appendChild(statusBtn);
   li.appendChild(titleSpan);
+  const assignmentLabel = taskAssignmentStatusLabel(data || {});
+  if (assignmentLabel) {
+    const assignmentChip = document.createElement('span');
+    assignmentChip.className = `assignment-state-chip ${assignmentState === TASK_ASSIGNMENT.PENDING ? 'pending' : 'open'}`;
+    assignmentChip.textContent = assignmentLabel;
+    li.appendChild(assignmentChip);
+  }
+  if (pendingForMe) {
+    const acceptBtn = document.createElement('button');
+    acceptBtn.type = 'button';
+    acceptBtn.className = 'icon-btn small';
+    acceptBtn.textContent = 'Accept';
+    acceptBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        await acceptTaskAssignment(caseId, taskId, { caseTitle: caseTitleEl?.textContent || null, taskText: titleSpan.textContent || text });
+        showToast('Task accepted');
+      } catch (err) {
+        console.error('Failed to accept task', err);
+        showToast('Failed to accept task');
+      }
+    });
+    li.appendChild(acceptBtn);
+    const declineBtn = document.createElement('button');
+    declineBtn.type = 'button';
+    declineBtn.className = 'icon-btn small';
+    declineBtn.textContent = 'Decline';
+    declineBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        await declineTaskAssignment(caseId, taskId, { caseTitle: caseTitleEl?.textContent || null, taskText: titleSpan.textContent || text });
+        showToast('Task returned to open');
+      } catch (err) {
+        console.error('Failed to decline task', err);
+        showToast('Failed to decline task');
+      }
+    });
+    li.appendChild(declineBtn);
+  }
   // Quick edit/delete actions
   const quickEdit = document.createElement('button');
   quickEdit.type = 'button';
@@ -4059,8 +4668,24 @@ function buildTaskListItem(item, opts = {}) {
     e.stopPropagation(); removeTip();
     const existing = document.querySelector('.assignee-panel'); if (existing) existing.remove();
     const panel = document.createElement('div'); panel.className='assignee-panel'; panel.style.position='fixed'; panel.style.zIndex='2147483646';
-    const addOpt = (label, value) => { const b=document.createElement('button'); b.type='button'; b.className='assignee-option'; b.textContent=label; b.addEventListener('click', async (ev)=>{ ev.stopPropagation(); try{ await updateDoc(doc(db,'cases',caseId,'tasks',taskId),{ assignee: value }); renderCaseTasks(); } catch(err){ console.error('Failed to reassign',err); showToast('Failed to reassign'); } finally { panel.remove(); } }); panel.appendChild(b); };
-    addOpt('Unassigned', null); for (const u of usersCache) addOpt(u.username, u.username);
+    const addOpt = (label, value) => {
+      const b = document.createElement('button');
+      b.type='button';
+      b.className='assignee-option';
+      b.textContent=label;
+      b.addEventListener('click', async (ev)=>{
+        ev.stopPropagation();
+        try {
+          await updateTaskAssignment(caseId, taskId, value, { caseTitle: caseTitleEl?.textContent || null, taskText: titleSpan.textContent || text });
+          renderCaseTasks();
+        } catch(err){
+          console.error('Failed to reassign',err);
+          showToast('Failed to update assignee');
+        } finally { panel.remove(); }
+      });
+      panel.appendChild(b);
+    };
+    addOpt('Open task', null); for (const u of usersCache) addOpt(u.username, u.username);
     document.body.appendChild(panel);
     const r = av.getBoundingClientRect(); requestAnimationFrame(()=>{ const w=panel.offsetWidth||180; const left=Math.min(Math.max(8, r.right - w), window.innerWidth - w - 8); const top=Math.min(window.innerHeight - panel.offsetHeight - 8, r.bottom + 6); panel.style.left=`${Math.round(left)}px`; panel.style.top=`${Math.round(top)}px`; });
     const onDocClick = (evt)=>{ if (!panel || panel.contains(evt.target) || evt.target===av) return; panel.remove(); document.removeEventListener('click', onDocClick, true); }; setTimeout(()=>document.addEventListener('click', onDocClick, true),0);
@@ -4122,9 +4747,8 @@ function bindTaskForm() {
     const priSel = document.getElementById('task-priority');
     const assignee = assigneeSel ? (assigneeSel.value || null) : null;
     const priority = priSel ? (priSel.value || null) : null;
-    const ref = await addDoc(collection(db, 'cases', currentCaseId, 'tasks'), {
-      textCipher, textIv, statusCipher, statusIv, createdAt: serverTimestamp(), username, assignee, priority,
-    });
+    const payload = buildTaskCreationPayload({ textCipher, textIv, statusCipher, statusIv, assignee, priority });
+    const ref = await addDoc(collection(db, 'cases', currentCaseId, 'tasks'), payload);
     // Log update: task added
     try {
       await logUpdate({
@@ -4136,6 +4760,16 @@ function bindTaskForm() {
         assignee,
         priority,
       });
+      if (assignee) {
+        await logUpdate({
+          type: 'task_assigned',
+          caseId: currentCaseId,
+          taskId: ref.id,
+          taskTextCipher: textCipher,
+          taskTextIv: textIv,
+          assignee,
+        });
+      }
     } catch {}
     taskInput.value = '';
     if (assigneeSel) assigneeSel.value = '';
@@ -4151,7 +4785,7 @@ function populateComposerAssignees() {
   sel.innerHTML = '';
   const none = document.createElement('option');
   none.value = '';
-  none.textContent = 'Unassigned';
+  none.textContent = 'Open task (team)';
   sel.appendChild(none);
   for (const u of usersCache) {
     const opt = document.createElement('option');
@@ -4242,6 +4876,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   metricsThroughputEl = document.getElementById('metrics-throughput');
   metricsUpdatedEl = document.getElementById('metrics-updated');
   setupWorkspaceEnhancements();
+  updateTableStickyOffset();
+  window.addEventListener('resize', updateTableStickyOffset, { passive: true });
   // Add a Delete Case button next to the case title if not present
   // Case header overflow menu (⋯) with Delete
   const actionsWrap = document.getElementById('case-header-actions');
@@ -4331,6 +4967,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   try { const hidden = localStorage.getItem(filtersKey) === '1'; setTableFiltersHidden(hidden); } catch {}
   // Load persisted tag filter state (URL/localStorage)
   loadTagFilterState();
+  try { showDischargedCases = localStorage.getItem('table.showDischargedCases') === '1'; } catch { showDischargedCases = false; }
   // Print action in header
   if (printOpenBtn) {
     printOpenBtn.addEventListener('click', () => {
@@ -4517,7 +5154,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Start settings (users + locations)
   startRealtimeUsers();
   // Default tab
-  showMainTab('table');
+  const mobileDefault = window.matchMedia && window.matchMedia('(max-width: 900px)').matches;
+  showMainTab(mobileDefault ? 'my' : 'table');
   // URL deep link: open case if ?case=
   try {
     const url = new URL(window.location.href);
@@ -4944,6 +5582,7 @@ async function moveRoom(parentId, index, delta) {
 }
 
 function openUser(name) {
+  clearPendingDischargeState();
   currentUserPageName = name;
   updateSessionUserBadge(name);
   // Title with inline change link
@@ -5006,7 +5645,7 @@ function setUserHeader() {
   if (!userTitleEl) return;
   let label = '';
   if (currentAssigneeFilter === 'all') label = 'All tasks';
-  else if (currentAssigneeFilter === 'unassigned') label = 'Unassigned tasks';
+  else if (currentAssigneeFilter === 'unassigned') label = 'Open tasks';
   else if (currentAssigneeFilter === 'me') label = `${username || currentUserPageName || 'Me'}'s tasks`;
   else if (currentAssigneeFilter.startsWith('name:')) label = `${currentAssigneeFilter.slice(5)}'s tasks`;
   userTitleEl.innerHTML = `${label} <button id="change-user-link" class="change-user-link" type="button">(Change user)</button>`;
@@ -5036,50 +5675,75 @@ async function startRealtimeUserTasks(name) {
   // Prepare current maps; keep existing titles (cache) where possible
   if (!userCaseTitles) userCaseTitles = new Map();
   if (!userPerCase) userPerCase = new Map();
+  const tasksRef = collectionGroup(db, 'tasks');
+  const snapshotsBySource = new Map();
+  let buildSeq = 0;
+  const targetUser = currentAssigneeFilter === 'me'
+    ? (username || name)
+    : (currentAssigneeFilter.startsWith('name:') ? currentAssigneeFilter.slice(5) : (username || name));
 
-  let tasksRef = collectionGroup(db, 'tasks');
-  let q;
-  if (currentAssigneeFilter === 'all') q = tasksRef;
-  else if (currentAssigneeFilter === 'unassigned') q = query(tasksRef, where('assignee', '==', null));
-  else if (currentAssigneeFilter === 'me') q = query(tasksRef, where('assignee', '==', username || name));
-  else if (currentAssigneeFilter.startsWith('name:')) q = query(tasksRef, where('assignee', '==', currentAssigneeFilter.slice(5)));
-  else q = query(tasksRef, where('assignee', '==', username || name));
-  const unsub = onSnapshot(q, async (snap) => {
+  const rebuildFromSnapshots = async () => {
     try {
-      // Build items list with parallel decryption
-      const docs = snap.docs;
+      const seq = ++buildSeq;
+      const merged = new Map();
+      for (const docs of snapshotsBySource.values()) {
+        for (const d of docs) merged.set(d.ref.path, d);
+      }
+      const docs = Array.from(merged.values());
       const perCase = new Map();
       const decryptPromises = [];
       const rawItems = [];
       const neededCaseIds = new Set();
 
       for (const d of docs) {
-        const dat = d.data();
-        // Extract caseId from the task path: /cases/{caseId}/tasks/{taskId}
+        const dat = d.data() || {};
         const caseRef = d.ref.parent && d.ref.parent.parent;
         const caseId = caseRef ? caseRef.id : null;
         if (!caseId) continue;
+        const state = normalizeTaskAssignmentState(dat);
+        const assignee = dat.assignee || null;
+        const openTask = isTaskOpenForTeam(dat);
+        let include = false;
+        if (currentAssigneeFilter === 'all') include = true;
+        else if (currentAssigneeFilter === 'unassigned') include = openTask;
+        else include = (assignee === targetUser) || openTask;
+        if (!include) continue;
+
         neededCaseIds.add(caseId);
-        const item = { taskId: d.id, caseId, assignee: dat.assignee || null, priority: dat.priority || null, text: null, status: null };
+        const item = {
+          taskId: d.id,
+          caseId,
+          assignee,
+          priority: dat.priority || null,
+          assignmentState: state,
+          assignedBy: dat.assignedBy || null,
+          assignedAt: dat.assignedAt || null,
+          acceptedBy: dat.acceptedBy || null,
+          acceptedAt: dat.acceptedAt || null,
+          text: null,
+          status: null,
+        };
         rawItems.push(item);
         decryptPromises.push(
           Promise.all([
-            decryptText(dat.textCipher, dat.textIv),
-            decryptText(dat.statusCipher, dat.statusIv),
-          ]).then(([text, status]) => { item.text = text; item.status = status; }).catch((err) => { console.error('Decrypt task failed', err); })
+            safeDecryptText(dat.textCipher, dat.textIv),
+            safeDecryptText(dat.statusCipher, dat.statusIv),
+          ]).then(([text, status]) => {
+            item.text = text;
+            item.status = status || 'open';
+          }).catch(() => {})
         );
       }
 
       await Promise.all(decryptPromises);
+      if (seq !== buildSeq) return;
 
-      // Group by case
       for (const it of rawItems) {
-        if (!it || !it.caseId || !it.text) continue;
+        if (!it || !it.caseId || typeof it.text !== 'string') continue;
         if (!perCase.has(it.caseId)) perCase.set(it.caseId, []);
         perCase.get(it.caseId).push(it);
       }
 
-      // Ensure we have titles for the cases we actually need; reuse cache for known ones
       const titleFetches = [];
       for (const cid of neededCaseIds) {
         if (!userCaseTitles.has(cid)) {
@@ -5087,8 +5751,8 @@ async function startRealtimeUserTasks(name) {
             getDoc(doc(db, 'cases', cid)).then(async (cd) => {
               if (cd.exists()) {
                 const cdat = cd.data();
-                try { const title = await decryptText(cdat.titleCipher, cdat.titleIv); userCaseTitles.set(cid, title); }
-                catch { userCaseTitles.set(cid, '(case)'); }
+                const title = await safeDecryptText(cdat.titleCipher, cdat.titleIv);
+                userCaseTitles.set(cid, title || '(case)');
               } else {
                 userCaseTitles.set(cid, '(case)');
               }
@@ -5097,8 +5761,8 @@ async function startRealtimeUserTasks(name) {
         }
       }
       await Promise.all(titleFetches);
+      if (seq !== buildSeq) return;
 
-      // Update state and cache, then render
       userPerCase = perCase;
       userTasksCacheByKey.set(assigneeKey(), { perCase: new Map(perCase), titles: new Map(userCaseTitles) });
       if (userTasksEditing) { userTasksRebuildPending = true; return; }
@@ -5106,114 +5770,360 @@ async function startRealtimeUserTasks(name) {
     } catch (err) {
       console.error('Failed to build user tasks view', err);
     }
-  });
-  unsubUserTasks.push(unsub);
+  };
+
+  const attachSource = (key, q) => {
+    const unsub = onSnapshot(q, (snap) => {
+      snapshotsBySource.set(key, snap.docs);
+      rebuildFromSnapshots();
+    }, (err) => console.error('User tasks listener error', err));
+    unsubUserTasks.push(unsub);
+  };
+
+  if (currentAssigneeFilter === 'all') {
+    attachSource('all', tasksRef);
+  } else if (currentAssigneeFilter === 'unassigned') {
+    attachSource('open', query(tasksRef, where('assignee', '==', null)));
+  } else {
+    attachSource('assigned', query(tasksRef, where('assignee', '==', targetUser)));
+    attachSource('open', query(tasksRef, where('assignee', '==', null)));
+  }
 }
 
 function renderUserTasks() {
   if (!userTaskListEl) return;
   userTaskListEl.innerHTML = '';
-  const caseIds = Array.from(userPerCase.keys()).sort((a, b) => (userCaseTitles.get(a) || '').localeCompare(userCaseTitles.get(b) || ''));
-  for (const caseId of caseIds) {
-    let items = userPerCase.get(caseId) || [];
+  const targetUser = currentAssigneeFilter === 'me'
+    ? (username || currentUserPageName)
+    : (currentAssigneeFilter.startsWith('name:') ? currentAssigneeFilter.slice(5) : (username || currentUserPageName));
+  const sections = {
+    pending: new Map(),
+    assigned: new Map(),
+    open: new Map(),
+  };
+
+  const addToSection = (section, caseId, item) => {
+    if (!sections[section].has(caseId)) sections[section].set(caseId, []);
+    sections[section].get(caseId).push(item);
+  };
+
+  for (const [caseId, originalItems] of userPerCase.entries()) {
+    let items = originalItems || [];
     if (currentUserStatusSet && currentUserStatusSet.size) items = items.filter(i => currentUserStatusSet.has(i.status));
     if (currentUserPriorityFilter !== 'all') items = items.filter(i => (i.priority || '') === currentUserPriorityFilter);
     if (currentUserSearch && currentUserSearch.trim()) {
       const q = currentUserSearch.toLowerCase();
       items = items.filter(i => (i.text || '').toLowerCase().includes(q));
     }
-    if (items.length === 0) continue;
-    const title = userCaseTitles.get(caseId) || '(case)';
+    for (const it of items) {
+      const openTask = isTaskOpenForTeam(it);
+      const pending = normalizeTaskAssignmentState(it) === TASK_ASSIGNMENT.PENDING && !!it.assignee;
+      if (currentAssigneeFilter === 'unassigned') {
+        if (openTask) addToSection('open', caseId, it);
+        continue;
+      }
+      if (currentAssigneeFilter === 'all') {
+        if (openTask) addToSection('open', caseId, it);
+        else if (pending) addToSection('pending', caseId, it);
+        else addToSection('assigned', caseId, it);
+        continue;
+      }
+      if (openTask) addToSection('open', caseId, it);
+      else if (it.assignee === targetUser && pending) addToSection('pending', caseId, it);
+      else if (it.assignee === targetUser) addToSection('assigned', caseId, it);
+    }
+  }
 
-    const caseCard = document.createElement('div');
-    caseCard.className = 'card user-case-card';
-    const header = document.createElement('div');
-    header.className = 'user-case-header';
-    const h = document.createElement('h3');
-    const link = document.createElement('button');
-    link.className = 'link-btn';
-    link.textContent = title;
-    link.setAttribute('aria-label', `Open case ${title}`);
-    link.addEventListener('click', () => openCase(caseId, title, 'user', 'notes'));
-    h.appendChild(link);
-    header.appendChild(h);
-    const countBadge = document.createElement('span');
-    countBadge.className = 'badge';
-    countBadge.textContent = String(items.length);
-    header.appendChild(countBadge);
-    caseCard.appendChild(header);
+  const priVal = (p) => p === 'high' ? 3 : p === 'medium' ? 2 : p === 'low' ? 1 : 0;
+  const tsVal = (ts) => (ts && ts.toMillis) ? ts.toMillis() : 0;
+  const sortCases = (map) => Array.from(map.keys()).sort((a, b) => (userCaseTitles.get(a) || '').localeCompare(userCaseTitles.get(b) || ''));
+  const sectionCount = (map) => Array.from(map.values()).reduce((sum, arr) => sum + arr.length, 0);
 
-    const ul = document.createElement('ul');
-    const priVal = (p) => p === 'high' ? 3 : p === 'medium' ? 2 : p === 'low' ? 1 : 0;
-    let sorted = [...items];
-    if (currentUserSort === 'pri-desc') sorted.sort((a,b) => priVal(b.priority) - priVal(a.priority));
-    else if (currentUserSort === 'pri-asc') sorted.sort((a,b) => priVal(a.priority) - priVal(b.priority));
-    for (const it of sorted) {
-      const li = document.createElement('li');
-      const statusCls = it.status === 'in progress' ? 's-inprogress' : (it.status === 'complete' ? 's-complete' : 's-open');
-      li.className = 'case-task ' + statusCls;
-      // Status button
-      const statusBtn = document.createElement('button'); statusBtn.type='button'; statusBtn.className='status-btn';
-      const icon = (s)=> s==='complete'?'☑':(s==='in progress'?'◐':'☐');
-      statusBtn.textContent = icon(it.status);
-      statusBtn.setAttribute('aria-label', `Task status: ${it.status}`);
-      statusBtn.addEventListener('click', async (e)=>{ e.stopPropagation(); const order=['open','in progress','complete']; const next=order[(order.indexOf(it.status)+1)%order.length]; try{ const {cipher, iv}= await encryptText(next); await updateDoc(doc(db,'cases',caseId,'tasks',it.taskId),{ statusCipher:cipher, statusIv:iv }); it.status=next; statusBtn.textContent=icon(next); statusBtn.setAttribute('aria-label',`Task status: ${next}`); li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')); if (next==='complete') { try { const tEnc = await encryptText(it.text || ''); await logUpdate({ type: 'task_completed', caseId, caseTitle: title, taskId: it.taskId, taskTextCipher: tEnc.cipher, taskTextIv: tEnc.iv }); } catch {} } } catch(err){ console.error('Failed to update status',err); showToast('Failed to update status'); } });
-      const titleSpan = document.createElement('span'); titleSpan.className='task-text'; titleSpan.textContent=it.text;
-      // Inline edit on My Tasks title
-      titleSpan.addEventListener('click', (e) => {
+  const buildUserTaskRow = (caseId, title, it) => {
+    const pending = normalizeTaskAssignmentState(it) === TASK_ASSIGNMENT.PENDING && !!it.assignee;
+    const pendingForMe = pending && (it.assignee === username);
+    const li = document.createElement('li');
+    const statusCls = it.status === 'in progress' ? 's-inprogress' : (it.status === 'complete' ? 's-complete' : 's-open');
+    li.className = 'case-task ' + statusCls + (pending ? ' task-pending-acceptance' : '');
+
+    const statusBtn = document.createElement('button');
+    statusBtn.type = 'button';
+    statusBtn.className = 'status-btn';
+    const icon = (s)=> s==='complete'?'☑':(s==='in progress'?'◐':'☐');
+    statusBtn.textContent = icon(it.status);
+    statusBtn.setAttribute('aria-label', `Task status: ${it.status}`);
+    statusBtn.disabled = pending;
+    if (pending) statusBtn.title = 'Awaiting acceptance';
+    statusBtn.addEventListener('click', async (e)=>{
+      e.stopPropagation();
+      if (statusBtn.disabled) return;
+      const order=['open','in progress','complete'];
+      const next=order[(order.indexOf(it.status)+1)%order.length];
+      try{
+        const {cipher, iv}= await encryptText(next);
+        await updateDoc(doc(db,'cases',caseId,'tasks',it.taskId),{ statusCipher:cipher, statusIv:iv });
+        it.status=next;
+        statusBtn.textContent=icon(next);
+        statusBtn.setAttribute('aria-label',`Task status: ${next}`);
+        li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')) + (pending ? ' task-pending-acceptance' : '');
+        if (next==='complete') {
+          try {
+            const tEnc = await encryptText(it.text || '');
+            await logUpdate({ type: 'task_completed', caseId, caseTitle: title, taskId: it.taskId, taskTextCipher: tEnc.cipher, taskTextIv: tEnc.iv });
+          } catch {}
+        }
+      } catch(err){ console.error('Failed to update status',err); showToast('Failed to update status'); }
+    });
+    li.appendChild(statusBtn);
+
+    const titleSpan = document.createElement('span');
+    titleSpan.className='task-text';
+    titleSpan.textContent=it.text;
+    titleSpan.addEventListener('click', (e) => {
+      e.stopPropagation();
+      userTasksEditing = true;
+      const ed = document.createElement('div');
+      ed.className='cell-editable';
+      ed.setAttribute('contenteditable','true');
+      ed.textContent = it.text;
+      let last = it.text;
+      const endEdit = () => {
+        try{ ed.remove(); }catch{}
+        titleSpan.style.display='';
+        userTasksEditing=false;
+        if (userTasksRebuildPending) { userTasksRebuildPending=false; renderUserTasks(); }
+      };
+      const saveNow = async () => {
+        const v=(ed.innerText||'').replace(/\r/g,'');
+        if (v===last) { endEdit(); return; }
+        try{
+          const {cipher:textCipher, iv:textIv}= await encryptText(v);
+          await updateDoc(doc(db,'cases',caseId,'tasks',it.taskId),{ textCipher, textIv });
+          last=v;
+          titleSpan.textContent=v;
+        } catch(err){ console.error('Failed to update task',err); showToast('Failed to update task'); }
+        endEdit();
+      };
+      ed.addEventListener('paste',(ev)=>{ ev.preventDefault(); const t=(ev.clipboardData||window.clipboardData).getData('text'); if (document.queryCommandSupported && document.queryCommandSupported('insertText')) { document.execCommand('insertText', false, t); } else { const sel=window.getSelection(); if (sel && sel.rangeCount) { sel.deleteFromDocument(); sel.getRangeAt(0).insertNode(document.createTextNode(t)); } } });
+      ed.addEventListener('keydown',(ev)=>{ if (ev.key==='Enter' && !(ev.ctrlKey||ev.metaKey)) { ev.preventDefault(); saveNow(); } else if (ev.key==='Escape') { ev.preventDefault(); endEdit(); } });
+      ed.addEventListener('blur', () => { saveNow(); });
+      titleSpan.insertAdjacentElement('afterend', ed);
+      titleSpan.style.display='none';
+      ed.focus();
+      placeCaretAtEnd(ed);
+    });
+    li.appendChild(titleSpan);
+
+    const assignmentLabel = taskAssignmentStatusLabel(it);
+    if (assignmentLabel) {
+      const assignmentChip = document.createElement('span');
+      assignmentChip.className = `assignment-state-chip ${pending ? 'pending' : 'open'}`;
+      assignmentChip.textContent = assignmentLabel;
+      li.appendChild(assignmentChip);
+    }
+
+    if (pendingForMe) {
+      const acceptBtn = document.createElement('button');
+      acceptBtn.type = 'button';
+      acceptBtn.className = 'icon-btn small';
+      acceptBtn.textContent = 'Accept';
+      acceptBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        userTasksEditing = true;
-        const ed = document.createElement('div'); ed.className='cell-editable'; ed.setAttribute('contenteditable','true'); ed.textContent = it.text;
-        let last = it.text;
-        const endEdit = () => { try{ ed.remove(); }catch{} titleSpan.style.display=''; userTasksEditing=false; if (userTasksRebuildPending) { userTasksRebuildPending=false; renderUserTasks(); } };
-        const saveNow = async () => { const v=(ed.innerText||'').replace(/\r/g,''); if (v===last) { endEdit(); return; } try{ const {cipher:textCipher, iv:textIv}= await encryptText(v); await updateDoc(doc(db,'cases',caseId,'tasks',it.taskId),{ textCipher, textIv }); last=v; titleSpan.textContent=v; } catch(err){ console.error('Failed to update task',err); showToast('Failed to update task'); } endEdit(); };
-        ed.addEventListener('paste',(ev)=>{ ev.preventDefault(); const t=(ev.clipboardData||window.clipboardData).getData('text'); if (document.queryCommandSupported && document.queryCommandSupported('insertText')) { document.execCommand('insertText', false, t); } else { const sel=window.getSelection(); if (sel && sel.rangeCount) { sel.deleteFromDocument(); sel.getRangeAt(0).insertNode(document.createTextNode(t)); } } });
-        ed.addEventListener('keydown',(ev)=>{ if (ev.key==='Enter' && !(ev.ctrlKey||ev.metaKey)) { ev.preventDefault(); saveNow(); } else if (ev.key==='Escape') { ev.preventDefault(); endEdit(); } });
-        ed.addEventListener('blur', () => { saveNow(); });
-        titleSpan.insertAdjacentElement('afterend', ed); titleSpan.style.display='none'; ed.focus();
-      });
-      li.appendChild(statusBtn); li.appendChild(titleSpan);
-      if (it.priority) { const pri=document.createElement('span'); pri.className='mini-chip'; pri.textContent=it.priority; li.appendChild(pri); }
-      // Assignee avatar
-      const av=document.createElement('span'); av.className='mini-avatar'; const initials= it.assignee? it.assignee.split(/\s+/).map(s=>s[0]).join('').slice(0,2).toUpperCase():''; av.textContent=initials||''; const col=colorForName(it.assignee||''); av.style.background=col.bg; av.style.color=col.color; av.style.border=`1px solid ${col.border}`;
-      let tipEl=null; const removeTip=()=>{ if(tipEl){ tipEl.remove(); tipEl=null; } };
-      av.addEventListener('mouseenter',()=>{ if(!it.assignee) return; tipEl=document.createElement('div'); tipEl.className='assignee-tip'; tipEl.textContent=it.assignee; tipEl.style.position='fixed'; tipEl.style.zIndex='2147483647'; document.body.appendChild(tipEl); const r=av.getBoundingClientRect(); requestAnimationFrame(()=>{ const h=tipEl.offsetHeight||24; tipEl.style.left=`${Math.round(r.left + r.width/2)}px`; tipEl.style.top=`${Math.round(r.top - 6 - h)}px`; tipEl.style.transform='translateX(-50%)'; }); });
-      av.addEventListener('mouseleave', removeTip);
-      av.addEventListener('click',(e)=>{ e.stopPropagation(); removeTip(); const existing=document.querySelector('.assignee-panel'); if(existing) existing.remove(); const panel=document.createElement('div'); panel.className='assignee-panel'; panel.style.position='fixed'; panel.style.zIndex='2147483646'; const addOpt=(label,value)=>{ const b=document.createElement('button'); b.type='button'; b.className='assignee-option'; b.textContent=label; b.addEventListener('click', async (ev)=>{ ev.stopPropagation(); try{ await updateDoc(doc(db,'cases',caseId,'tasks',it.taskId),{ assignee:value }); // If the task moves out of this user, remove from UI
-        if (currentUserPageName && value !== currentUserPageName) { li.remove(); const current=parseInt(caseCard.querySelector('.badge')?.textContent||'1',10); if(!Number.isNaN(current)&&current>0) caseCard.querySelector('.badge').textContent=String(current-1); }
-      } catch(err){ console.error('Failed to reassign',err); showToast('Failed to reassign'); } finally { panel.remove(); } }); panel.appendChild(b); };
-      addOpt('Unassigned', null); for (const u of usersCache) addOpt(u.username,u.username); document.body.appendChild(panel); const r=av.getBoundingClientRect(); requestAnimationFrame(()=>{ const w=panel.offsetWidth||180; const left=Math.min(Math.max(8, r.right-w), window.innerWidth - w - 8); const top=Math.min(window.innerHeight - panel.offsetHeight - 8, r.bottom + 6); panel.style.left=`${Math.round(left)}px`; panel.style.top=`${Math.round(top)}px`; }); const onDocClick=(evt)=>{ if(!panel || panel.contains(evt.target) || evt.target===av) return; panel.remove(); document.removeEventListener('click', onDocClick, true); }; setTimeout(()=>document.addEventListener('click', onDocClick, true),0); });
-      li.appendChild(av);
-      // Delete button
-      const del = document.createElement('button'); del.type='button'; del.className='icon-btn delete-btn'; del.textContent='🗑'; del.title='Delete task';
-      del.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        if (!confirm('Delete this task?')) return;
         try {
-          await deleteDoc(doc(db, 'cases', caseId, 'tasks', it.taskId));
-          // Optimistic UI: remove item and update badge
-          li.remove();
-          const badge = caseCard.querySelector('.badge');
-          if (badge) {
-            const current = parseInt(badge.textContent || '1', 10);
-            if (!Number.isNaN(current) && current > 0) badge.textContent = String(current - 1);
-          }
+          await acceptTaskAssignment(caseId, it.taskId, { caseTitle: title, taskText: it.text });
+          showToast('Task accepted');
         } catch (err) {
-          console.error('Failed to delete task', err);
-          showToast('Failed to delete task');
+          console.error('Failed to accept task', err);
+          showToast('Failed to accept task');
         }
       });
-      li.appendChild(del);
-      // Comments unobtrusive
-      const toggle=document.createElement('button'); toggle.type='button'; toggle.className='icon-btn comment-toggle'; toggle.setAttribute('aria-label','Show comments'); toggle.textContent='💬'; const countEl=document.createElement('span'); countEl.className='badge comment-count'; li.appendChild(toggle); li.appendChild(countEl);
-      const commentSection=document.createElement('div'); commentSection.className='comment-section'; commentSection.hidden=true; const commentsList=document.createElement('ul'); commentsList.className='comments'; commentSection.appendChild(commentsList); const commentForm=document.createElement('form'); commentForm.className='comment-form'; const commentInput=document.createElement('input'); commentInput.placeholder='Add comment'; commentForm.appendChild(commentInput); const commentBtn=document.createElement('button'); commentBtn.className='icon-btn add-comment-btn'; commentBtn.type='submit'; commentBtn.textContent='➕'; commentBtn.setAttribute('aria-label','Add comment'); commentForm.appendChild(commentBtn); commentSection.appendChild(commentForm);
-      let commentsLoaded=false; let commentCount=0; const updateToggle=()=>{ countEl.textContent= commentCount>0? String(commentCount):''; toggle.textContent= commentSection.hidden? '💬':'✖'; toggle.setAttribute('aria-label', commentSection.hidden? 'Show comments':'Hide comments'); }; updateToggle();
-      toggle.addEventListener('click', ()=>{ const h=commentSection.hidden; commentSection.hidden=!h; updateToggle(); if(h && !commentsLoaded){ startRealtimeComments(caseId, it.taskId, commentsList, (n)=>{ commentCount=n; updateToggle(); }); commentsLoaded=true; } });
-      commentForm.addEventListener('submit', async (e)=>{ e.preventDefault(); const t=commentInput.value.trim(); if(!t) return; const tempLi=document.createElement('li'); tempLi.className='optimistic'; const span=document.createElement('span'); span.textContent= username? `${username}: ${t}` : t; tempLi.appendChild(span); commentsList.appendChild(tempLi); commentInput.value=''; commentSection.hidden=false; updateToggle(); try{ const {cipher, iv}= await encryptText(t); await addDoc(collection(db,'cases',caseId,'tasks',it.taskId,'comments'), {cipher,iv,username,createdAt:serverTimestamp()}); try { await logUpdate({ type: 'comment_added', caseId, caseTitle: title, taskId: it.taskId, commentCipher: cipher, commentIv: iv }); } catch {} if(!commentsLoaded){ startRealtimeComments(caseId, it.taskId, commentsList, (n)=>{ commentCount=n; updateToggle(); }); commentsLoaded=true; } } catch(err){ tempLi.classList.add('failed'); showToast('Failed to add comment'); } });
-      li.appendChild(commentSection);
-      ul.appendChild(li);
+      li.appendChild(acceptBtn);
+      const declineBtn = document.createElement('button');
+      declineBtn.type = 'button';
+      declineBtn.className = 'icon-btn small';
+      declineBtn.textContent = 'Decline';
+      declineBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          await declineTaskAssignment(caseId, it.taskId, { caseTitle: title, taskText: it.text });
+          showToast('Task returned to open');
+        } catch (err) {
+          console.error('Failed to decline task', err);
+          showToast('Failed to decline task');
+        }
+      });
+      li.appendChild(declineBtn);
     }
-    caseCard.appendChild(ul);
-    userTaskListEl.appendChild(caseCard);
+
+    if (it.priority) { const pri=document.createElement('span'); pri.className='mini-chip'; pri.textContent=it.priority; li.appendChild(pri); }
+
+    const av=document.createElement('span');
+    av.className='mini-avatar';
+    const initials= it.assignee? it.assignee.split(/\s+/).map(s=>s[0]).join('').slice(0,2).toUpperCase():'';
+    av.textContent=initials||'';
+    const col=colorForName(it.assignee||'');
+    av.style.background=col.bg;
+    av.style.color=col.color;
+    av.style.border=`1px solid ${col.border}`;
+    let tipEl=null;
+    const removeTip=()=>{ if(tipEl){ tipEl.remove(); tipEl=null; } };
+    av.addEventListener('mouseenter',()=>{ if(!it.assignee) return; tipEl=document.createElement('div'); tipEl.className='assignee-tip'; tipEl.textContent=it.assignee; tipEl.style.position='fixed'; tipEl.style.zIndex='2147483647'; document.body.appendChild(tipEl); const r=av.getBoundingClientRect(); requestAnimationFrame(()=>{ const h=tipEl.offsetHeight||24; tipEl.style.left=`${Math.round(r.left + r.width/2)}px`; tipEl.style.top=`${Math.round(r.top - 6 - h)}px`; tipEl.style.transform='translateX(-50%)'; }); });
+    av.addEventListener('mouseleave', removeTip);
+    av.addEventListener('click',(e)=>{
+      e.stopPropagation();
+      removeTip();
+      const existing=document.querySelector('.assignee-panel');
+      if(existing) existing.remove();
+      const panel=document.createElement('div');
+      panel.className='assignee-panel';
+      panel.style.position='fixed';
+      panel.style.zIndex='2147483646';
+      const addOpt=(label,value)=>{
+        const b=document.createElement('button');
+        b.type='button';
+        b.className='assignee-option';
+        b.textContent=label;
+        b.addEventListener('click', async (ev)=>{
+          ev.stopPropagation();
+          try{
+            await updateTaskAssignment(caseId, it.taskId, value, { caseTitle: title, taskText: it.text });
+          } catch(err){ console.error('Failed to reassign',err); showToast('Failed to update assignee'); }
+          finally { panel.remove(); }
+        });
+        panel.appendChild(b);
+      };
+      addOpt('Open task', null);
+      for (const u of usersCache) addOpt(u.username,u.username);
+      document.body.appendChild(panel);
+      const r=av.getBoundingClientRect();
+      requestAnimationFrame(()=>{
+        const w=panel.offsetWidth||180;
+        const left=Math.min(Math.max(8, r.right-w), window.innerWidth - w - 8);
+        const top=Math.min(window.innerHeight - panel.offsetHeight - 8, r.bottom + 6);
+        panel.style.left=`${Math.round(left)}px`;
+        panel.style.top=`${Math.round(top)}px`;
+      });
+      const onDocClick=(evt)=>{ if(!panel || panel.contains(evt.target) || evt.target===av) return; panel.remove(); document.removeEventListener('click', onDocClick, true); };
+      setTimeout(()=>document.addEventListener('click', onDocClick, true),0);
+    });
+    li.appendChild(av);
+
+    const del = document.createElement('button');
+    del.type='button';
+    del.className='icon-btn delete-btn';
+    del.textContent='🗑';
+    del.title='Delete task';
+    del.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!confirm('Delete this task?')) return;
+      try { await deleteDoc(doc(db, 'cases', caseId, 'tasks', it.taskId)); }
+      catch (err) { console.error('Failed to delete task', err); showToast('Failed to delete task'); }
+    });
+    li.appendChild(del);
+
+    const toggle=document.createElement('button');
+    toggle.type='button';
+    toggle.className='icon-btn comment-toggle';
+    toggle.setAttribute('aria-label','Show comments');
+    toggle.textContent='💬';
+    const countEl=document.createElement('span');
+    countEl.className='badge comment-count';
+    li.appendChild(toggle);
+    li.appendChild(countEl);
+    const commentSection=document.createElement('div');
+    commentSection.className='comment-section';
+    commentSection.hidden=true;
+    const commentsList=document.createElement('ul');
+    commentsList.className='comments';
+    commentSection.appendChild(commentsList);
+    const commentForm=document.createElement('form');
+    commentForm.className='comment-form';
+    const commentInput=document.createElement('input');
+    commentInput.placeholder='Add comment';
+    commentForm.appendChild(commentInput);
+    const commentBtn=document.createElement('button');
+    commentBtn.className='icon-btn add-comment-btn';
+    commentBtn.type='submit';
+    commentBtn.textContent='➕';
+    commentBtn.setAttribute('aria-label','Add comment');
+    commentForm.appendChild(commentBtn);
+    commentSection.appendChild(commentForm);
+    let commentsLoaded=false;
+    let commentCount=0;
+    const updateToggle=()=>{ countEl.textContent= commentCount>0? String(commentCount):''; toggle.textContent= commentSection.hidden? '💬':'✖'; toggle.setAttribute('aria-label', commentSection.hidden? 'Show comments':'Hide comments'); };
+    updateToggle();
+    toggle.addEventListener('click', ()=>{ const h=commentSection.hidden; commentSection.hidden=!h; updateToggle(); if(h && !commentsLoaded){ startRealtimeComments(caseId, it.taskId, commentsList, (n)=>{ commentCount=n; updateToggle(); }); commentsLoaded=true; } });
+    commentForm.addEventListener('submit', async (e)=>{ e.preventDefault(); const t=commentInput.value.trim(); if(!t) return; const tempLi=document.createElement('li'); tempLi.className='optimistic'; const span=document.createElement('span'); span.textContent= username? `${username}: ${t}` : t; tempLi.appendChild(span); commentsList.appendChild(tempLi); commentInput.value=''; commentSection.hidden=false; updateToggle(); try{ const {cipher, iv}= await encryptText(t); await addDoc(collection(db,'cases',caseId,'tasks',it.taskId,'comments'), {cipher,iv,username,createdAt:serverTimestamp()}); try { await logUpdate({ type: 'comment_added', caseId, caseTitle: title, taskId: it.taskId, commentCipher: cipher, commentIv: iv }); } catch {} if(!commentsLoaded){ startRealtimeComments(caseId, it.taskId, commentsList, (n)=>{ commentCount=n; updateToggle(); }); commentsLoaded=true; } } catch(err){ tempLi.classList.add('failed'); showToast('Failed to add comment'); } });
+    li.appendChild(commentSection);
+    return li;
+  };
+
+  const renderSection = (sectionKey, titleLabel, opts = {}) => {
+    const map = sections[sectionKey];
+    const total = sectionCount(map);
+    if (!total) return false;
+    const wrap = document.createElement('section');
+    wrap.className = `task-section task-section--${sectionKey}`;
+    const head = document.createElement('div');
+    head.className = 'task-section-head';
+    const h = document.createElement('h3');
+    h.textContent = titleLabel;
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.textContent = String(total);
+    head.appendChild(h);
+    head.appendChild(badge);
+    wrap.appendChild(head);
+
+    for (const caseId of sortCases(map)) {
+      const items = map.get(caseId) || [];
+      if (!items.length) continue;
+      const caseTitle = userCaseTitles.get(caseId) || '(case)';
+      const caseCard = document.createElement('div');
+      caseCard.className = 'card user-case-card';
+      const header = document.createElement('div');
+      header.className = 'user-case-header';
+      const hh = document.createElement('h3');
+      const link = document.createElement('button');
+      link.className = 'link-btn';
+      link.textContent = caseTitle;
+      link.setAttribute('aria-label', `Open case ${caseTitle}`);
+      link.addEventListener('click', () => openCase(caseId, caseTitle, 'user', 'notes'));
+      hh.appendChild(link);
+      header.appendChild(hh);
+      const countBadge = document.createElement('span');
+      countBadge.className = 'badge';
+      countBadge.textContent = String(items.length);
+      header.appendChild(countBadge);
+      caseCard.appendChild(header);
+
+      let sorted = [...items];
+      if (opts.pendingSort) {
+        sorted.sort((a,b) => tsVal(b.assignedAt) - tsVal(a.assignedAt));
+      } else if (currentUserSort === 'pri-desc') sorted.sort((a,b) => priVal(b.priority) - priVal(a.priority));
+      else if (currentUserSort === 'pri-asc') sorted.sort((a,b) => priVal(a.priority) - priVal(b.priority));
+      const ul = document.createElement('ul');
+      for (const it of sorted) ul.appendChild(buildUserTaskRow(caseId, caseTitle, it));
+      caseCard.appendChild(ul);
+      wrap.appendChild(caseCard);
+    }
+    userTaskListEl.appendChild(wrap);
+    return true;
+  };
+
+  let rendered = false;
+  if (currentAssigneeFilter === 'unassigned') {
+    rendered = renderSection('open', 'Open Tasks', {}) || rendered;
+  } else {
+    const pendingLabel = (currentAssigneeFilter === 'all')
+      ? 'Pending Acceptance'
+      : `Pending Your Acceptance`;
+    rendered = renderSection('pending', pendingLabel, { pendingSort: true }) || rendered;
+    rendered = renderSection('assigned', 'Assigned Tasks', {}) || rendered;
+    rendered = renderSection('open', 'Open Tasks', {}) || rendered;
+  }
+
+  if (!rendered) {
+    userTaskListEl.innerHTML = '<li style="list-style:none;color:var(--muted);padding:8px 0;">No tasks match current filters.</li>';
   }
 }
