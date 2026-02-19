@@ -349,6 +349,25 @@ function clearPendingDischargeState() {
   if (tableSection && !tableSection.hidden && lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs);
 }
 
+let tableStickyOffsetCache = -1;
+let tableStickyOffsetFrame = 0;
+
+function updateTableStickyOffset() {
+  const topbar = document.querySelector('.topbar');
+  const next = topbar ? Math.max(0, Math.ceil(topbar.getBoundingClientRect().bottom)) : 0;
+  if (next === tableStickyOffsetCache) return;
+  tableStickyOffsetCache = next;
+  document.documentElement.style.setProperty('--table-sticky-offset', `${next}px`);
+}
+
+function scheduleTableStickyOffsetUpdate() {
+  if (tableStickyOffsetFrame) return;
+  tableStickyOffsetFrame = window.requestAnimationFrame(() => {
+    tableStickyOffsetFrame = 0;
+    updateTableStickyOffset();
+  });
+}
+
 function saveTagFilterState() {
   try {
     // localStorage
@@ -763,6 +782,7 @@ function showMainTab(which) {
     userDetailEl.hidden = true;
     if (updatesSection) updatesSection.hidden = true;
     if (tableSection) tableSection.hidden = false;
+    updateTableStickyOffset();
     if (!unsubTable) startRealtimeTable();
     if (unsubUpdates) { try { unsubUpdates(); } catch {} unsubUpdates = null; }
   } else if (isMy) {
@@ -1832,13 +1852,13 @@ function buildUpdateDom(item) {
   } else if (item.type==='comment_added') {
     frag.appendChild(document.createTextNode(' commented in '));
     frag.appendChild(caseChip);
-    if (item.comment) { const cchip=document.createElement('span'); cchip.className='chip'; cchip.textContent=item.comment; cchip.style.maxWidth='220px'; cchip.style.overflow='hidden'; cchip.style.textOverflow='ellipsis'; cchip.style.whiteSpace='nowrap'; frag.appendChild(document.createTextNode(' ')); frag.appendChild(cchip); }
+    if (item.comment) { const cchip=document.createElement('span'); cchip.className='chip update-text-chip'; cchip.textContent=item.comment; frag.appendChild(document.createTextNode(' ')); frag.appendChild(cchip); }
   } else if (item.type==='note_added') {
     frag.appendChild(document.createTextNode(' added a note '));
     if (item.noteSection) { frag.appendChild(document.createTextNode(`to section ${item.noteSection} `)); }
     frag.appendChild(document.createTextNode('in '));
     frag.appendChild(caseChip);
-    if (item.note) { const nchip=document.createElement('span'); nchip.className='chip'; nchip.textContent=item.note; nchip.style.maxWidth='220px'; nchip.style.overflow='hidden'; nchip.style.textOverflow='ellipsis'; nchip.style.whiteSpace='nowrap'; frag.appendChild(document.createTextNode(' ')); frag.appendChild(nchip); }
+    if (item.note) { const nchip=document.createElement('span'); nchip.className='chip update-text-chip'; nchip.textContent=item.note; frag.appendChild(document.createTextNode(' ')); frag.appendChild(nchip); }
   } else {
     frag.appendChild(document.createTextNode(' updated '));
     frag.appendChild(caseChip);
@@ -1910,10 +1930,10 @@ function renderUpdatesList() {
           if (it.taskText) { const tn=document.createElement('span'); tn.className='task-name-chip'; tn.textContent=it.taskText; frag.appendChild(tn); } else { frag.appendChild(document.createTextNode('a task')); }
         } else if (it.type==='comment_added') {
           frag.appendChild(document.createTextNode(' commented'));
-          if (it.comment) { const chip=document.createElement('span'); chip.className='chip'; chip.textContent=it.comment; chip.style.maxWidth='220px'; chip.style.overflow='hidden'; chip.style.textOverflow='ellipsis'; chip.style.whiteSpace='nowrap'; frag.appendChild(document.createTextNode(' ')); frag.appendChild(chip); }
+          if (it.comment) { const chip=document.createElement('span'); chip.className='chip update-text-chip'; chip.textContent=it.comment; frag.appendChild(document.createTextNode(' ')); frag.appendChild(chip); }
         } else if (it.type==='note_added') {
           frag.appendChild(document.createTextNode(' added a note'));
-          if (it.note) { const chip=document.createElement('span'); chip.className='chip'; chip.textContent=it.note; chip.style.maxWidth='220px'; chip.style.overflow='hidden'; chip.style.textOverflow='ellipsis'; chip.style.whiteSpace='nowrap'; frag.appendChild(document.createTextNode(' ')); frag.appendChild(chip); }
+          if (it.note) { const chip=document.createElement('span'); chip.className='chip update-text-chip'; chip.textContent=it.note; frag.appendChild(document.createTextNode(' ')); frag.appendChild(chip); }
         } else {
           frag.appendChild(document.createTextNode(' updated'));
         }
@@ -4115,7 +4135,7 @@ async function openWardNoteComposerV2() {
   // Toolbar
   const ctrls = document.createElement('div'); ctrls.className = 'rich-editor-toolbar';
   const mkLink = (label) => { const b=document.createElement('button'); b.type='button'; b.textContent=label; b.className='compact-link'; return b; };
-  const issuesToggleBtn = mkLink('Issues: On');
+  const issuesToggleBtn = mkLink('Issues: Off');
   const showAllBtn = mkLink('Show all');
   const hideAllBtn = mkLink('Hide all');
   const tasksBtn = mkLink('Tasks (include open: on)');
@@ -4138,7 +4158,7 @@ async function openWardNoteComposerV2() {
   editorWrap.appendChild(editor);
   // Other section lives at the bottom of the same editor
   const otherDivider = document.createElement('div'); otherDivider.className='other-divider'; otherDivider.textContent='Other';
-  const otherArea = document.createElement('div'); otherArea.className='other-area'; otherArea.dataset.placeholder = 'Type here to add to Other…';
+  const otherArea = document.createElement('div'); otherArea.className='other-area'; otherArea.dataset.placeholder = '';
   editor.appendChild(otherDivider);
   editor.appendChild(otherArea);
 
@@ -4207,6 +4227,8 @@ async function openWardNoteComposerV2() {
       const title = (b.querySelector('.issue-title')?.textContent||'').trim();
       const body = (b.querySelector('.issue-body')?.innerText||'').trim();
       const repl = document.createElement('div');
+      repl.className = 'issue-marker';
+      repl.style.display = 'none';
       repl.textContent = body ? `${ISSUE_MARKER_START} ${title}\n${body}` : `${ISSUE_MARKER_START} ${title}`;
       editor.insertBefore(repl, b);
       b.remove();
@@ -4238,19 +4260,24 @@ async function openWardNoteComposerV2() {
     // No external floating hint required
   };
 
-  // Default: Issues On
-  let issuesOn = true;
+  // Default: Issues Off
+  let issuesOn = false;
   const setIssuesToggle = (on) => {
-    issuesOn = !!on; issuesToggleBtn.textContent = 'Issues: ' + (issuesOn ? 'On' : 'Off');
+    issuesOn = !!on;
+    issuesToggleBtn.textContent = 'Issues: ' + (issuesOn ? 'On' : 'Off');
+    showAllBtn.style.display = issuesOn ? '' : 'none';
+    hideAllBtn.style.display = issuesOn ? '' : 'none';
+    otherDivider.style.display = issuesOn ? '' : 'none';
+    otherArea.dataset.placeholder = issuesOn ? 'Type here to add to Other…' : '';
     if (issuesOn) { rehydrateIssuesFromMarkers(); insertIssuesIntoEditor(); } else { flattenIssuesToMarkers(); }
   };
   issuesToggleBtn.addEventListener('click', () => setIssuesToggle(!issuesOn));
   showAllBtn.addEventListener('click', () => { editor.querySelectorAll('.issue-block').forEach(b=>{ b.classList.remove('collapsed'); const cBtn=b.querySelector('.issue-actions button'); if(cBtn) cBtn.textContent='▾'; }); });
   hideAllBtn.addEventListener('click', () => { editor.querySelectorAll('.issue-block').forEach(b=>{ b.classList.add('collapsed'); const cBtn=b.querySelector('.issue-actions button'); if(cBtn) cBtn.textContent='▸'; }); });
 
-  // Insert Issue blocks above the Other section and default to Issues On
+  // Insert Issue blocks above the Other section and default to Issues Off
   insertIssuesIntoEditor();
-  setIssuesToggle(true);
+  setIssuesToggle(false);
   // If user clicks the editor background, move caret to end of Other
   const placeCaretAtEnd = (el) => { try { const range=document.createRange(); range.selectNodeContents(el); range.collapse(false); const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(range); } catch {} };
   editor.addEventListener('mousedown', (e) => {
@@ -4875,6 +4902,9 @@ window.addEventListener('DOMContentLoaded', async () => {
   metricsThroughputEl = document.getElementById('metrics-throughput');
   metricsUpdatedEl = document.getElementById('metrics-updated');
   setupWorkspaceEnhancements();
+  updateTableStickyOffset();
+  window.addEventListener('resize', scheduleTableStickyOffsetUpdate, { passive: true });
+  window.addEventListener('scroll', scheduleTableStickyOffsetUpdate, { passive: true });
   // Add a Delete Case button next to the case title if not present
   // Case header overflow menu (⋯) with Delete
   const actionsWrap = document.getElementById('case-header-actions');
