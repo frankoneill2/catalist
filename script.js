@@ -349,12 +349,6 @@ function clearPendingDischargeState() {
   if (tableSection && !tableSection.hidden && lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs);
 }
 
-function updateTableStickyOffset() {
-  const top = document.querySelector('.topbar');
-  const offset = top ? Math.ceil(top.getBoundingClientRect().height + 8) : 64;
-  document.documentElement.style.setProperty('--table-sticky-offset', `${offset}px`);
-}
-
 function saveTagFilterState() {
   try {
     // localStorage
@@ -769,7 +763,6 @@ function showMainTab(which) {
     userDetailEl.hidden = true;
     if (updatesSection) updatesSection.hidden = true;
     if (tableSection) tableSection.hidden = false;
-    updateTableStickyOffset();
     if (!unsubTable) startRealtimeTable();
     if (unsubUpdates) { try { unsubUpdates(); } catch {} unsubUpdates = null; }
   } else if (isMy) {
@@ -2276,26 +2269,32 @@ function startRealtimeTable() {
       const tdName = document.createElement('td');
       const nameWrap = document.createElement('div'); nameWrap.className = 'name-cell';
       const nameRow = document.createElement('div'); nameRow.className = 'name-row';
+      const nameTitle = document.createElement('div'); nameTitle.className = 'name-title';
+      const nameActions = document.createElement('div'); nameActions.className = 'name-actions';
       const btn = document.createElement('button');
       btn.className = 'patient-link'; btn.textContent = title;
       btn.addEventListener('click', () => { tableScrollY = window.scrollY; openCase(d.id, title, 'table', 'notes'); });
-      nameRow.appendChild(btn);
-      const editBtn = document.createElement('button'); editBtn.type='button'; editBtn.className='edit-tags-btn'; editBtn.textContent='Tags';
+      nameTitle.appendChild(btn);
+      nameRow.appendChild(nameTitle);
+      const editBtn = document.createElement('button'); editBtn.type='button'; editBtn.className='name-action-btn edit-tags-btn'; editBtn.textContent='Tags';
       editBtn.addEventListener('click', (e) => { e.stopPropagation(); openTagPanelForCase(d.id, tdName); });
-      nameRow.appendChild(editBtn);
-      // New Note quick action (subtle)
-      const newNoteBtn = document.createElement('button'); newNoteBtn.type='button'; newNoteBtn.className='icon-btn small'; newNoteBtn.textContent='📝'; newNoteBtn.title='New note';
+      nameActions.appendChild(editBtn);
+      const newNoteBtn = document.createElement('button');
+      newNoteBtn.type = 'button';
+      newNoteBtn.className = 'name-action-btn';
+      newNoteBtn.textContent = 'New note';
+      newNoteBtn.title = 'Create a new ward note';
       newNoteBtn.addEventListener('click', async (e) => { e.stopPropagation();
         // Open case in background if needed to ensure currentCaseId is set
         currentCaseId = d.id; caseTitleEl.textContent = title;
         openWardNoteComposerV2();
       });
-      nameRow.appendChild(newNoteBtn);
+      nameActions.appendChild(newNoteBtn);
       const makeDeleteCaseBtn = () => {
         const delBtn = document.createElement('button');
         delBtn.type = 'button';
-        delBtn.className = 'icon-btn delete-btn';
-        delBtn.textContent = '🗑';
+        delBtn.className = 'name-action-btn delete-action-btn';
+        delBtn.textContent = 'Delete';
         delBtn.title = 'Delete case permanently';
         delBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
@@ -2322,7 +2321,7 @@ function startRealtimeTable() {
       if (renderAsDischarged) {
         const reopenBtn = document.createElement('button');
         reopenBtn.type = 'button';
-        reopenBtn.className = 'icon-btn small';
+        reopenBtn.className = 'name-action-btn';
         reopenBtn.textContent = 'Reopen';
         reopenBtn.title = 'Move case back to active list';
         reopenBtn.addEventListener('click', async (e) => {
@@ -2335,17 +2334,17 @@ function startRealtimeTable() {
             showToast('Failed to reopen case');
           }
         });
-        nameRow.appendChild(reopenBtn);
-        nameRow.appendChild(makeDeleteCaseBtn());
+        nameActions.appendChild(reopenBtn);
+        nameActions.appendChild(makeDeleteCaseBtn());
       } else if (pendingDischarge) {
         const pendingChip = document.createElement('span');
         pendingChip.className = 'pending-discharge-chip';
         pendingChip.textContent = 'Discharge pending';
         pendingChip.title = 'This case will move after refresh or navigation away';
-        nameRow.appendChild(pendingChip);
+        nameActions.appendChild(pendingChip);
         const undoBtn = document.createElement('button');
         undoBtn.type = 'button';
-        undoBtn.className = 'icon-btn small';
+        undoBtn.className = 'name-action-btn';
         undoBtn.textContent = 'Undo';
         undoBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
@@ -2359,11 +2358,11 @@ function startRealtimeTable() {
             showToast('Failed to cancel discharge');
           }
         });
-        nameRow.appendChild(undoBtn);
+        nameActions.appendChild(undoBtn);
       } else {
         const dischargeBtn = document.createElement('button');
         dischargeBtn.type = 'button';
-        dischargeBtn.className = 'icon-btn small';
+        dischargeBtn.className = 'name-action-btn discharge-action-btn';
         dischargeBtn.textContent = 'Discharge';
         dischargeBtn.title = 'Mark patient as discharged';
         dischargeBtn.addEventListener('click', async (e) => {
@@ -2381,8 +2380,9 @@ function startRealtimeTable() {
             showToast('Failed to discharge case');
           }
         });
-        nameRow.appendChild(dischargeBtn);
+        nameActions.appendChild(dischargeBtn);
       }
+      nameRow.appendChild(nameActions);
       nameWrap.appendChild(nameRow);
       // Render tag chips (location/room/consultant)
       const chips = document.createElement('div'); chips.className = 'tag-chips';
@@ -2760,7 +2760,6 @@ function startRealtimeTable() {
         tableTaskUnsubs.delete(cid);
       }
     }
-    updateTableStickyOffset();
   };
   unsubTable = onSnapshot(q, (snap) => {
     lastCasesDocs = snap.docs;
@@ -4876,8 +4875,6 @@ window.addEventListener('DOMContentLoaded', async () => {
   metricsThroughputEl = document.getElementById('metrics-throughput');
   metricsUpdatedEl = document.getElementById('metrics-updated');
   setupWorkspaceEnhancements();
-  updateTableStickyOffset();
-  window.addEventListener('resize', updateTableStickyOffset, { passive: true });
   // Add a Delete Case button next to the case title if not present
   // Case header overflow menu (⋯) with Delete
   const actionsWrap = document.getElementById('case-header-actions');
