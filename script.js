@@ -225,7 +225,7 @@ function isTaskAcceptedAssignment(data = {}) {
 
 function taskAssignmentStatusLabel(data = {}) {
   if (isTaskPendingAcceptance(data)) return `Awaiting ${data.assignee} acceptance`;
-  if (isTaskOpenForTeam(data)) return 'Open task';
+  if (isTaskOpenForTeam(data)) return 'Unassigned';
   return '';
 }
 
@@ -1304,7 +1304,7 @@ async function loadCompactTasks(caseId, caseTitle, ul, moreBtn) {
           });
           panel.appendChild(b);
         };
-        addOpt('Open task', null);
+        addOpt('Unassigned', null);
         for (const u of usersCache) addOpt(u.username, u.username);
         document.body.appendChild(panel);
         // Position near the avatar (below, aligned to right if space)
@@ -3207,7 +3207,7 @@ function buildCompactTaskRow(caseId, it, opts = {}) {
         });
         panel.appendChild(b);
       };
-      addOpt('Open task', null);
+      addOpt('Unassigned', null);
       for (const u of usersCache) addOpt(u.username, u.username);
       document.body.appendChild(panel);
       const r=av.getBoundingClientRect();
@@ -4746,7 +4746,7 @@ function buildTaskListItem(item, opts = {}) {
       });
       panel.appendChild(b);
     };
-    addOpt('Open task', null); for (const u of usersCache) addOpt(u.username, u.username);
+    addOpt('Unassigned', null); for (const u of usersCache) addOpt(u.username, u.username);
     document.body.appendChild(panel);
     const r = av.getBoundingClientRect(); requestAnimationFrame(()=>{ const w=panel.offsetWidth||180; const left=Math.min(Math.max(8, r.right - w), window.innerWidth - w - 8); const top=Math.min(window.innerHeight - panel.offsetHeight - 8, r.bottom + 6); panel.style.left=`${Math.round(left)}px`; panel.style.top=`${Math.round(top)}px`; });
     const onDocClick = (evt)=>{ if (!panel || panel.contains(evt.target) || evt.target===av) return; panel.remove(); document.removeEventListener('click', onDocClick, true); }; setTimeout(()=>document.addEventListener('click', onDocClick, true),0);
@@ -4852,7 +4852,7 @@ function populateComposerAssignees() {
   sel.innerHTML = '';
   const none = document.createElement('option');
   none.value = '';
-  none.textContent = 'Open task (team)';
+  none.textContent = 'Unassigned (team)';
   sel.appendChild(none);
   for (const u of usersCache) {
     const opt = document.createElement('option');
@@ -5714,7 +5714,7 @@ function setUserHeader() {
   if (!userTitleEl) return;
   let label = '';
   if (currentAssigneeFilter === 'all') label = 'All tasks';
-  else if (currentAssigneeFilter === 'unassigned') label = 'Open tasks';
+  else if (currentAssigneeFilter === 'unassigned') label = 'Unassigned tasks';
   else if (currentAssigneeFilter === 'me') label = `${username || currentUserPageName || 'Me'}'s tasks`;
   else if (currentAssigneeFilter.startsWith('name:')) label = `${currentAssigneeFilter.slice(5)}'s tasks`;
   userTitleEl.innerHTML = `${label} <button id="change-user-link" class="change-user-link" type="button">(Change user)</button>`;
@@ -6061,7 +6061,7 @@ function renderUserTasks() {
         });
         panel.appendChild(b);
       };
-      addOpt('Open task', null);
+      addOpt('Unassigned', null);
       for (const u of usersCache) addOpt(u.username,u.username);
       document.body.appendChild(panel);
       const r=av.getBoundingClientRect();
