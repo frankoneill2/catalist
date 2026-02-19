@@ -3130,9 +3130,18 @@ function buildCompactTaskRow(caseId, it, opts = {}) {
     }
   }
   const assignmentLabel = taskAssignmentStatusLabel(data);
+  let assignmentChip = null;
+  const assignmentChipActionable = !!assignmentLabel && !readOnly && assignmentState === TASK_ASSIGNMENT.OPEN && !data.assignee;
   if (assignmentLabel) {
-    const assignmentChip = document.createElement('span');
-    assignmentChip.className = `assignment-state-chip ${pendingAcceptance ? 'pending' : 'open'}`;
+    assignmentChip = document.createElement(assignmentChipActionable ? 'button' : 'span');
+    if (assignmentChipActionable) {
+      assignmentChip.type = 'button';
+      assignmentChip.setAttribute('aria-label', 'Assign this open task');
+      assignmentChip.title = 'Assign this open task';
+      assignmentChip.className = `assignment-state-chip ${pendingAcceptance ? 'pending' : 'open'} assignment-state-chip--action`;
+    } else {
+      assignmentChip.className = `assignment-state-chip ${pendingAcceptance ? 'pending' : 'open'}`;
+    }
     assignmentChip.textContent = assignmentLabel;
     li.appendChild(assignmentChip);
   }
@@ -3217,6 +3226,12 @@ function buildCompactTaskRow(caseId, it, opts = {}) {
   const del = document.createElement('button'); del.type='button'; del.className='icon-btn delete-btn'; del.textContent='🗑'; del.title='Delete task';
   del.hidden = readOnly;
   del.addEventListener('click', async (e) => { e.stopPropagation(); if (!confirm('Delete this task?')) return; try { await deleteDoc(doc(db, 'cases', caseId, 'tasks', it.id)); } catch (err) { console.error('Failed to delete task', err); showToast('Failed to delete task'); } });
+  if (assignmentChipActionable && assignmentChip) {
+    assignmentChip.addEventListener('click', (e) => {
+      e.stopPropagation();
+      av.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    });
+  }
   li.appendChild(av);
   if (!readOnly) li.appendChild(del);
   return li;
@@ -4623,9 +4638,18 @@ function buildTaskListItem(item, opts = {}) {
   li.appendChild(statusBtn);
   li.appendChild(titleSpan);
   const assignmentLabel = taskAssignmentStatusLabel(data || {});
+  let assignmentChip = null;
+  const assignmentChipActionable = !!assignmentLabel && assignmentState === TASK_ASSIGNMENT.OPEN && !(data?.assignee);
   if (assignmentLabel) {
-    const assignmentChip = document.createElement('span');
-    assignmentChip.className = `assignment-state-chip ${assignmentState === TASK_ASSIGNMENT.PENDING ? 'pending' : 'open'}`;
+    assignmentChip = document.createElement(assignmentChipActionable ? 'button' : 'span');
+    if (assignmentChipActionable) {
+      assignmentChip.type = 'button';
+      assignmentChip.setAttribute('aria-label', 'Assign this open task');
+      assignmentChip.title = 'Assign this open task';
+      assignmentChip.className = `assignment-state-chip ${assignmentState === TASK_ASSIGNMENT.PENDING ? 'pending' : 'open'} assignment-state-chip--action`;
+    } else {
+      assignmentChip.className = `assignment-state-chip ${assignmentState === TASK_ASSIGNMENT.PENDING ? 'pending' : 'open'}`;
+    }
     assignmentChip.textContent = assignmentLabel;
     li.appendChild(assignmentChip);
   }
@@ -4727,6 +4751,12 @@ function buildTaskListItem(item, opts = {}) {
     const r = av.getBoundingClientRect(); requestAnimationFrame(()=>{ const w=panel.offsetWidth||180; const left=Math.min(Math.max(8, r.right - w), window.innerWidth - w - 8); const top=Math.min(window.innerHeight - panel.offsetHeight - 8, r.bottom + 6); panel.style.left=`${Math.round(left)}px`; panel.style.top=`${Math.round(top)}px`; });
     const onDocClick = (evt)=>{ if (!panel || panel.contains(evt.target) || evt.target===av) return; panel.remove(); document.removeEventListener('click', onDocClick, true); }; setTimeout(()=>document.addEventListener('click', onDocClick, true),0);
   });
+  if (assignmentChipActionable && assignmentChip) {
+    assignmentChip.addEventListener('click', (e) => {
+      e.stopPropagation();
+      av.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    });
+  }
   li.appendChild(av);
   // Comments unobtrusive below (hidden by default)
   const toggle = document.createElement('button'); toggle.type='button'; toggle.className='icon-btn comment-toggle'; toggle.setAttribute('aria-label','Show comments'); toggle.textContent='💬';

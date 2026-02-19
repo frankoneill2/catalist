@@ -2632,6 +2632,15 @@ kbd {
   color: #1d4ed8;
 }
 
+.assignment-state-chip--action {
+  cursor: pointer;
+}
+
+.assignment-state-chip--action:hover {
+  border-color: #93c5fd;
+  background: #dbeafe;
+}
+
 .case-task.task-pending-acceptance {
   border-left: 3px solid #f97316 !important;
   background: #fff7ed !important;
