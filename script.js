@@ -2424,9 +2424,9 @@ function startRealtimeTable() {
         const idx = list.findIndex(t => t.id === id);
         if (idx === -1) return;
         const tag = list[idx];
-        const chip = document.createElement('span'); chip.className='tag-chip'; chip.setAttribute('role','button'); chip.setAttribute('tabindex','0');
+        const chip = document.createElement('span'); chip.className=`tag-chip tag-chip--${type}`; chip.setAttribute('role','button'); chip.setAttribute('tabindex','0');
         const o = document.createElement('span'); o.className='tag-order'; o.textContent = String(idx+1)+'.'; chip.appendChild(o);
-        const t = document.createElement('span'); t.textContent = tag.name; chip.appendChild(t);
+        const t = document.createElement('span'); t.className='tag-chip-label'; t.textContent = tag.name; chip.appendChild(t);
         if (type === 'location') {
           chip.title = 'Edit tags';
           const openEditor = () => { openTagPanelForCase(d.id, tdName); };
@@ -3366,8 +3366,8 @@ function startRealtimeCaseFields(caseId) {
           const list = type === 'room' ? (subtagsByParent.get(ct.location) || []) : (tagsByType.get(type) || []);
           const tag = list.find(t => t.id === id);
           if (!tag) return;
-          const chip = document.createElement('span'); chip.className='tag-chip'; chip.setAttribute('role','button'); chip.setAttribute('tabindex','0');
-          const t = document.createElement('span'); t.textContent = tag.name; chip.appendChild(t);
+          const chip = document.createElement('span'); chip.className=`tag-chip tag-chip--${type}`; chip.setAttribute('role','button'); chip.setAttribute('tabindex','0');
+          const t = document.createElement('span'); t.className='tag-chip-label'; t.textContent = tag.name; chip.appendChild(t);
           const openEditor = () => { const anchor = caseTitleEl || chipsWrap; openTagPanelForCase(caseId, anchor); };
           chip.addEventListener('click', (e)=>{ e.stopPropagation(); openEditor(); });
           chip.addEventListener('keydown', (e)=>{ if (e.key==='Enter'||e.key===' '){ e.preventDefault(); openEditor(); } });
