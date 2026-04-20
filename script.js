@@ -433,10 +433,8 @@ function isEditableTarget(target) {
   return !!target.closest('input, textarea, select, [contenteditable="true"]');
 }
 
-function setWorkspaceOverviewVisible(visible) {
-  const panel = document.getElementById('workspace-overview');
-  if (!panel) return;
-  panel.hidden = !visible;
+function setWorkspaceOverviewVisible(_visible) {
+  // Workspace overview panel was removed; retained as no-op for legacy callers.
 }
 
 function updateSessionUserBadge(name = username) {
@@ -627,7 +625,6 @@ function setTableFiltersHidden(hidden) {
     btn.textContent = 'Show Filters';
     btn.addEventListener('click', () => setTableFiltersHidden(false));
     ph.appendChild(btn);
-    ph.appendChild(createWardNotesPrintButton());
     try { localStorage.setItem('tableFiltersHidden', '1'); } catch {}
   } else {
     bar.style.display = '';
@@ -5162,7 +5159,11 @@ window.addEventListener('DOMContentLoaded', async () => {
   const filtersKey = 'tableFiltersHidden';
   if (hideFiltersBtn) hideFiltersBtn.addEventListener('click', () => setTableFiltersHidden(true));
   if (showFiltersBtn) showFiltersBtn.addEventListener('click', () => setTableFiltersHidden(false));
-  try { const hidden = localStorage.getItem(filtersKey) === '1'; setTableFiltersHidden(hidden); } catch {}
+  try {
+    const stored = localStorage.getItem(filtersKey);
+    const hidden = stored === null ? true : stored === '1';
+    setTableFiltersHidden(hidden);
+  } catch { setTableFiltersHidden(true); }
   // Load persisted tag filter state (URL/localStorage)
   loadTagFilterState();
   try { showDischargedCases = localStorage.getItem('table.showDischargedCases') === '1'; } catch { showDischargedCases = false; }

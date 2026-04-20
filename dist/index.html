@@ -8,8 +8,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=Sora:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <script type="module" crossorigin src="/catalist/assets/index-PVOxI82k.js"></script>
-  <link rel="stylesheet" crossorigin href="/catalist/assets/index-CPvcbF9H.css">
+  <script type="module" crossorigin src="/catalist/assets/index-DhCYWYct.js"></script>
+  <link rel="stylesheet" crossorigin href="/catalist/assets/index-D4Mi9lpQ.css">
 </head>
 <body>
   <header class="topbar">
@@ -54,30 +54,17 @@
     </div>
   </header>
   <main class="app">
-    <div id="main-tabs" class="tabs">
-      <button id="tab-table" class="tab active" role="tab" aria-selected="true" aria-controls="table-section">Table</button>
-      <button id="tab-my" class="tab" role="tab" aria-selected="false" aria-controls="user-detail">My Tasks</button>
-      <button id="tab-updates" class="tab" role="tab" aria-selected="false" aria-controls="updates-section">Updates</button>
-    </div>
-
-    <section id="workspace-overview" class="workspace-overview workspace-overview--minimal" aria-label="Workspace overview">
-      <div class="workspace-line">
-        <span class="workspace-item"><strong>Catalist workspace</strong></span>
-        <span class="workspace-item"><strong id="metric-visible-cases">0</strong> cases</span>
-        <span class="workspace-item"><strong id="metric-open-tasks">0</strong> open</span>
-        <span class="workspace-item"><strong id="metric-progress-tasks">0</strong> in progress</span>
-        <span class="workspace-item"><strong id="metric-complete-tasks">0</strong> complete</span>
-        <span class="workspace-item"><strong id="metric-users">0</strong> users</span>
-        <span class="workspace-item"><strong id="metric-locations">0</strong> locations</span>
-        <span id="metrics-throughput" class="workspace-item">Completion rate: --</span>
-        <span id="metrics-updated" class="workspace-item">Last updated: --</span>
+    <div class="tabs-bar">
+      <div id="main-tabs" class="tabs">
+        <button id="tab-table" class="tab active" role="tab" aria-selected="true" aria-controls="table-section">Table</button>
+        <button id="tab-my" class="tab" role="tab" aria-selected="false" aria-controls="user-detail">My Tasks</button>
+        <button id="tab-updates" class="tab" role="tab" aria-selected="false" aria-controls="updates-section">Updates</button>
       </div>
-      <div class="workspace-actions-inline">
-        <button id="quick-new-case-btn" class="btn primary" type="button">New Case</button>
+      <div class="tabs-actions">
         <button id="quick-ward-notes-btn" class="btn" type="button">Ward Notes</button>
-        <button id="quick-shortcuts-btn" class="btn" type="button">Shortcuts</button>
+        <button id="quick-new-case-btn" class="btn primary" type="button">New Case</button>
       </div>
-    </section>
+    </div>
 
     <section id="table-section" class="card" hidden>
       <div id="table-tags-controls" class="tags-controls" aria-label="Tag filters and sort">
