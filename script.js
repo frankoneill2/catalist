@@ -176,7 +176,7 @@ let tagsByType = new Map(); // type -> [{id, name, order}]
 let subtagsByParent = new Map(); // parentTagId -> [{id, name, order, type}]
 let tagsReady = false;
 let activeTagFilters = { location: new Set(), consultant: new Set(), room: new Set() };
-let activeTagSort = 'none';
+let activeTagSort = 'location';
 let activeTagSortDir = 'asc'; // 'asc' | 'desc' for segmented control
 
 function encodeSet(set) { return Array.from(set || []).join(','); }
@@ -422,7 +422,7 @@ function loadTagFilterState() {
     activeTagFilters.location = decodeSet(localStorage.getItem('table.filters.location'));
     activeTagFilters.consultant = decodeSet(localStorage.getItem('table.filters.consultant'));
     activeTagFilters.room = decodeSet(localStorage.getItem('table.filters.room'));
-    activeTagSort = localStorage.getItem('table.sort.key') || 'none';
+    activeTagSort = localStorage.getItem('table.sort.key') || 'location';
     activeTagSortDir = localStorage.getItem('table.sort.dir') || 'asc';
   } catch {}
 }
@@ -2252,10 +2252,14 @@ function startRealtimeTable() {
         const dat = d.data();
         const ct = dat.caseTags || {};
         let score = 999999;
+        let scoreAlt = 999999;
         if (activeTagSort === 'location') {
           const arr = tagsByType.get('location') || [];
           const idx = arr.findIndex(t=>t.id === ct.location);
           score = idx === -1 ? 999999 : idx;
+          const roomArr = subtagsByParent.get(ct.location) || [];
+          const roomIdx = roomArr.findIndex(t=>t.id === ct.room);
+          scoreAlt = roomIdx === -1 ? 999999 : roomIdx;
         } else if (activeTagSort === 'consultant') {
           const arr = tagsByType.get('consultant') || [];
           const idx = arr.findIndex(t=>t.id === ct.consultant);
@@ -2265,14 +2269,24 @@ function startRealtimeTable() {
           const idx = arr.findIndex(t=>t.id === ct.room);
           score = idx === -1 ? 999999 : idx;
         }
-        scored.push({ d, score, title: '' });
+        scored.push({ d, score, scoreAlt, title: '' });
       }
       // Need titles as tiebreaker
       for (const s of scored) { try { const dat = s.d.data(); s.title = await decryptText(dat.titleCipher, dat.titleIv); } catch {} }
-      scored.sort((a,b)=> a.score - b.score || a.title.localeCompare(b.title));
+      scored.sort((a,b)=> a.score - b.score || a.scoreAlt - b.scoreAlt || a.title.localeCompare(b.title));
       if (activeTagSortDir === 'desc') scored.reverse();
       docs = scored.map(s=>s.d);
     }
+
+    // Preload subtags for every location referenced so room chips appear on first paint.
+    try {
+      const locIds = new Set();
+      for (const d of docs) {
+        const ct = (d.data() || {}).caseTags || {};
+        if (ct.location) locIds.add(ct.location);
+      }
+      for (const id of locIds) loadSubtagsFor(id);
+    } catch {}
 
     const presentTaskListeners = new Set();
     let visibleCases = 0;
@@ -2304,67 +2318,62 @@ function startRealtimeTable() {
       btn.addEventListener('click', () => { tableScrollY = window.scrollY; openCase(d.id, title, 'table', 'notes'); });
       nameTitle.appendChild(btn);
       nameRow.appendChild(nameTitle);
-      const editBtn = document.createElement('button'); editBtn.type='button'; editBtn.className='name-action-btn edit-tags-btn'; editBtn.textContent='Tags';
-      editBtn.addEventListener('click', (e) => { e.stopPropagation(); openTagPanelForCase(d.id, tdName); });
-      nameActions.appendChild(editBtn);
+
       const newNoteBtn = document.createElement('button');
       newNoteBtn.type = 'button';
       newNoteBtn.className = 'name-action-btn';
       newNoteBtn.textContent = 'New note';
       newNoteBtn.title = 'Create a new ward note';
       newNoteBtn.addEventListener('click', async (e) => { e.stopPropagation();
-        // Open case in background if needed to ensure currentCaseId is set
         currentCaseId = d.id; caseTitleEl.textContent = title;
         openWardNoteComposerV2();
       });
       nameActions.appendChild(newNoteBtn);
-      const makeDeleteCaseBtn = () => {
-        const delBtn = document.createElement('button');
-        delBtn.type = 'button';
-        delBtn.className = 'name-action-btn delete-action-btn';
-        delBtn.textContent = 'Delete';
-        delBtn.title = 'Delete case permanently';
-        delBtn.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          if (!confirm('Delete this case and all its items?')) return;
-          try {
-            await deleteCaseDeep(d.id);
-            if (currentCaseId === d.id) {
-              if (unsubTasks) { try { unsubTasks(); } catch {} unsubTasks = null; }
-              if (unsubNotes) { try { unsubNotes(); } catch {} unsubNotes = null; }
-              if (unsubCaseDoc) { try { unsubCaseDoc(); } catch {} unsubCaseDoc = null; }
-              currentCaseId = null;
-              caseDetailEl.hidden = true;
-              if (tableSection) tableSection.hidden = false;
-            }
-            showToast('Case deleted');
-          } catch (err) {
-            console.error('Failed to delete case', err);
-            showToast('Failed to delete case');
+
+      const deleteCase = async () => {
+        if (!confirm('Delete this case and all its items?')) return;
+        try {
+          await deleteCaseDeep(d.id);
+          if (currentCaseId === d.id) {
+            if (unsubTasks) { try { unsubTasks(); } catch {} unsubTasks = null; }
+            if (unsubNotes) { try { unsubNotes(); } catch {} unsubNotes = null; }
+            if (unsubCaseDoc) { try { unsubCaseDoc(); } catch {} unsubCaseDoc = null; }
+            currentCaseId = null;
+            caseDetailEl.hidden = true;
+            if (tableSection) tableSection.hidden = false;
           }
-        });
-        return delBtn;
+          showToast('Case deleted');
+        } catch (err) {
+          console.error('Failed to delete case', err);
+          showToast('Failed to delete case');
+        }
+      };
+      const dischargeCase = async () => {
+        if (!confirm(`Discharge ${title}?`)) return;
+        pendingDischargeCaseIds.add(d.id);
+        if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs);
+        try {
+          await updateDoc(doc(db, 'cases', d.id), { dischargedAt: serverTimestamp(), dischargedBy: username || null });
+          showToast('Discharge queued. It moves after refresh or navigation away.');
+        } catch (err) {
+          pendingDischargeCaseIds.delete(d.id);
+          if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs);
+          console.error('Failed to discharge case', err);
+          showToast('Failed to discharge case');
+        }
+      };
+      const reopenCase = async () => {
+        try {
+          await updateDoc(doc(db, 'cases', d.id), { dischargedAt: null, dischargedBy: null });
+          pendingDischargeCaseIds.delete(d.id);
+          showToast('Case moved back to active list');
+        } catch (err) {
+          console.error('Failed to reopen case', err);
+          showToast('Failed to reopen case');
+        }
       };
 
-      if (renderAsDischarged) {
-        const reopenBtn = document.createElement('button');
-        reopenBtn.type = 'button';
-        reopenBtn.className = 'name-action-btn';
-        reopenBtn.textContent = 'Reopen';
-        reopenBtn.title = 'Move case back to active list';
-        reopenBtn.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          try {
-            await updateDoc(doc(db, 'cases', d.id), { dischargedAt: null, dischargedBy: null });
-            showToast('Case moved back to active list');
-          } catch (err) {
-            console.error('Failed to reopen case', err);
-            showToast('Failed to reopen case');
-          }
-        });
-        nameActions.appendChild(reopenBtn);
-        nameActions.appendChild(makeDeleteCaseBtn());
-      } else if (pendingDischarge) {
+      if (pendingDischarge) {
         const pendingChip = document.createElement('span');
         pendingChip.className = 'pending-discharge-chip';
         pendingChip.textContent = 'Discharge pending';
@@ -2376,42 +2385,110 @@ function startRealtimeTable() {
         undoBtn.textContent = 'Undo';
         undoBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
-          try {
-            await updateDoc(doc(db, 'cases', d.id), { dischargedAt: null, dischargedBy: null });
-            pendingDischargeCaseIds.delete(d.id);
-            if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs);
-            showToast('Discharge cancelled');
-          } catch (err) {
-            console.error('Failed to cancel discharge', err);
-            showToast('Failed to cancel discharge');
-          }
+          await reopenCase();
+          if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs);
         });
         nameActions.appendChild(undoBtn);
-      } else {
-        const dischargeBtn = document.createElement('button');
-        dischargeBtn.type = 'button';
-        dischargeBtn.className = 'name-action-btn discharge-action-btn';
-        dischargeBtn.textContent = 'Discharge';
-        dischargeBtn.title = 'Mark patient as discharged';
-        dischargeBtn.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          if (!confirm(`Discharge ${title}?`)) return;
-          pendingDischargeCaseIds.add(d.id);
-          if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs);
-          try {
-            await updateDoc(doc(db, 'cases', d.id), { dischargedAt: serverTimestamp(), dischargedBy: username || null });
-            showToast('Discharge queued. It moves after refresh or navigation away.');
-          } catch (err) {
-            pendingDischargeCaseIds.delete(d.id);
-            if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs);
-            console.error('Failed to discharge case', err);
-            showToast('Failed to discharge case');
-          }
-        });
-        nameActions.appendChild(dischargeBtn);
       }
+
+      // Overflow menu (Tags / Discharge / Reopen / Delete)
+      const moreWrap = document.createElement('div'); moreWrap.className = 'name-more';
+      const moreBtn = document.createElement('button');
+      moreBtn.type = 'button';
+      moreBtn.className = 'name-action-btn name-more-btn';
+      moreBtn.setAttribute('aria-label', 'More actions');
+      moreBtn.setAttribute('aria-haspopup', 'menu');
+      moreBtn.setAttribute('aria-expanded', 'false');
+      moreBtn.textContent = '⋯';
+      const menu = document.createElement('div');
+      menu.className = 'name-more-menu';
+      menu.setAttribute('role', 'menu');
+      menu.hidden = true;
+      const addItem = (label, onClick, variant) => {
+        const it = document.createElement('button');
+        it.type = 'button';
+        it.className = 'name-more-item' + (variant ? ` is-${variant}` : '');
+        it.setAttribute('role', 'menuitem');
+        it.textContent = label;
+        it.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          closeMenu();
+          await onClick();
+        });
+        menu.appendChild(it);
+      };
+      addItem('Edit tags', () => { openTagPanelForCase(d.id, tdName); });
+      if (renderAsDischarged) {
+        addItem('Reopen', reopenCase);
+        addItem('Delete', deleteCase, 'danger');
+      } else if (!pendingDischarge) {
+        addItem('Discharge', dischargeCase, 'warn');
+      }
+      const closeMenu = () => {
+        if (menu.hidden) return;
+        menu.hidden = true;
+        moreBtn.setAttribute('aria-expanded', 'false');
+        document.removeEventListener('mousedown', onDocMouseDown, true);
+        document.removeEventListener('keydown', onMenuKey, true);
+      };
+      const onDocMouseDown = (e) => { if (!moreWrap.contains(e.target)) closeMenu(); };
+      const onMenuKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); closeMenu(); } };
+      moreBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (menu.hidden) {
+          menu.hidden = false;
+          moreBtn.setAttribute('aria-expanded', 'true');
+          document.addEventListener('mousedown', onDocMouseDown, true);
+          document.addEventListener('keydown', onMenuKey, true);
+        } else {
+          closeMenu();
+        }
+      });
+      moreWrap.appendChild(moreBtn);
+      moreWrap.appendChild(menu);
+      nameActions.appendChild(moreWrap);
+
       nameRow.appendChild(nameActions);
       nameWrap.appendChild(nameRow);
+
+      // Editable one-liner summary ("88M from NH", etc.)
+      let summaryText = '';
+      try {
+        if (data.summaryCipher && data.summaryIv) {
+          summaryText = await decryptText(data.summaryCipher, data.summaryIv);
+        }
+      } catch {}
+      const summary = document.createElement('div');
+      summary.className = 'patient-summary';
+      summary.contentEditable = 'plaintext-only';
+      summary.spellcheck = false;
+      summary.setAttribute('role', 'textbox');
+      summary.setAttribute('aria-label', 'Patient summary');
+      summary.setAttribute('data-placeholder', '+ summary');
+      summary.textContent = summaryText || '';
+      summary.addEventListener('click', (e) => e.stopPropagation());
+      summary.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); summary.blur(); }
+        if (e.key === 'Escape') { e.preventDefault(); summary.textContent = summaryText || ''; summary.blur(); }
+      });
+      summary.addEventListener('blur', async () => {
+        const next = (summary.textContent || '').trim();
+        if (next === (summaryText || '').trim()) return;
+        try {
+          if (next) {
+            const enc = await encryptText(next);
+            await updateDoc(doc(db, 'cases', d.id), { summaryCipher: enc.cipher, summaryIv: enc.iv });
+          } else {
+            await updateDoc(doc(db, 'cases', d.id), { summaryCipher: null, summaryIv: null });
+          }
+          summaryText = next;
+        } catch (err) {
+          console.error('Failed to save summary', err);
+          summary.textContent = summaryText || '';
+          showToast('Failed to save summary');
+        }
+      });
+      nameWrap.appendChild(summary);
       // Render tag chips (location/room/consultant)
       const chips = document.createElement('div'); chips.className = 'tag-chips';
       const caseTags = (data.caseTags || {});
@@ -2422,7 +2499,6 @@ function startRealtimeTable() {
         if (idx === -1) return;
         const tag = list[idx];
         const chip = document.createElement('span'); chip.className=`tag-chip tag-chip--${type}`; chip.setAttribute('role','button'); chip.setAttribute('tabindex','0');
-        const o = document.createElement('span'); o.className='tag-order'; o.textContent = String(idx+1)+'.'; chip.appendChild(o);
         const t = document.createElement('span'); t.className='tag-chip-label'; t.textContent = tag.name; chip.appendChild(t);
         if (type === 'location') {
           chip.title = 'Edit tags';
@@ -2449,6 +2525,15 @@ function startRealtimeTable() {
       mkChip('Location', 'location', caseTags.location || null);
       if (caseTags.room && caseTags.location) mkChip('Room', 'room', caseTags.room);
       mkChip('Consultant', 'consultant', caseTags.consultant || null);
+      if (!chips.children.length) {
+        const addChip = document.createElement('button');
+        addChip.type = 'button';
+        addChip.className = 'tag-chip tag-chip--add';
+        addChip.textContent = '+ tags';
+        addChip.title = 'Add ward, bed, consultant';
+        addChip.addEventListener('click', (e) => { e.stopPropagation(); openTagPanelForCase(d.id, tdName); });
+        chips.appendChild(addChip);
+      }
       nameWrap.appendChild(chips);
       if (renderAsDischarged || pendingDischarge) {
         const dischargeMeta = document.createElement('div');
@@ -2794,6 +2879,11 @@ function startRealtimeTable() {
     if (renderTableFromDocs) renderTableFromDocs(lastCasesDocs);
     try { document.dispatchEvent(new CustomEvent('filters:updated')); } catch {}
   }, (err) => console.error('Table listener error', err));
+  document.addEventListener('subtags:updated', () => {
+    if (tableSection && !tableSection.hidden && lastCasesDocs && renderTableFromDocs) {
+      renderTableFromDocs(lastCasesDocs);
+    }
+  });
 }
 
 // --- Modern table filter UI (pills, popovers, counts, segmented sort)

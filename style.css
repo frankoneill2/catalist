@@ -3612,6 +3612,98 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 #table-section .name-action-btn.delete-action-btn:hover { background: #fde2e2; }
 
+/* Overflow menu on patient row */
+#table-section .name-more { position: relative; display: inline-flex; }
+#table-section .name-more-btn {
+  width: 24px;
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+#table-section .name-more-btn[aria-expanded="true"] {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+#table-section .name-more-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md, 0 8px 24px rgba(15, 23, 42, 0.12));
+}
+#table-section .name-more-item {
+  appearance: none;
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+}
+#table-section .name-more-item:hover { background: var(--surface-hover); }
+#table-section .name-more-item.is-warn { color: var(--status-progress-ink, #92400e); }
+#table-section .name-more-item.is-warn:hover { background: var(--status-progress-soft, #fff1dc); }
+#table-section .name-more-item.is-danger { color: var(--status-danger-ink, #991b1b); }
+#table-section .name-more-item.is-danger:hover { background: var(--status-danger-soft, #fde2e2); }
+
+/* Editable one-liner summary under patient name */
+#table-section .patient-summary {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 1px;
+  line-height: 1.3;
+  min-height: 1.1em;
+  border-radius: 4px;
+  padding: 1px 4px;
+  margin-left: -4px;
+  cursor: text;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  transition: background 120ms ease, color 120ms ease;
+}
+#table-section .patient-summary:hover { background: var(--surface-hover); }
+#table-section .patient-summary:focus {
+  outline: none;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+#table-section .patient-summary:empty::before {
+  content: attr(data-placeholder);
+  color: var(--muted);
+  opacity: 0.55;
+  font-style: italic;
+}
+
+/* "+ tags" fallback chip when a case has no tags yet */
+#table-section .tag-chip--add {
+  appearance: none;
+  cursor: pointer;
+  background: transparent;
+  color: var(--muted);
+  border: 1px dashed var(--border-strong);
+  font-weight: 600;
+  padding: 1px 8px;
+}
+#table-section .tag-chip--add:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+  border-style: solid;
+}
+
 #table-section .cell-items { gap: 4px; }
 #table-section .cell-line { gap: 6px; }
 #table-section .cell-bullet {
