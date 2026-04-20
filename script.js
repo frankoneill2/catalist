@@ -3746,6 +3746,14 @@ function openWardNotesPrintWindow({ start, end, notes, autoPrint }) {
     <meta charset="utf-8">
     <title>Ward Notes (${rangeLabel})</title>
     <link rel="stylesheet" href="style.css">
+    <style>
+      @media print {
+        .ward-notes-print-header { display: none !important; }
+        .ward-notes-print { padding: 0 !important; }
+        .ward-notes-print .ward-note-item { box-shadow: none !important; page-break-after: always; break-after: page; }
+        .ward-notes-print .ward-note-item:last-child { page-break-after: auto; break-after: auto; }
+      }
+    </style>
   </head>
   <body>
     <div class="ward-notes-print-header">
