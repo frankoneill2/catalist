@@ -3758,76 +3758,238 @@ function openWardNotesPrintWindow({ start, end, notes, autoPrint }) {
 }
 
 function openWardNotesRangeModal() {
-  const overlay = document.createElement('div'); overlay.className = 'modal-overlay';
-  const modal = document.createElement('div'); modal.className = 'modal'; overlay.appendChild(modal);
-  const title = document.createElement('h3'); title.textContent = 'Ward notes by date'; modal.appendChild(title);
-  const form = document.createElement('div'); form.className = 'stack'; modal.appendChild(form);
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  const modal = document.createElement('div');
+  modal.className = 'modal modal--wide ward-notes-viewer';
+  overlay.appendChild(modal);
 
-  const startLabel = document.createElement('label'); startLabel.textContent = 'Start date';
-  const startInput = document.createElement('input'); startInput.type = 'date'; startInput.setAttribute('aria-label', 'Start date');
+  // Header: title + date controls + actions
+  const header = document.createElement('div');
+  header.className = 'ward-notes-viewer-header';
+  modal.appendChild(header);
+
+  const titleWrap = document.createElement('div');
+  titleWrap.className = 'ward-notes-viewer-title';
+  const title = document.createElement('h3');
+  title.textContent = 'Ward notes';
+  title.className = 'ward-notes-viewer-h';
+  titleWrap.appendChild(title);
+  const sub = document.createElement('div');
+  sub.className = 'ward-notes-viewer-sub';
+  titleWrap.appendChild(sub);
+  header.appendChild(titleWrap);
+
+  const controls = document.createElement('div');
+  controls.className = 'ward-notes-viewer-controls';
+  header.appendChild(controls);
+
+  const quickRow = document.createElement('div');
+  quickRow.className = 'ward-notes-viewer-quick';
+  controls.appendChild(quickRow);
+
+  const dateRow = document.createElement('div');
+  dateRow.className = 'ward-notes-viewer-dates';
+  controls.appendChild(dateRow);
+
+  const startLabel = document.createElement('label');
+  startLabel.className = 'ward-notes-viewer-date';
+  startLabel.innerHTML = '<span>From</span>';
+  const startInput = document.createElement('input');
+  startInput.type = 'date';
+  startInput.setAttribute('aria-label', 'Start date');
   startLabel.appendChild(startInput);
-  form.appendChild(startLabel);
+  dateRow.appendChild(startLabel);
 
-  const endLabel = document.createElement('label'); endLabel.textContent = 'End date';
-  const endInput = document.createElement('input'); endInput.type = 'date'; endInput.setAttribute('aria-label', 'End date');
+  const endLabel = document.createElement('label');
+  endLabel.className = 'ward-notes-viewer-date';
+  endLabel.innerHTML = '<span>To</span>';
+  const endInput = document.createElement('input');
+  endInput.type = 'date';
+  endInput.setAttribute('aria-label', 'End date');
   endLabel.appendChild(endInput);
-  form.appendChild(endLabel);
+  dateRow.appendChild(endLabel);
 
-  const help = document.createElement('div');
-  help.style.fontSize = '12px';
-  help.style.color = '#6b7280';
-  help.textContent = 'Dates are inclusive. Notes are grouped across all patients.';
-  form.appendChild(help);
-
-  const today = new Date();
-  startInput.value = formatLocalDateInput(today);
-  endInput.value = formatLocalDateInput(today);
-
-  const actions = document.createElement('div'); actions.className = 'actions';
-  const cancel = document.createElement('button'); cancel.className = 'btn'; cancel.textContent = 'Cancel';
-  const viewBtn = document.createElement('button'); viewBtn.className = 'btn primary'; viewBtn.textContent = 'View notes';
-  const printBtn = document.createElement('button'); printBtn.className = 'btn'; printBtn.textContent = 'Print now';
-  actions.appendChild(cancel);
+  const actions = document.createElement('div');
+  actions.className = 'ward-notes-viewer-actions';
+  const printBtn = document.createElement('button');
+  printBtn.type = 'button';
+  printBtn.className = 'btn';
+  printBtn.textContent = 'Print';
+  printBtn.disabled = true;
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'btn';
+  closeBtn.textContent = 'Close';
   actions.appendChild(printBtn);
-  actions.appendChild(viewBtn);
-  modal.appendChild(actions);
+  actions.appendChild(closeBtn);
+  header.appendChild(actions);
+
+  // Body list
+  const body = document.createElement('div');
+  body.className = 'ward-notes-viewer-body';
+  modal.appendChild(body);
+
   document.body.appendChild(overlay);
 
-  const setBusy = (on) => {
-    viewBtn.disabled = on;
-    printBtn.disabled = on;
-    cancel.disabled = on;
-    viewBtn.textContent = on ? 'Loading…' : 'View notes';
-    printBtn.textContent = on ? 'Loading…' : 'Print now';
+  let currentNotes = [];
+  let currentStart = null;
+  let currentEnd = null;
+  let loadToken = 0;
+
+  const renderStatus = (text) => {
+    body.innerHTML = '';
+    const d = document.createElement('div');
+    d.className = 'ward-notes-viewer-status';
+    d.textContent = text;
+    body.appendChild(d);
   };
 
-  const run = async (autoPrint) => {
-    const startVal = startInput.value;
-    const endVal = endInput.value || startVal;
-    const startDate = parseDateInput(startVal);
-    const endDate = parseDateInput(endVal);
-    if (!startDate || !endDate) { showToast('Select a start and end date'); return; }
+  const renderError = (text) => {
+    body.innerHTML = '';
+    const d = document.createElement('div');
+    d.className = 'ward-notes-viewer-status ward-notes-viewer-status--error';
+    d.textContent = text;
+    body.appendChild(d);
+  };
+
+  const renderNotes = (notes) => {
+    body.innerHTML = '';
+    if (!notes.length) {
+      renderStatus('No ward notes for this date range.');
+      return;
+    }
+    const list = document.createElement('div');
+    list.className = 'ward-notes-viewer-list';
+    for (const note of notes) {
+      const article = document.createElement('article');
+      article.className = 'ward-notes-viewer-item';
+
+      const itemHead = document.createElement('div');
+      itemHead.className = 'ward-notes-viewer-item-head';
+
+      const patient = document.createElement('div');
+      patient.className = 'ward-notes-viewer-patient';
+      patient.textContent = note.caseTitle || 'Unknown patient';
+
+      const heading = document.createElement('div');
+      heading.className = 'ward-notes-viewer-heading';
+      heading.textContent = note.heading || 'Ward Note';
+
+      const meta = document.createElement('div');
+      meta.className = 'ward-notes-viewer-meta';
+      const author = note.author || 'Unknown';
+      const when = note.createdAt ? formatDateTimeLabel(note.createdAt) : 'Unknown time';
+      meta.textContent = `${author} · ${when}`;
+
+      itemHead.appendChild(patient);
+      itemHead.appendChild(heading);
+      itemHead.appendChild(meta);
+      article.appendChild(itemHead);
+
+      const content = document.createElement('div');
+      content.className = 'ward-note-preview ward-notes-viewer-content';
+      renderWardNoteBody(content, note.compiled || '');
+      article.appendChild(content);
+
+      list.appendChild(article);
+    }
+    body.appendChild(list);
+  };
+
+  const updateSub = () => {
+    if (!currentStart || !currentEnd) { sub.textContent = ''; return; }
+    const startLabelText = formatDateLabel(currentStart);
+    const endLabelText = formatDateLabel(currentEnd);
+    const count = `${currentNotes.length} note${currentNotes.length === 1 ? '' : 's'}`;
+    const range = startLabelText === endLabelText ? startLabelText : `${startLabelText} – ${endLabelText}`;
+    sub.textContent = `${range} · ${count}`;
+  };
+
+  const load = async (startDate, endDate) => {
     const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0);
     const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
     if (end < start) { showToast('End date must be on or after start date'); return; }
-
-    setBusy(true);
+    currentStart = start;
+    currentEnd = end;
+    currentNotes = [];
+    printBtn.disabled = true;
+    sub.textContent = `${formatDateLabel(start)}${formatDateLabel(start) === formatDateLabel(end) ? '' : ` – ${formatDateLabel(end)}`} · loading…`;
+    renderStatus('Loading ward notes…');
+    const token = ++loadToken;
     try {
       const notes = await fetchWardNotesRange(start, end);
-      openWardNotesPrintWindow({ start, end, notes, autoPrint });
-      overlay.remove();
+      if (token !== loadToken) return;
+      currentNotes = notes;
+      renderNotes(notes);
+      printBtn.disabled = notes.length === 0;
+      updateSub();
     } catch (err) {
+      if (token !== loadToken) return;
       console.error('Failed to load ward notes', err);
-      showToast('Failed to load ward notes');
-      setBusy(false);
+      const msg = (err && (err.message || err.code)) || 'Unknown error';
+      renderError(`Couldn’t load ward notes: ${msg}`);
+      sub.textContent = '';
     }
   };
 
-  cancel.addEventListener('click', () => overlay.remove());
-  viewBtn.addEventListener('click', () => run(false));
-  printBtn.addEventListener('click', () => run(true));
-  endInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); viewBtn.click(); }});
-  startInput.focus();
+  const applyInputs = () => {
+    const s = parseDateInput(startInput.value);
+    const e = parseDateInput(endInput.value || startInput.value);
+    if (!s || !e) { showToast('Select start and end dates'); return; }
+    load(s, e);
+  };
+
+  startInput.addEventListener('change', applyInputs);
+  endInput.addEventListener('change', applyInputs);
+
+  // Quick range presets
+  const presets = [
+    { key: 'today', label: 'Today', range: () => { const t = new Date(); return [t, t]; } },
+    { key: 'yesterday', label: 'Yesterday', range: () => { const t = new Date(); t.setDate(t.getDate() - 1); return [t, t]; } },
+    { key: '7d', label: 'Last 7 days', range: () => { const e = new Date(); const s = new Date(); s.setDate(s.getDate() - 6); return [s, e]; } },
+    { key: '30d', label: 'Last 30 days', range: () => { const e = new Date(); const s = new Date(); s.setDate(s.getDate() - 29); return [s, e]; } },
+  ];
+  for (const p of presets) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'ward-notes-viewer-chip';
+    btn.textContent = p.label;
+    btn.dataset.key = p.key;
+    btn.addEventListener('click', () => {
+      const [s, e] = p.range();
+      startInput.value = formatLocalDateInput(s);
+      endInput.value = formatLocalDateInput(e);
+      updatePresetActive(p.key);
+      load(s, e);
+    });
+    quickRow.appendChild(btn);
+  }
+
+  const updatePresetActive = (key) => {
+    for (const el of quickRow.querySelectorAll('.ward-notes-viewer-chip')) {
+      el.classList.toggle('ward-notes-viewer-chip--active', el.dataset.key === key);
+    }
+  };
+
+  closeBtn.addEventListener('click', () => { loadToken++; overlay.remove(); });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) { loadToken++; overlay.remove(); } });
+  const onKey = (e) => {
+    if (e.key === 'Escape') { loadToken++; overlay.remove(); document.removeEventListener('keydown', onKey); }
+  };
+  document.addEventListener('keydown', onKey);
+
+  printBtn.addEventListener('click', () => {
+    if (!currentNotes.length || !currentStart || !currentEnd) return;
+    openWardNotesPrintWindow({ start: currentStart, end: currentEnd, notes: currentNotes, autoPrint: true });
+  });
+
+  // Initial load: today
+  const today = new Date();
+  startInput.value = formatLocalDateInput(today);
+  endInput.value = formatLocalDateInput(today);
+  updatePresetActive('today');
+  load(today, today);
 }
 
 // Append helper: adds a blank line + text if existing body present
