@@ -2702,33 +2702,182 @@ function startRealtimeTable() {
               });
               title.addEventListener('input', () => { it.title = title.textContent || ''; scheduleSave(); });
               line.appendChild(title);
-              // Add per-header body icon if body exists
-              if ((it.body||'').trim().length>0) {
-                const info = document.createElement('button'); info.type='button'; info.className='line-info-btn'; info.textContent='›'; info.title='Show details';
-                let panel = null; let persisted = false; let overBtn=false; let overPanel=false;
-                const cleanup = () => { if (panel) { panel.remove(); panel=null; } persisted=false; document.removeEventListener('click', onDocClick, true); };
-                const onDocClick = (evt) => { if (panel && !panel.contains(evt.target) && evt.target !== info) { cleanup(); } };
-                const openPanel = () => {
-                  if (panel) return;
-                  panel = document.createElement('div'); panel.className='cell-body-panel';
-                  const bodyOnly = document.createElement('div'); bodyOnly.className='cell-body-text'; bodyOnly.textContent = it.body || '';
-                  panel.appendChild(bodyOnly);
-                  document.body.appendChild(panel);
-                  const r = info.getBoundingClientRect();
-                  requestAnimationFrame(()=>{
-                    const pw = panel.offsetWidth || 240; const ph = panel.offsetHeight || 120;
-                    const left = Math.min(Math.max(8, r.right - pw), window.innerWidth - pw - 8);
-                    const top = Math.min(window.innerHeight - ph - 8, r.bottom + 6);
-                    panel.style.left = `${Math.round(left)}px`; panel.style.top = `${Math.round(top)}px`;
-                  });
-                  panel.addEventListener('mouseenter', ()=>{ overPanel=true; });
-                  panel.addEventListener('mouseleave', ()=>{ overPanel=false; if (!persisted && !overBtn) setTimeout(()=>{ if (!persisted && !overBtn && panel) cleanup(); }, 120); });
+              // Detail affordance (always present): hover to peek, click to edit
+              const info = document.createElement('button');
+              info.type = 'button';
+              info.className = 'line-info-btn';
+              info.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" width="12" height="12"><path d="M3.5 6.5L8 11l4.5-4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+              info.setAttribute('aria-haspopup', 'dialog');
+              info.setAttribute('aria-expanded', 'false');
+              const refreshInfoState = () => {
+                const hasBody = (it.body || '').trim().length > 0;
+                info.classList.toggle('has-body', hasBody);
+                info.title = hasBody ? 'Edit details' : 'Add details';
+                info.setAttribute('aria-label', info.title);
+              };
+              refreshInfoState();
+
+              let panel = null;
+              let body = null;
+              let persisted = false;
+              let overBtn = false;
+              let overPanel = false;
+              let savePanelDraft = null;
+              let scrollRaf = 0;
+              const positionPanel = () => {
+                if (!panel) return;
+                const r = info.getBoundingClientRect();
+                const sx = window.scrollX || window.pageXOffset || 0;
+                const sy = window.scrollY || window.pageYOffset || 0;
+                const pw = panel.offsetWidth || 320;
+                const ph = panel.offsetHeight || 160;
+                const spaceBelow = window.innerHeight - r.bottom;
+                const above = spaceBelow < ph + 16 && r.top > ph + 16;
+                const top = above ? r.top + sy - ph - 10 : r.bottom + sy + 10;
+                let left = r.right + sx - pw;
+                const minLeft = sx + 8;
+                const maxLeft = sx + window.innerWidth - pw - 8;
+                left = Math.max(minLeft, Math.min(maxLeft, left));
+                panel.style.left = `${Math.round(left)}px`;
+                panel.style.top = `${Math.round(top)}px`;
+                panel.classList.toggle('is-above', above);
+                // Align the pointer horizontally with the trigger button
+                const pointer = panel.querySelector('.cell-body-pointer');
+                if (pointer) {
+                  const triggerCenter = r.left + sx + r.width / 2;
+                  const panelLeft = parseFloat(panel.style.left) || left;
+                  const px = Math.max(10, Math.min(pw - 14, triggerCenter - panelLeft - 5));
+                  pointer.style.left = `${Math.round(px)}px`;
+                  pointer.style.right = 'auto';
+                }
+              };
+              const onScroll = () => {
+                if (scrollRaf) return;
+                scrollRaf = requestAnimationFrame(() => { scrollRaf = 0; positionPanel(); });
+              };
+              const onDocDown = (evt) => {
+                if (!panel) return;
+                if (panel.contains(evt.target) || evt.target === info || info.contains(evt.target)) return;
+                cleanup();
+              };
+              const onKeyDown = (evt) => {
+                if (evt.key !== 'Escape') return;
+                evt.preventDefault();
+                cleanup(true);
+              };
+              const cleanup = (discard) => {
+                if (savePanelDraft) {
+                  try { if (!discard) savePanelDraft(); } catch {}
+                  savePanelDraft = null;
+                }
+                if (panel) { panel.remove(); panel = null; }
+                body = null;
+                persisted = false;
+                info.setAttribute('aria-expanded', 'false');
+                document.removeEventListener('mousedown', onDocDown, true);
+                document.removeEventListener('keydown', onKeyDown, true);
+                window.removeEventListener('resize', positionPanel);
+                window.removeEventListener('scroll', onScroll, true);
+                if (scrollRaf) { cancelAnimationFrame(scrollRaf); scrollRaf = 0; }
+                refreshInfoState();
+              };
+              const openPanel = ({ focusText } = {}) => {
+                if (panel) { if (focusText) body?.focus(); return; }
+                panel = document.createElement('div');
+                panel.className = 'cell-body-panel';
+                panel.setAttribute('role', 'dialog');
+                panel.setAttribute('aria-label', 'Item detail');
+
+                const header = document.createElement('div');
+                header.className = 'cell-body-header';
+                const htxt = document.createElement('div');
+                htxt.className = 'cell-body-title';
+                htxt.textContent = (it.title || '').trim() || '(untitled)';
+                header.appendChild(htxt);
+                const closeBtn = document.createElement('button');
+                closeBtn.type = 'button';
+                closeBtn.className = 'cell-body-close';
+                closeBtn.setAttribute('aria-label', 'Close');
+                closeBtn.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" width="12" height="12"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+                closeBtn.addEventListener('click', (e) => { e.stopPropagation(); cleanup(); });
+                header.appendChild(closeBtn);
+                panel.appendChild(header);
+
+                body = document.createElement('div');
+                body.className = 'cell-body-text';
+                body.contentEditable = 'plaintext-only';
+                body.setAttribute('role', 'textbox');
+                body.setAttribute('aria-multiline', 'true');
+                body.setAttribute('aria-label', 'Detail');
+                body.setAttribute('data-placeholder', 'Add detail…');
+                body.spellcheck = false;
+                body.textContent = it.body || '';
+                panel.appendChild(body);
+
+                const foot = document.createElement('div');
+                foot.className = 'cell-body-foot';
+                const modKey = /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl';
+                foot.innerHTML = `<span><kbd>Esc</kbd> cancel</span><span><kbd>${modKey}</kbd>+<kbd>Enter</kbd> save &amp; close</span>`;
+                panel.appendChild(foot);
+
+                const pointer = document.createElement('span');
+                pointer.className = 'cell-body-pointer';
+                panel.appendChild(pointer);
+
+                document.body.appendChild(panel);
+                requestAnimationFrame(positionPanel);
+
+                savePanelDraft = () => {
+                  const next = (body.textContent || '');
+                  if (next === (it.body || '')) return;
+                  it.body = next;
+                  refreshInfoState();
+                  scheduleSave();
                 };
-                info.addEventListener('mouseenter', ()=>{ overBtn=true; if (!persisted) openPanel(); });
-                info.addEventListener('mouseleave', ()=>{ overBtn=false; if (!persisted && !overPanel) setTimeout(()=>{ if (!persisted && !overBtn && panel) cleanup(); }, 120); });
-                info.addEventListener('click', (e)=>{ e.stopPropagation(); if (!panel) openPanel(); if (!persisted) { persisted=true; document.addEventListener('click', onDocClick, true); } else { cleanup(); } });
-                line.appendChild(info);
-              }
+                const promote = () => {
+                  if (persisted) return;
+                  persisted = true;
+                  info.setAttribute('aria-expanded', 'true');
+                  document.addEventListener('mousedown', onDocDown, true);
+                  document.addEventListener('keydown', onKeyDown, true);
+                };
+                body.addEventListener('focus', promote);
+                body.addEventListener('blur', () => { try { savePanelDraft && savePanelDraft(); } catch {} });
+                body.addEventListener('input', () => { /* no-op; save on blur/close */ });
+                body.addEventListener('keydown', (e) => {
+                  if (e.key === 'Escape') {
+                    e.preventDefault();
+                    body.textContent = it.body || '';
+                    cleanup(true);
+                  } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault();
+                    cleanup();
+                  }
+                });
+                panel.addEventListener('mouseenter', () => { overPanel = true; });
+                panel.addEventListener('mouseleave', () => {
+                  overPanel = false;
+                  if (!persisted && !overBtn) setTimeout(() => { if (!persisted && !overBtn && panel) cleanup(); }, 160);
+                });
+                panel.addEventListener('mousedown', promote);
+                window.addEventListener('resize', positionPanel);
+                window.addEventListener('scroll', onScroll, true);
+                if (focusText) setTimeout(() => body.focus(), 0);
+              };
+              info.addEventListener('mouseenter', () => {
+                overBtn = true;
+                if (!persisted) openPanel();
+              });
+              info.addEventListener('mouseleave', () => {
+                overBtn = false;
+                if (!persisted && !overPanel) setTimeout(() => { if (!persisted && !overBtn && panel) cleanup(); }, 160);
+              });
+              info.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (!panel) openPanel({ focusText: true });
+                else body?.focus();
+              });
+              line.appendChild(info);
               container.appendChild(line);
             }
             if (!showAll && items.length>3) {
