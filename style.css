@@ -3641,6 +3641,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   border-radius: 8px;
   box-shadow: var(--shadow-md, 0 8px 24px rgba(15, 23, 42, 0.12));
 }
+#table-section .name-more-menu[hidden] { display: none; }
 #table-section .name-more-item {
   appearance: none;
   border: none;
