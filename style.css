@@ -3985,3 +3985,194 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
   .ward-notes-viewer-meta { text-align: left; }
 }
 
+/* Simplified ward note composer */
+.modal.ward-note-composer {
+  width: min(94vw, 760px);
+  max-height: min(92vh, 880px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.ward-note-composer-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px 14px;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  background: var(--surface-2, #f8fafc);
+}
+.ward-note-composer-heading {
+  flex: 1;
+  min-width: 0;
+  font: 700 18px/1.3 'Sora', 'Inter', sans-serif;
+  color: var(--text, #0f172a);
+  letter-spacing: -0.01em;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 6px 8px;
+  border-radius: 8px;
+  outline: none;
+  transition: border-color .12s, background .12s;
+}
+.ward-note-composer-heading:hover { background: #fff; border-color: var(--border, #e5e7eb); }
+.ward-note-composer-heading:focus { background: #fff; border-color: var(--primary, #0c4e74); }
+.ward-note-composer-actions { display: flex; gap: 8px; }
+.ward-note-composer-body {
+  flex: 1;
+  overflow: auto;
+  padding: 18px 22px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  background: #fff;
+}
+.ward-note-context {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--surface-2, #f8fafc);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+}
+.ward-note-context-section { display: flex; flex-direction: column; gap: 4px; }
+.ward-note-context-label {
+  font: 600 11px/1 'Inter', system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted, #64748b);
+}
+.ward-note-context-value {
+  font: 500 14px/1.35 'Inter', system-ui, sans-serif;
+  color: var(--text, #0f172a);
+}
+.ward-note-context-issues {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ward-note-context-issues li {
+  font: 500 13.5px/1.4 'Inter', system-ui, sans-serif;
+  color: var(--text, #0f172a);
+}
+.ward-note-context-issues li::before {
+  content: '•';
+  color: var(--primary, #0c4e74);
+  margin-right: 6px;
+  font-weight: 700;
+}
+.ward-note-context-issue-title { font-weight: 600; }
+.ward-note-context-issue-body {
+  color: var(--muted, #64748b);
+  font-weight: 400;
+  margin-left: 6px;
+}
+.ward-note-context-issue-body::before { content: '— '; }
+.ward-note-composer-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font: 600 11px/1 'Inter', system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted, #64748b);
+  margin-bottom: 8px;
+}
+.ward-note-composer-hint {
+  font: 400 11px/1 'Inter', system-ui, sans-serif;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #94a3b8;
+}
+.ward-note-composer-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: 400 14px/1.55 'Inter', system-ui, sans-serif;
+  color: var(--text, #0f172a);
+  padding: 12px 14px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+  background: #fff;
+  resize: vertical;
+  min-height: 120px;
+  outline: none;
+  transition: border-color .12s, box-shadow .12s;
+}
+.ward-note-composer-textarea:focus {
+  border-color: var(--primary, #0c4e74);
+  box-shadow: 0 0 0 3px rgba(12, 78, 116, 0.15);
+}
+.ward-note-composer-tasks { display: flex; flex-direction: column; }
+.ward-note-composer-taskform {
+  display: flex;
+  gap: 8px;
+}
+.ward-note-composer-taskinput {
+  flex: 1;
+  font: 400 14px/1.4 'Inter', system-ui, sans-serif;
+  padding: 9px 12px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 9px;
+  background: #fff;
+  outline: none;
+  transition: border-color .12s, box-shadow .12s;
+}
+.ward-note-composer-taskinput:focus {
+  border-color: var(--primary, #0c4e74);
+  box-shadow: 0 0 0 3px rgba(12, 78, 116, 0.15);
+}
+.ward-note-composer-tasklist {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ward-note-composer-task {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font: 500 13.5px/1.35 'Inter', system-ui, sans-serif;
+  color: var(--text, #0f172a);
+  padding: 6px 4px;
+  border-radius: 6px;
+}
+.ward-note-composer-task-dot { color: var(--primary, #0c4e74); font-weight: 700; }
+.ward-note-composer-task-remove {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 6px;
+  line-height: 1;
+  border-radius: 4px;
+}
+.ward-note-composer-task-remove:hover { color: #b91c1c; background: #fee2e2; }
+.ward-note-composer-task-empty {
+  font: 400 12.5px/1.4 'Inter', system-ui, sans-serif;
+  color: #94a3b8;
+  padding: 4px 2px;
+}
+
+/* Rendered Note section in the preview/viewer */
+.ward-note-section--note .ward-note-text--prose {
+  white-space: pre-wrap;
+  font: 400 13.5px/1.55 'Inter', system-ui, sans-serif;
+}
+
+@media (max-width: 640px) {
+  .modal.ward-note-composer { width: 96vw; max-height: 94vh; }
+  .ward-note-composer-header { flex-direction: column; align-items: stretch; padding: 14px 16px 12px; }
+  .ward-note-composer-actions { justify-content: flex-end; }
+  .ward-note-composer-body { padding: 14px 16px 18px; gap: 16px; }
+}
+

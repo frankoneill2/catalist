@@ -3509,9 +3509,11 @@ function renderWardNoteBody(container, body) {
   const issues = [];
   let otherText = '';
   let tasksText = '';
+  let noteText = '';
   for (let i = 1; i < blocks.length; i += 2) {
     const head = blocks[i];
     const next = blocks[i + 1] || '';
+    if (head === 'Note') { noteText = next; continue; }
     if (head === 'Other') { otherText = next; continue; }
     if (head === 'Tasks') { tasksText = next; continue; }
     issues.push({ title: head, body: next });
@@ -3531,6 +3533,14 @@ function renderWardNoteBody(container, body) {
     container.appendChild(group);
   }
 
+  if (noteText) {
+    const note = mk('div'); note.className = 'ward-note-section ward-note-section--note';
+    const label = mk('div'); label.className = 'ward-note-label'; label.textContent = 'Note';
+    const text = mk('div'); text.className = 'ward-note-text ward-note-text--prose'; text.textContent = noteText;
+    note.appendChild(label); note.appendChild(text);
+    container.appendChild(note);
+  }
+
   if (otherText) {
     const other = mk('div'); other.className = 'ward-note-section ward-note-section--other';
     const label = mk('div'); label.className = 'ward-note-label'; label.textContent = 'Other';
@@ -3541,7 +3551,7 @@ function renderWardNoteBody(container, body) {
 
   if (tasksText) {
     const tasks = mk('div'); tasks.className = 'ward-note-section ward-note-section--tasks';
-    const label = mk('div'); label.className = 'ward-note-label'; label.textContent = 'Tasks';
+    const label = mk('div'); label.className = 'ward-note-label'; label.textContent = 'New tasks';
     const list = mk('ul'); list.className = 'ward-note-tasks';
     const lines = tasksText.split('\n').map(s => s.trim()).filter(Boolean);
     for (const line of lines) {
@@ -4316,369 +4326,318 @@ async function openWardNoteComposer() {
 // New inline-block rich editor version for Ward Notes
 async function openWardNoteComposerV2() {
   if (!currentCaseId) return;
-  const overlay = document.createElement('div'); overlay.className='modal-overlay';
-  const modal = document.createElement('div'); modal.className='modal modal-wide'; overlay.appendChild(modal);
-  const form = document.createElement('div'); form.className='stack'; modal.appendChild(form);
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  const modal = document.createElement('div');
+  modal.className = 'modal modal-wide ward-note-composer';
+  overlay.appendChild(modal);
 
-  // Toolbar
-  const ctrls = document.createElement('div'); ctrls.className = 'rich-editor-toolbar';
-  const mkLink = (label) => { const b=document.createElement('button'); b.type='button'; b.textContent=label; b.className='compact-link'; return b; };
-  const issuesToggleBtn = mkLink('Issues: Off');
-  const showAllBtn = mkLink('Show all');
-  const hideAllBtn = mkLink('Hide all');
-  const tasksBtn = mkLink('Tasks (include open: on)');
-  ctrls.appendChild(issuesToggleBtn); ctrls.appendChild(showAllBtn); ctrls.appendChild(hideAllBtn); ctrls.appendChild(tasksBtn);
-  form.appendChild(ctrls);
+  // Header: heading input + actions
+  const header = document.createElement('div');
+  header.className = 'ward-note-composer-header';
+  const headingInput = document.createElement('input');
+  headingInput.type = 'text';
+  headingInput.className = 'ward-note-composer-heading';
+  headingInput.placeholder = 'Ward round';
+  headingInput.value = 'Ward round';
+  headingInput.setAttribute('aria-label', 'Note heading');
+  header.appendChild(headingInput);
 
-  // Heading
-  const headingEl = document.createElement('div');
-  headingEl.className = 'wardnote-title';
-  headingEl.setAttribute('contenteditable','true');
-  headingEl.setAttribute('role','textbox');
-  headingEl.setAttribute('aria-label','Note heading');
-  headingEl.textContent = 'Ward note';
-  form.appendChild(headingEl);
+  const actions = document.createElement('div');
+  actions.className = 'ward-note-composer-actions';
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'btn';
+  cancel.textContent = 'Cancel';
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.className = 'btn primary';
+  save.textContent = 'Save note';
+  actions.appendChild(cancel);
+  actions.appendChild(save);
+  header.appendChild(actions);
+  modal.appendChild(header);
 
-  // Editor field
-  const editorWrap = document.createElement('div'); editorWrap.className='rich-editor-wrap';
-  const editor = document.createElement('div'); editor.className='rich-editor'; editor.setAttribute('contenteditable','true'); editor.setAttribute('role','textbox'); editor.setAttribute('aria-label','Ward note body');
-  form.appendChild(editorWrap);
-  editorWrap.appendChild(editor);
-  // Other section lives at the bottom of the same editor
-  const otherDivider = document.createElement('div'); otherDivider.className='other-divider'; otherDivider.textContent='Other';
-  const otherArea = document.createElement('div'); otherArea.className='other-area'; otherArea.dataset.placeholder = '';
-  editor.appendChild(otherDivider);
-  editor.appendChild(otherArea);
+  // Body
+  const body = document.createElement('div');
+  body.className = 'ward-note-composer-body';
+  modal.appendChild(body);
 
-  // Tasks panel
-  const tasksWrap = document.createElement('div'); tasksWrap.className='section'; tasksWrap.style.display='none';
-  const includeRow = document.createElement('label'); includeRow.style.display='flex'; includeRow.style.gap='8px'; includeRow.style.alignItems='center';
-  const includeChk = document.createElement('input'); includeChk.type='checkbox'; includeChk.checked = true; includeRow.appendChild(includeChk);
-  includeRow.appendChild(document.createTextNode('Include existing open tasks in this note'));
-  tasksWrap.appendChild(includeRow);
-  const miniForm = document.createElement('form'); miniForm.className='composer'; miniForm.autocomplete='off'; miniForm.style.marginTop='8px';
-  const plus = document.createElement('button'); plus.type='button'; plus.className='icon-btn'; plus.setAttribute('aria-hidden','true'); plus.tabIndex=-1; plus.textContent='+';
-  const miniInput = document.createElement('input'); miniInput.placeholder='Add a task…'; miniInput.setAttribute('aria-label','Task description');
-  const miniAdd = document.createElement('button'); miniAdd.type='submit'; miniAdd.className='primary'; miniAdd.textContent='Add';
-  miniForm.appendChild(plus); miniForm.appendChild(miniInput); miniForm.appendChild(miniAdd);
-  tasksWrap.appendChild(miniForm);
-  const modalTaskList = document.createElement('ul'); modalTaskList.style.marginTop='6px'; tasksWrap.appendChild(modalTaskList);
-  form.appendChild(tasksWrap);
+  // Context: diagnosis + issues (read-only snapshot)
+  const context = document.createElement('div');
+  context.className = 'ward-note-context';
+  body.appendChild(context);
 
-  function setActive(btn, on) { btn.classList.toggle('active', !!on); }
-  tasksBtn.addEventListener('click', ()=>{ const show = tasksWrap.style.display==='none'; tasksWrap.style.display = show ? '' : 'none'; setActive(tasksBtn, show); });
-  includeChk.addEventListener('change', ()=>{ tasksBtn.textContent = `Tasks (include open: ${includeChk.checked ? 'on':'off'})`; renderModalTasks(); });
+  // Main free-text area
+  const noteWrap = document.createElement('div');
+  noteWrap.className = 'ward-note-composer-note';
+  const noteLabel = document.createElement('label');
+  noteLabel.className = 'ward-note-composer-label';
+  noteLabel.htmlFor = 'wn-free-text';
+  noteLabel.textContent = 'Note';
+  const noteHelp = document.createElement('span');
+  noteHelp.className = 'ward-note-composer-hint';
+  noteHelp.textContent = 'Enter saves · Shift + Enter for a new line';
+  noteLabel.appendChild(noteHelp);
+  const noteTextarea = document.createElement('textarea');
+  noteTextarea.id = 'wn-free-text';
+  noteTextarea.className = 'ward-note-composer-textarea';
+  noteTextarea.placeholder = 'Add observations from the round…';
+  noteTextarea.rows = 6;
+  noteWrap.appendChild(noteLabel);
+  noteWrap.appendChild(noteTextarea);
+  body.appendChild(noteWrap);
 
-  // Data
+  // New tasks section
+  const tasksWrap = document.createElement('div');
+  tasksWrap.className = 'ward-note-composer-tasks';
+  const tasksLabel = document.createElement('div');
+  tasksLabel.className = 'ward-note-composer-label';
+  tasksLabel.textContent = 'New tasks';
+  tasksWrap.appendChild(tasksLabel);
+  const taskForm = document.createElement('form');
+  taskForm.className = 'ward-note-composer-taskform';
+  taskForm.autocomplete = 'off';
+  const taskInput = document.createElement('input');
+  taskInput.type = 'text';
+  taskInput.placeholder = 'Add a new task…';
+  taskInput.className = 'ward-note-composer-taskinput';
+  taskInput.setAttribute('aria-label', 'New task');
+  const taskAdd = document.createElement('button');
+  taskAdd.type = 'submit';
+  taskAdd.className = 'btn';
+  taskAdd.textContent = 'Add';
+  taskForm.appendChild(taskInput);
+  taskForm.appendChild(taskAdd);
+  tasksWrap.appendChild(taskForm);
+  const taskList = document.createElement('ul');
+  taskList.className = 'ward-note-composer-tasklist';
+  tasksWrap.appendChild(taskList);
+  body.appendChild(tasksWrap);
+
+  document.body.appendChild(overlay);
+
+  // Load case context
   let dxItems = [];
   let issueItems = [];
-  let modalTasks = [];
-  let modalTasksUnsub = null;
   try {
-    const snap = await getDoc(doc(db,'cases', currentCaseId));
+    const snap = await getDoc(doc(db, 'cases', currentCaseId));
     const data = snap.data() || {};
     dxItems = await decryptItems(data, 'A');
-    issueItems = (await decryptItems(data, 'E')).slice(0,8);
+    issueItems = (await decryptItems(data, 'E')).slice(0, 8);
   } catch {}
 
-  // Inline blocks
-  const issueState = new Map();
-  const ISSUE_MARKER_START = '## Issue:';
-  const isIssueBlock = (el) => el && el.classList && el.classList.contains('issue-block');
-  const createIssueBlock = (it) => {
-    if (!issueState.has(it.id)) issueState.set(it.id, { show: true });
-    const block = document.createElement('div'); block.className = 'issue-block'; block.dataset.issueId = it.id;
-    const header = document.createElement('div'); header.className='issue-header';
-    const pill = document.createElement('span'); pill.className='issue-pill'; pill.textContent='Issue'; header.appendChild(pill);
-    const title = document.createElement('span'); title.className='issue-title'; title.setAttribute('contenteditable','true'); title.textContent = (it.title||'').trim(); header.appendChild(title);
-    const actions = document.createElement('div'); actions.className='issue-actions';
-    const collapse = document.createElement('button'); collapse.type='button'; collapse.className='icon-btn small'; collapse.textContent='▾'; actions.appendChild(collapse);
-    const remove = document.createElement('button'); remove.type='button'; remove.className='icon-btn small'; remove.textContent='✖'; actions.appendChild(remove);
-    header.appendChild(actions);
-    const body = document.createElement('div'); body.className='issue-body'; body.setAttribute('contenteditable','true'); body.dataset.placeholder='Type here to add to this issue…';
-    block.appendChild(header); block.appendChild(body);
-    collapse.addEventListener('click', () => { const c = block.classList.toggle('collapsed'); collapse.textContent = c ? '▸' : '▾'; });
-    remove.addEventListener('click', () => { block.remove(); updateOtherHint(); });
-    return block;
-  };
-  const insertIssuesIntoEditor = () => {
-    const existingIds = new Set(Array.from(editor.querySelectorAll('.issue-block')).map(b=>b.dataset.issueId));
-    const frag = document.createDocumentFragment();
-    for (const it of issueItems) { if (!existingIds.has(it.id)) frag.appendChild(createIssueBlock(it)); }
-    // Insert Issues before the Other divider so Other stays below
-    editor.insertBefore(frag, otherDivider);
-    updateOtherHint();
-  };
-  const flattenIssuesToMarkers = () => {
-    const blocks = Array.from(editor.querySelectorAll('.issue-block'));
-    for (const b of blocks) {
-      const title = (b.querySelector('.issue-title')?.textContent||'').trim();
-      const body = (b.querySelector('.issue-body')?.innerText||'').trim();
-      const repl = document.createElement('div');
-      repl.className = 'issue-marker';
-      repl.style.display = 'none';
-      repl.textContent = body ? `${ISSUE_MARKER_START} ${title}\n${body}` : `${ISSUE_MARKER_START} ${title}`;
-      editor.insertBefore(repl, b);
-      b.remove();
-    }
-    updateOtherHint();
-  };
-  const rehydrateIssuesFromMarkers = () => {
-    const nodes = Array.from(editor.childNodes);
-    for (const el of nodes) {
-      if (!(el instanceof Element)) continue;
-      const txt = el.innerText || '';
-      if (txt.startsWith(ISSUE_MARKER_START)) {
-        const lines = txt.split('\n');
-        const title = lines[0].replace(ISSUE_MARKER_START, '').trim();
-        const bodyText = lines.slice(1).join('\n');
-        let it = issueItems.find(i => (i.title||'').trim() === title) || issueItems.find(i => !editor.querySelector(`.issue-block[data-issue-id="${i.id}"]`));
-        if (!it) { it = { id: Math.random().toString(36).slice(2,10), title }; }
-        const block = createIssueBlock(it);
-        block.querySelector('.issue-title').textContent = title;
-        block.querySelector('.issue-body').textContent = bodyText;
-        editor.insertBefore(block, el);
-        el.remove();
+  const renderContext = () => {
+    context.innerHTML = '';
+
+    const dxSection = document.createElement('div');
+    dxSection.className = 'ward-note-context-section ward-note-context-section--dx';
+    const dxHead = document.createElement('div');
+    dxHead.className = 'ward-note-context-label';
+    dxHead.textContent = 'Diagnosis';
+    dxSection.appendChild(dxHead);
+    const dxText = dxItems.map(it => (it.title || '').trim()).filter(Boolean).join('; ');
+    const dxValue = document.createElement('div');
+    dxValue.className = 'ward-note-context-value';
+    dxValue.textContent = dxText || 'Not specified';
+    dxSection.appendChild(dxValue);
+    context.appendChild(dxSection);
+
+    const activeIssues = issueItems.filter(it => (it.title || '').trim());
+    if (activeIssues.length) {
+      const issuesSection = document.createElement('div');
+      issuesSection.className = 'ward-note-context-section ward-note-context-section--issues';
+      const issuesHead = document.createElement('div');
+      issuesHead.className = 'ward-note-context-label';
+      issuesHead.textContent = 'Issues';
+      issuesSection.appendChild(issuesHead);
+      const issuesList = document.createElement('ul');
+      issuesList.className = 'ward-note-context-issues';
+      for (const it of activeIssues) {
+        const li = document.createElement('li');
+        const title = document.createElement('span');
+        title.className = 'ward-note-context-issue-title';
+        title.textContent = it.title.trim();
+        li.appendChild(title);
+        const bodyText = (it.body || '').trim();
+        if (bodyText) {
+          const bodyEl = document.createElement('span');
+          bodyEl.className = 'ward-note-context-issue-body';
+          bodyEl.textContent = bodyText;
+          li.appendChild(bodyEl);
+        }
+        issuesList.appendChild(li);
       }
+      issuesSection.appendChild(issuesList);
+      context.appendChild(issuesSection);
     }
-    updateOtherHint();
   };
-  const updateOtherHint = () => {
-    // Show placeholder styling on Other area only
-    // No external floating hint required
-  };
+  renderContext();
 
-  // Default: Issues Off
-  let issuesOn = false;
-  const setIssuesToggle = (on) => {
-    issuesOn = !!on;
-    issuesToggleBtn.textContent = 'Issues: ' + (issuesOn ? 'On' : 'Off');
-    showAllBtn.style.display = issuesOn ? '' : 'none';
-    hideAllBtn.style.display = issuesOn ? '' : 'none';
-    otherDivider.style.display = issuesOn ? '' : 'none';
-    otherArea.dataset.placeholder = issuesOn ? 'Type here to add to Other…' : '';
-    if (issuesOn) { rehydrateIssuesFromMarkers(); insertIssuesIntoEditor(); } else { flattenIssuesToMarkers(); }
-  };
-  issuesToggleBtn.addEventListener('click', () => setIssuesToggle(!issuesOn));
-  showAllBtn.addEventListener('click', () => { editor.querySelectorAll('.issue-block').forEach(b=>{ b.classList.remove('collapsed'); const cBtn=b.querySelector('.issue-actions button'); if(cBtn) cBtn.textContent='▾'; }); });
-  hideAllBtn.addEventListener('click', () => { editor.querySelectorAll('.issue-block').forEach(b=>{ b.classList.add('collapsed'); const cBtn=b.querySelector('.issue-actions button'); if(cBtn) cBtn.textContent='▸'; }); });
+  // New tasks collected during this note
+  const newTasks = []; // { id: tempId, title, docId? }
 
-  // Insert Issue blocks above the Other section and default to Issues Off
-  insertIssuesIntoEditor();
-  setIssuesToggle(false);
-  // If user clicks the editor background, move caret to end of Other
-  const placeCaretAtEnd = (el) => { try { const range=document.createRange(); range.selectNodeContents(el); range.collapse(false); const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(range); } catch {} };
-  editor.addEventListener('mousedown', (e) => {
-    const t = e.target;
-    const withinIssue = (t instanceof Element) && !!t.closest('.issue-block');
-    const withinOther = (t instanceof Element) && (t === otherArea || otherArea.contains(t));
-    const onEditorChrome = t === editor || t === editorWrap;
-    if (onEditorChrome || (!withinIssue && !withinOther)) {
-      // Only force caret to Other when clicking editor chrome/empty space
-      setTimeout(()=>placeCaretAtEnd(otherArea), 0);
-    }
-  });
-
-  // Keyboard navigation and editing shortcuts
-  const placeCaretAtStart = (el) => { try { const range=document.createRange(); range.selectNodeContents(el); range.collapse(true); const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(range); } catch {} };
-  const getBlocks = () => Array.from(editor.querySelectorAll('.issue-block'));
-  const focusIssueHeader = (block) => { const el = block.querySelector('.issue-title'); if (el) { el.focus(); placeCaretAtEnd(el); } };
-  const focusIssueBody = (block, atEnd=true) => { const el = block.querySelector('.issue-body'); if (el) { el.focus(); if (atEnd) placeCaretAtEnd(el); else placeCaretAtStart(el); } };
-  const selInfo = () => { const sel = window.getSelection(); if (!sel || sel.rangeCount===0) return null; const r=sel.getRangeAt(0); return { sel, range: r } };
-  const caretAtStart = (el) => { const s = selInfo(); if (!s) return false; const r = s.range.cloneRange(); const test = document.createRange(); test.selectNodeContents(el); test.collapse(true); return r.compareBoundaryPoints(Range.START_TO_START, test) === 0 && r.collapsed; };
-  const caretAtEnd = (el) => { const s = selInfo(); if (!s) return false; const r = s.range.cloneRange(); const test = document.createRange(); test.selectNodeContents(el); test.collapse(false); return r.compareBoundaryPoints(Range.END_TO_END, test) === 0 && r.collapsed; };
-  const textLen = (el) => (el.innerText || '').length;
-
-  editor.addEventListener('keydown', (e) => {
-    const target = e.target;
-    if (!(target instanceof Element)) return;
-    const block = target.closest('.issue-block');
-    const isTitle = block && target.classList.contains('issue-title');
-    const isBody = block && target.classList.contains('issue-body');
-
-    // Alt+Up/Down navigation across blocks; Alt+Left/Right between header/body
-    if ((e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) && (isTitle || isBody)) {
-      const blocks = getBlocks();
-      const idx = blocks.indexOf(block);
-      if (e.key === 'ArrowUp') { e.preventDefault(); if (idx > 0) focusIssueBody(blocks[idx-1]); else headingEl.focus(); return; }
-      if (e.key === 'ArrowDown') { e.preventDefault(); if (idx < blocks.length-1) focusIssueBody(blocks[idx+1]); else { otherArea.focus(); placeCaretAtEnd(otherArea); } return; }
-      if (e.key === 'ArrowLeft') { e.preventDefault(); focusIssueHeader(block); return; }
-      if (e.key === 'ArrowRight') { e.preventDefault(); focusIssueBody(block); return; }
-    }
-
-    // Cmd/Ctrl+Shift+Up/Down → reorder blocks
-    if ((e.shiftKey && (e.metaKey || e.ctrlKey)) && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && block) {
-      e.preventDefault();
-      const blocks = getBlocks();
-      const idx = blocks.indexOf(block);
-      if (e.key === 'ArrowUp' && idx > 0) { editor.insertBefore(block, blocks[idx-1]); focusIssueHeader(block); }
-      else if (e.key === 'ArrowDown' && idx < blocks.length-1) { editor.insertBefore(blocks[idx+1], block); focusIssueHeader(block); }
+  const renderTaskList = () => {
+    taskList.innerHTML = '';
+    if (!newTasks.length) {
+      const empty = document.createElement('li');
+      empty.className = 'ward-note-composer-task-empty';
+      empty.textContent = 'No new tasks yet.';
+      taskList.appendChild(empty);
       return;
     }
+    for (const t of newTasks) {
+      const li = document.createElement('li');
+      li.className = 'ward-note-composer-task';
+      const dot = document.createElement('span');
+      dot.className = 'ward-note-composer-task-dot';
+      dot.textContent = '•';
+      const text = document.createElement('span');
+      text.className = 'ward-note-composer-task-text';
+      text.textContent = t.title;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'ward-note-composer-task-remove';
+      remove.setAttribute('aria-label', 'Remove task');
+      remove.textContent = '×';
+      remove.addEventListener('click', () => removeNewTask(t));
+      li.appendChild(dot);
+      li.appendChild(text);
+      li.appendChild(remove);
+      taskList.appendChild(li);
+    }
+  };
+  renderTaskList();
 
-    // Title field behaviors
-    if (isTitle) {
-      if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); focusIssueBody(block); return; }
-      if (e.key === 'Backspace' && textLen(target) === 0) {
-        e.preventDefault();
-        const blocks = getBlocks(); const idx = blocks.indexOf(block); const prev = blocks[idx-1];
-        block.remove();
-        if (prev) focusIssueBody(prev); else { otherArea.focus(); placeCaretAtEnd(otherArea); }
-        return;
-      }
+  const removeNewTask = async (t) => {
+    const idx = newTasks.indexOf(t);
+    if (idx < 0) return;
+    newTasks.splice(idx, 1);
+    renderTaskList();
+    if (t.docId) {
+      try { await deleteDoc(doc(db, 'cases', currentCaseId, 'tasks', t.docId)); } catch (err) { console.error('Failed to remove task', err); }
     }
+  };
 
-    // Body field behaviors
-    if (isBody) {
-      if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
-        if (caretAtEnd(target)) {
-          const count = Number(target.dataset.enterEndCount || '0') + 1;
-          target.dataset.enterEndCount = String(count);
-          if (count >= 2) { e.preventDefault(); target.dataset.enterEndCount = '0'; otherArea.focus(); placeCaretAtEnd(otherArea); return; }
-        } else { target.dataset.enterEndCount = '0'; }
-        return; // allow newline
-      }
-      if (e.key !== 'Enter') target.dataset.enterEndCount = '0';
-      if (e.key === 'Backspace' && caretAtStart(target) && textLen(target) === 0) {
-        e.preventDefault();
-        const titleEl = block.querySelector('.issue-title');
-        if (titleEl && textLen(titleEl) > 0) { focusIssueHeader(block); return; }
-        const blocks = getBlocks(); const idx = blocks.indexOf(block); const prev = blocks[idx-1];
-        block.remove(); if (prev) focusIssueBody(prev); else { otherArea.focus(); placeCaretAtEnd(otherArea); }
-        return;
-      }
-    }
-  });
-
-  // Tasks realtime list
-  let newTaskIds = [];
-  let newTaskTitles = [];
-  const qTasks = query(collection(db,'cases',currentCaseId,'tasks'), orderBy('createdAt','desc'));
-  const statusIcon = (s) => s === 'complete' ? '☑' : (s === 'in progress' ? '◐' : '☐');
-  function renderModalTasks() {
-    modalTaskList.innerHTML = '';
-    for (const t of modalTasks) {
-      const li = document.createElement('li'); li.className = 'modal-task' + (newTaskIds.includes(t.id) ? ' modal-task--new' : '');
-      li.style.display='grid'; li.style.gridTemplateColumns='auto 1fr'; li.style.alignItems='center'; li.style.gap='6px';
-      const sb = document.createElement('span'); sb.textContent = statusIcon(t.status||'open'); li.appendChild(sb);
-      const tt = document.createElement('span'); tt.textContent = t.text||''; li.appendChild(tt);
-      modalTaskList.appendChild(li);
-    }
-  }
-  renderModalTasks();
-  modalTasksUnsub = onSnapshot(qTasks, async (snap) => {
-    const list = [];
-    for (const d of snap.docs) {
-      const data = d.data();
-      let text = '';
-      let status = '';
-      try { if (data.textCipher && data.textIv) text = await decryptText(data.textCipher, data.textIv); } catch {}
-      try { if (data.statusCipher && data.statusIv) status = await decryptText(data.statusCipher, data.statusIv); } catch {}
-      list.push({ id: d.id, text, status });
-    }
-    modalTasks = list;
-    renderModalTasks();
-  });
-  miniForm.addEventListener('submit', async (e) => {
+  taskForm.addEventListener('submit', async (e) => {
     e.preventDefault();
+    const v = (taskInput.value || '').trim();
+    if (!v) return;
+    taskInput.value = '';
+    const pending = { id: Math.random().toString(36).slice(2, 10), title: v, docId: null };
+    newTasks.push(pending);
+    renderTaskList();
     try {
-      const v = (miniInput.value||'').trim(); if (!v) return;
       const { cipher: textCipher, iv: textIv } = await encryptText(v);
       const { cipher: statusCipher, iv: statusIv } = await encryptText('open');
       const payload = buildTaskCreationPayload({ textCipher, textIv, statusCipher, statusIv, assignee: null, priority: null });
       const ref = await addDoc(collection(db, 'cases', currentCaseId, 'tasks'), payload);
-      newTaskIds.push(ref.id); newTaskTitles.push(v);
-      miniInput.value='';
-    } catch {}
+      pending.docId = ref.id;
+    } catch (err) {
+      console.error('Failed to save task', err);
+      showToast('Failed to save task');
+      const idx = newTasks.indexOf(pending);
+      if (idx >= 0) newTasks.splice(idx, 1);
+      renderTaskList();
+    }
   });
 
-  // Actions
-  const actions = document.createElement('div'); actions.className='actions';
-  const cancel = document.createElement('button'); cancel.className='btn'; cancel.textContent='Cancel'; actions.appendChild(cancel);
-  const save = document.createElement('button'); save.className='btn primary'; save.textContent='Save Note'; actions.appendChild(save);
-  modal.appendChild(actions);
+  const close = () => {
+    overlay.remove();
+    document.removeEventListener('keydown', onKey);
+  };
 
-  document.body.appendChild(overlay);
-
-  const close = () => { if (modalTasksUnsub) { try { modalTasksUnsub(); } catch {} } overlay.remove(); };
-  cancel.addEventListener('click', close);
-  save.addEventListener('click', async () => {
+  const doSave = async () => {
+    if (save.disabled) return;
+    save.disabled = true;
+    save.textContent = 'Saving…';
     try {
-      // Collect issue additions and Other text
-      const mergedIssues = [];
-      const issuesAdded = [];
-      // Collect from Issue blocks in the editor (above Other)
-      for (const n of Array.from(editor.querySelectorAll('.issue-block'))) {
-          const id = n.dataset.issueId;
-          const title = (n.querySelector('.issue-title')?.textContent||'').trim();
-          const added = (n.querySelector('.issue-body')?.innerText||'').trim();
-          const show = !n.classList.contains('collapsed');
-          const orig = issueItems.find(i=>i.id===id) || { id, title: title, body: '' };
-          const nextBody = appendWithSpacing(orig.body||'', added);
-          mergedIssues.push({ id: orig.id, title: title || (orig.title||''), body: nextBody });
-          if (added) issuesAdded.push({ id: orig.id, added, show });
-      }
-      // Gather Other text from the dedicated area only
-      const otherText = (otherArea.innerText || '').trim();
+      const heading = (headingInput.value || '').trim() || 'Ward round';
+      const freeText = (noteTextarea.value || '').trim();
 
-      // Dx line from current A items
-      const cleanDx = dxItems.filter(it => (it.title||'').trim()).map(it => ({ id: it.id||Math.random().toString(36).slice(2,10), title: (it.title||'').trim(), body: '' }));
-      await saveItems(currentCaseId, 'A', cleanDx);
-      await saveItems(currentCaseId, 'E', mergedIssues.length ? mergedIssues : issueItems);
-      if (otherText) await saveCaseOtherBody(currentCaseId, otherText);
-
-      // Tasks
-      const includeExisting = !!includeChk.checked;
-      const includedTaskIds = [];
-      const includedTaskTitles = [];
-      if (includeExisting) {
-        for (const t of modalTasks || []) { if ((t.status||'') === 'open') { includedTaskIds.push(t.id); includedTaskTitles.push(t.text||''); } }
-      }
-
-      // Compile
+      // Compiled format:
+      //   Δ <dx>
+      //   <issue-title>\n\n<issue-body>  (per existing issue with body)
+      //   Note\n\n<free text>            (if present)
+      //   Tasks\n\n• t1\n• t2            (new tasks added during this note)
       const parts = [];
-      const heading = (headingEl.textContent||'').trim();
-      const dxLine = (cleanDx.length>0) ? ('Δ ' + cleanDx.map(d=>d.title).join('; ')) : 'Δ Diagnosis not specified';
+      const cleanDx = dxItems
+        .filter(it => (it.title || '').trim())
+        .map(it => ({ title: (it.title || '').trim() }));
+      const dxLine = cleanDx.length ? 'Δ ' + cleanDx.map(d => d.title).join('; ') : 'Δ Diagnosis not specified';
       parts.push(dxLine);
-      for (const it of mergedIssues) {
-        const ia = issuesAdded.find(x=>x.id===it.id);
-        const added = ia ? (ia.added||'').trim() : '';
-        const shown = ia ? !!ia.show : true;
-        if (!shown) continue;
-        if (!it.title || !added) continue;
-        parts.push(it.title);
-        parts.push(added);
-      }
-      if (otherText) {
-        const hasIssueAddsShown = issuesAdded.some(x => x.show && (x.added||'').trim());
-        if (hasIssueAddsShown) { parts.push('Other'); parts.push(otherText); }
-        else { parts.push(otherText); }
-      }
-      const taskLines = [];
-      if (includeExisting) taskLines.push(...includedTaskTitles.map(t=>`• ${t}`));
-      taskLines.push(...newTaskTitles.map(t=>`• ${t}`));
-      if (taskLines.length) { parts.push('Tasks'); parts.push(taskLines.join('\n')); }
-      const compiled = parts.join('\n\n');
 
-      const wnRef = collection(db,'cases',currentCaseId,'wardNotes');
+      for (const it of issueItems) {
+        const title = (it.title || '').trim();
+        const bodyText = (it.body || '').trim();
+        if (!title) continue;
+        if (!bodyText) continue;
+        parts.push(title);
+        parts.push(bodyText);
+      }
+
+      if (freeText) {
+        parts.push('Note');
+        parts.push(freeText);
+      }
+
+      const savedTaskTitles = newTasks.map(t => t.title);
+      const savedTaskDocIds = newTasks.map(t => t.docId).filter(Boolean);
+      if (savedTaskTitles.length) {
+        parts.push('Tasks');
+        parts.push(savedTaskTitles.map(t => `• ${t}`).join('\n'));
+      }
+
+      const compiled = parts.join('\n\n');
       const eHead = await encryptText(heading);
       const eComp = await encryptText(compiled);
       const eDx = await encryptText(dxLine);
-      const encIssuesAdded = [];
-      for (const ia of issuesAdded) { if (!ia.added) continue; const enc = await encryptText(ia.added); encIssuesAdded.push({ id: ia.id, cipher: enc.cipher, iv: enc.iv, show: !!ia.show }); }
-      await addDoc(wnRef, { headingCipher: eHead.cipher, headingIv: eHead.iv, compiledCipher: eComp.cipher, compiledIv: eComp.iv, diagnosesLineCipher: eDx.cipher, diagnosesLineIv: eDx.iv, issuesAdded: encIssuesAdded, includeExistingOpenTasks: includeExisting, includedTaskIds, newTaskIds, author: username || null, createdAt: serverTimestamp() });
+      const eNote = await encryptText(freeText);
+
+      await addDoc(collection(db, 'cases', currentCaseId, 'wardNotes'), {
+        headingCipher: eHead.cipher, headingIv: eHead.iv,
+        compiledCipher: eComp.cipher, compiledIv: eComp.iv,
+        diagnosesLineCipher: eDx.cipher, diagnosesLineIv: eDx.iv,
+        noteCipher: eNote.cipher, noteIv: eNote.iv,
+        newTaskIds: savedTaskDocIds,
+        author: username || null,
+        createdAt: serverTimestamp(),
+      });
 
       showToast('Ward note saved');
       close();
     } catch (err) {
       console.error('Failed to save ward note', err);
       showToast('Failed to save note');
+      save.disabled = false;
+      save.textContent = 'Save note';
+    }
+  };
+
+  cancel.addEventListener('click', close);
+  save.addEventListener('click', doSave);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+    if ((e.key === 'Enter') && (e.metaKey || e.ctrlKey)) { e.preventDefault(); doSave(); return; }
+  };
+  document.addEventListener('keydown', onKey);
+
+  // Enter in heading moves focus to textarea
+  headingInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); noteTextarea.focus(); }
+  });
+
+  // Enter in textarea submits the note (Shift+Enter inserts newline)
+  noteTextarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault();
+      doSave();
     }
   });
 
-  // Focus editor
-  setTimeout(()=>{ try { editor.focus(); } catch {} }, 0);
-  overlay.addEventListener('keydown', (e) => { if ((e.key === 'Enter') && (e.metaKey || e.ctrlKey)) { e.preventDefault(); form.querySelector('.btn.primary')?.click(); } });
+  setTimeout(() => { try { noteTextarea.focus(); } catch {} }, 0);
 }
 
 // Apply toolbar filters to current case tasks and render
