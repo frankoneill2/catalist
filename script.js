@@ -2149,7 +2149,7 @@ function buildTableSkeleton(opts = {}) {
   table.dataset.variant = variant;
   const thead = document.createElement('thead');
   const tr = document.createElement('tr');
-  const headers = ['Patient', 'Diagnosis', 'History', 'Issues', 'Tasks'];
+  const headers = ['Patient', 'History', 'Issues', 'Tasks'];
   for (const h of headers) { const th = document.createElement('th'); th.textContent = h; tr.appendChild(th); }
   thead.appendChild(tr);
   const tbody = document.createElement('tbody');
@@ -2554,7 +2554,7 @@ function startRealtimeTable() {
       }
       tdName.appendChild(nameWrap);
       tr.appendChild(tdName);
-      for (const letter of ['A','B','E','F']) {
+      for (const letter of ['B','E','F']) {
         const td = document.createElement('td');
         if (letter === 'F') {
           const wrap = document.createElement('div'); wrap.className = 'cell-tasks';
