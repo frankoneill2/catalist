@@ -89,6 +89,7 @@ let currentTaskOrder = null;
 // User page state for rendering/filtering
 let userPerCase = new Map(); // caseId -> [{ taskId, text, status }]
 let userCaseTitles = new Map(); // caseId -> title
+let userCaseMeta = new Map(); // caseId -> { title, wardId, bedId }
 let currentUserFilter = 'all';
 let userFilterEl; // legacy single-select (no longer used)
 let currentUserStatusSet = new Set(['open', 'in progress', 'complete']);
@@ -820,6 +821,7 @@ function showMainTab(which) {
     if (unsubUpdates) { try { unsubUpdates(); } catch {} unsubUpdates = null; }
     if (tableSection) tableSection.hidden = false;
   }
+  try { if (typeof refreshMobileTopbar === 'function') refreshMobileTopbar(); } catch {}
 }
 
 
@@ -5667,6 +5669,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (cached && cached.perCase && cached.titles) {
       userPerCase = new Map(cached.perCase);
       userCaseTitles = new Map(cached.titles);
+      if (cached.meta) userCaseMeta = new Map(cached.meta);
       renderUserTasks();
     }
     // Restart listener
@@ -6186,10 +6189,14 @@ function openUser(name) {
   if (cached && cached.perCase && cached.titles) {
     userPerCase = new Map(cached.perCase);
     userCaseTitles = new Map(cached.titles);
+    if (cached.meta) userCaseMeta = new Map(cached.meta);
     renderUserTasks();
   } else {
     // Show a lightweight loading indicator while first load happens
-    if (userTaskListEl) { userTaskListEl.innerHTML = '<li style="list-style:none;color:var(--muted);padding:8px 0;">Loading…</li>'; }
+    if (userTaskListEl) {
+      if (isMobileUserView && isMobileUserView()) renderMobileSkeleton();
+      else userTaskListEl.innerHTML = '<li style="list-style:none;color:var(--muted);padding:8px 0;">Loading…</li>';
+    }
   }
   startRealtimeUserTasks(name);
 }
@@ -6299,25 +6306,38 @@ async function startRealtimeUserTasks(name) {
 
       const titleFetches = [];
       for (const cid of neededCaseIds) {
-        if (!userCaseTitles.has(cid)) {
+        if (!userCaseTitles.has(cid) || !userCaseMeta.has(cid)) {
           titleFetches.push(
             getDoc(doc(db, 'cases', cid)).then(async (cd) => {
               if (cd.exists()) {
                 const cdat = cd.data();
                 const title = await safeDecryptText(cdat.titleCipher, cdat.titleIv);
+                const ct = cdat.caseTags || {};
                 userCaseTitles.set(cid, title || '(case)');
+                userCaseMeta.set(cid, { title: title || '(case)', wardId: ct.location || null, bedId: ct.room || null });
               } else {
                 userCaseTitles.set(cid, '(case)');
+                userCaseMeta.set(cid, { title: '(case)', wardId: null, bedId: null });
               }
-            }).catch(() => { userCaseTitles.set(cid, '(case)'); })
+            }).catch(() => { userCaseTitles.set(cid, '(case)'); userCaseMeta.set(cid, { title: '(case)', wardId: null, bedId: null }); })
           );
         }
       }
       await Promise.all(titleFetches);
       if (seq !== buildSeq) return;
 
+      // Ensure subtags (beds) are loaded for every ward referenced
+      try {
+        const wardsSeen = new Set();
+        for (const cid of neededCaseIds) {
+          const m = userCaseMeta.get(cid);
+          if (m && m.wardId) wardsSeen.add(m.wardId);
+        }
+        for (const wid of wardsSeen) { try { loadSubtagsFor(wid); } catch {} }
+      } catch {}
+
       userPerCase = perCase;
-      userTasksCacheByKey.set(assigneeKey(), { perCase: new Map(perCase), titles: new Map(userCaseTitles) });
+      userTasksCacheByKey.set(assigneeKey(), { perCase: new Map(perCase), titles: new Map(userCaseTitles), meta: new Map(userCaseMeta) });
       if (userTasksEditing) { userTasksRebuildPending = true; return; }
       renderUserTasks();
     } catch (err) {
@@ -6345,6 +6365,10 @@ async function startRealtimeUserTasks(name) {
 
 function renderUserTasks() {
   if (!userTaskListEl) return;
+  if (typeof isMobileUserView === 'function' && isMobileUserView()) {
+    try { renderUserTasksMobile(); } catch (err) { console.error('Mobile tasks render failed', err); }
+    return;
+  }
   userTaskListEl.innerHTML = '';
   const targetUser = currentAssigneeFilter === 'me'
     ? (username || currentUserPageName)
@@ -6680,3 +6704,948 @@ function renderUserTasks() {
     userTaskListEl.innerHTML = '<li style="list-style:none;color:var(--muted);padding:8px 0;">No tasks match current filters.</li>';
   }
 }
+
+/* =============================================================================
+   Mobile onboarding — simplified My Tasks
+   ============================================================================= */
+
+function isMobileUserView() {
+  try { return window.matchMedia && window.matchMedia('(max-width: 900px)').matches; }
+  catch { return false; }
+}
+
+function mtWardName(wardId) {
+  if (!wardId) return '';
+  try {
+    const arr = tagsByType.get('location') || [];
+    const t = arr.find(x => x.id === wardId);
+    return (t && t.name) || '';
+  } catch { return ''; }
+}
+
+function mtBedName(wardId, bedId) {
+  if (!wardId || !bedId) return '';
+  try {
+    const arr = subtagsByParent.get(wardId) || [];
+    const t = arr.find(x => x.id === bedId);
+    return (t && t.name) || '';
+  } catch { return ''; }
+}
+
+function mtWardSortKey(wardId) {
+  if (!wardId) return '\uffff'; // No location sorts last
+  try {
+    const arr = tagsByType.get('location') || [];
+    const idx = arr.findIndex(x => x.id === wardId);
+    if (idx === -1) return '\uffff' + (mtWardName(wardId) || '');
+    return String(idx).padStart(6, '0');
+  } catch { return '\uffff'; }
+}
+
+function mtBedSortKey(wardId, bedId) {
+  if (!bedId) return '\uffff';
+  try {
+    const arr = subtagsByParent.get(wardId) || [];
+    const idx = arr.findIndex(x => x.id === bedId);
+    if (idx === -1) return '\uffff';
+    return String(idx).padStart(6, '0');
+  } catch { return '\uffff'; }
+}
+
+function renderMobileSkeleton() {
+  if (!userTaskListEl) return;
+  userTaskListEl.innerHTML = '';
+  const wrap = document.createElement('section');
+  wrap.className = 'mt-section';
+  const body = document.createElement('div');
+  body.className = 'mt-section-body';
+  for (let i = 0; i < 5; i++) {
+    const row = document.createElement('div');
+    row.className = 'mt-skeleton-row';
+    const dot = document.createElement('div');
+    dot.className = 'mt-skeleton-dot';
+    const lines = document.createElement('div');
+    lines.className = 'mt-skeleton-lines';
+    const b1 = document.createElement('div'); b1.className = 'mt-skeleton-bar';
+    const b2 = document.createElement('div'); b2.className = 'mt-skeleton-bar short';
+    lines.appendChild(b1); lines.appendChild(b2);
+    row.appendChild(dot); row.appendChild(lines);
+    body.appendChild(row);
+  }
+  wrap.appendChild(body);
+  userTaskListEl.appendChild(wrap);
+}
+
+// Track the last completed task for undo
+let mtLastUndo = null;
+
+function showUndoToast(message, onUndo) {
+  const container = document.getElementById('toast-container');
+  if (!container) { if (onUndo) {} return; }
+  const el = document.createElement('div');
+  el.className = 'toast undo';
+  const text = document.createElement('span');
+  text.textContent = message;
+  el.appendChild(text);
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'toast-undo-btn';
+  btn.textContent = 'Undo';
+  el.appendChild(btn);
+  container.appendChild(el);
+  let done = false;
+  const dismiss = () => { if (done) return; done = true; el.remove(); };
+  btn.addEventListener('click', () => {
+    if (done) return;
+    dismiss();
+    try { onUndo && onUndo(); } catch (err) { console.error(err); }
+  });
+  setTimeout(dismiss, 4600);
+}
+
+async function mtSetTaskStatus(caseId, taskId, nextStatus, opts = {}) {
+  const { cipher, iv } = await encryptText(nextStatus);
+  await updateDoc(doc(db, 'cases', caseId, 'tasks', taskId), { statusCipher: cipher, statusIv: iv });
+  if (nextStatus === 'complete' && opts.caseTitle && opts.text) {
+    try {
+      const tEnc = await encryptText(opts.text || '');
+      await logUpdate({ type: 'task_completed', caseId, caseTitle: opts.caseTitle, taskId, taskTextCipher: tEnc.cipher, taskTextIv: tEnc.iv });
+    } catch {}
+  }
+}
+
+function renderUserTasksMobile() {
+  if (!userTaskListEl) return;
+  userTaskListEl.innerHTML = '';
+
+  // Update header title according to filter state
+  const titleEl = document.getElementById('mobile-topbar-title');
+  if (titleEl) {
+    if (currentAssigneeFilter === 'all') titleEl.textContent = 'All tasks';
+    else if (currentAssigneeFilter === 'unassigned') titleEl.textContent = 'Unassigned';
+    else if (currentAssigneeFilter.startsWith('name:')) titleEl.textContent = `${currentAssigneeFilter.slice(5)}'s tasks`;
+    else titleEl.textContent = 'My Tasks';
+  }
+  updateFilterPillBadge();
+
+  const targetUser = currentAssigneeFilter === 'me'
+    ? (username || currentUserPageName)
+    : (currentAssigneeFilter.startsWith('name:') ? currentAssigneeFilter.slice(5) : (username || currentUserPageName));
+
+  const pending = []; // items pending acceptance for me
+  const mine = [];    // items assigned to me/target
+  const unassigned = []; // open/team tasks
+
+  for (const [caseId, originalItems] of userPerCase.entries()) {
+    let items = originalItems || [];
+    if (currentUserStatusSet && currentUserStatusSet.size) items = items.filter(i => currentUserStatusSet.has(i.status));
+    if (currentUserPriorityFilter !== 'all') items = items.filter(i => (i.priority || '') === currentUserPriorityFilter);
+    if (currentUserSearch && currentUserSearch.trim()) {
+      const q = currentUserSearch.toLowerCase();
+      items = items.filter(i => (i.text || '').toLowerCase().includes(q));
+    }
+    for (const it of items) {
+      const openTask = isTaskOpenForTeam(it);
+      const isPending = normalizeTaskAssignmentState(it) === TASK_ASSIGNMENT.PENDING && !!it.assignee;
+      if (currentAssigneeFilter === 'unassigned') {
+        if (openTask) unassigned.push({ caseId, it });
+        continue;
+      }
+      if (currentAssigneeFilter === 'all') {
+        if (openTask) unassigned.push({ caseId, it });
+        else if (isPending) pending.push({ caseId, it });
+        else mine.push({ caseId, it });
+        continue;
+      }
+      if (openTask) unassigned.push({ caseId, it });
+      else if (it.assignee === targetUser && isPending) pending.push({ caseId, it });
+      else if (it.assignee === targetUser) mine.push({ caseId, it });
+    }
+  }
+
+  const priVal = (p) => p === 'high' ? 3 : p === 'medium' ? 2 : p === 'low' ? 1 : 0;
+  const sortByLocation = (entries) => {
+    entries.sort((a, b) => {
+      const ma = userCaseMeta.get(a.caseId) || {};
+      const mb = userCaseMeta.get(b.caseId) || {};
+      const wka = mtWardSortKey(ma.wardId), wkb = mtWardSortKey(mb.wardId);
+      if (wka !== wkb) return wka < wkb ? -1 : 1;
+      const bka = mtBedSortKey(ma.wardId, ma.bedId), bkb = mtBedSortKey(mb.wardId, mb.bedId);
+      if (bka !== bkb) return bka < bkb ? -1 : 1;
+      const ta = (ma.title || '').toLowerCase();
+      const tb = (mb.title || '').toLowerCase();
+      if (ta !== tb) return ta < tb ? -1 : 1;
+      if (currentUserSort === 'pri-desc') return priVal(b.it.priority) - priVal(a.it.priority);
+      if (currentUserSort === 'pri-asc') return priVal(a.it.priority) - priVal(b.it.priority);
+      return 0;
+    });
+    return entries;
+  };
+
+  // 1. Pending-acceptance section pinned top
+  if (pending.length) {
+    const sec = buildMobileSection('pending', 'Pending your acceptance', pending.length);
+    const body = sec.querySelector('.mt-section-body');
+    sortByLocation(pending);
+    for (const { caseId, it } of pending) body.appendChild(buildMobileRow(caseId, it, { pendingForMe: true }));
+    userTaskListEl.appendChild(sec);
+  }
+
+  // 2. Main list — group by ward
+  const byWard = new Map(); // wardId -> [{caseId, it}]
+  sortByLocation(mine);
+  for (const entry of mine) {
+    const meta = userCaseMeta.get(entry.caseId) || {};
+    const key = meta.wardId || '';
+    if (!byWard.has(key)) byWard.set(key, []);
+    byWard.get(key).push(entry);
+  }
+  const wardKeys = Array.from(byWard.keys()).sort((a, b) => mtWardSortKey(a) < mtWardSortKey(b) ? -1 : 1);
+  for (const wardKey of wardKeys) {
+    const entries = byWard.get(wardKey) || [];
+    if (!entries.length) continue;
+    const wname = wardKey ? (mtWardName(wardKey) || 'Ward') : 'No location';
+    const sec = buildMobileSection('ward', wname, entries.length);
+    const body = sec.querySelector('.mt-section-body');
+    for (const { caseId, it } of entries) body.appendChild(buildMobileRow(caseId, it, {}));
+    userTaskListEl.appendChild(sec);
+  }
+
+  // 3. Unassigned demoted section (only in "me" mode; in "all"/"unassigned" keep pinned bottom too)
+  if (unassigned.length) {
+    sortByLocation(unassigned);
+    const label = currentAssigneeFilter === 'unassigned' ? 'Unassigned tasks' : 'Unassigned on your wards';
+    const sec = buildMobileSection('unassigned', label, unassigned.length);
+    const body = sec.querySelector('.mt-section-body');
+    for (const { caseId, it } of unassigned) body.appendChild(buildMobileRow(caseId, it, { unassigned: true }));
+    userTaskListEl.appendChild(sec);
+  }
+
+  const total = pending.length + mine.length + unassigned.length;
+  if (total === 0) renderMobileEmptyState();
+  else maybeRunCoachMarks();
+}
+
+function buildMobileSection(kind, label, count) {
+  const wrap = document.createElement('section');
+  wrap.className = `mt-section mt-section--${kind}`;
+  const head = document.createElement('div');
+  head.className = 'mt-section-head';
+  const h = document.createElement('span');
+  h.textContent = label;
+  const c = document.createElement('span');
+  c.className = 'mt-section-count';
+  c.textContent = String(count);
+  head.appendChild(h);
+  head.appendChild(c);
+  wrap.appendChild(head);
+  const body = document.createElement('div');
+  body.className = 'mt-section-body';
+  wrap.appendChild(body);
+  return wrap;
+}
+
+function buildMobileRow(caseId, it, opts = {}) {
+  const meta = userCaseMeta.get(caseId) || {};
+  const title = meta.title || userCaseTitles.get(caseId) || '(case)';
+  const bed = mtBedName(meta.wardId, meta.bedId);
+
+  const row = document.createElement('div');
+  row.className = 'mt-row';
+  row.dataset.caseId = caseId;
+  row.dataset.taskId = it.taskId;
+  if (it.status === 'complete') row.classList.add('mt-complete');
+  else if (it.status === 'in progress') row.classList.add('mt-inprogress');
+  if (it.priority === 'high') row.classList.add('mt-pri-high');
+  if (opts.pendingForMe) row.classList.add('mt-pending');
+
+  // Swipe action layer
+  const actionLayer = document.createElement('div');
+  actionLayer.className = 'mt-row-actions';
+  const actionBtn = document.createElement('button');
+  actionBtn.type = 'button';
+  actionBtn.innerHTML = '<span>◐</span><span>In progress</span>';
+  actionBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleInProgress(caseId, it, row, title);
+  });
+  actionLayer.appendChild(actionBtn);
+  row.appendChild(actionLayer);
+
+  const content = document.createElement('div');
+  content.className = 'mt-row-content';
+
+  // Priority color bar (flush left of the checkbox for high priority)
+  const priBar = document.createElement('div');
+  priBar.className = 'mt-pri-dot';
+  content.appendChild(priBar);
+
+  // Checkbox
+  const check = document.createElement('button');
+  check.type = 'button';
+  check.className = 'mt-check';
+  check.setAttribute('aria-label', it.status === 'complete' ? 'Mark not done' : 'Mark done');
+  check.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+  if (opts.pendingForMe) check.disabled = true;
+  check.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (check.disabled) return;
+    toggleComplete(caseId, it, row, title);
+  });
+  content.appendChild(check);
+
+  // Body (text + meta)
+  const body = document.createElement('div');
+  body.className = 'mt-body';
+  const textEl = document.createElement('span');
+  textEl.className = 'mt-text';
+  textEl.textContent = it.text || '';
+  body.appendChild(textEl);
+  const metaEl = document.createElement('span');
+  metaEl.className = 'mt-meta';
+  if (bed) {
+    const b = document.createElement('span'); b.className = 'mt-bed'; b.textContent = bed;
+    metaEl.appendChild(b);
+    const sep = document.createElement('span'); sep.className = 'mt-sep'; sep.textContent = '·';
+    metaEl.appendChild(sep);
+  }
+  const pat = document.createElement('span');
+  pat.textContent = title;
+  metaEl.appendChild(pat);
+  if (opts.unassigned) {
+    const sep2 = document.createElement('span'); sep2.className = 'mt-sep'; sep2.textContent = '·';
+    metaEl.appendChild(sep2);
+    const tag = document.createElement('span'); tag.textContent = 'unassigned'; tag.style.color = '#94a3b8';
+    metaEl.appendChild(tag);
+  }
+  body.appendChild(metaEl);
+  content.appendChild(body);
+
+  // Tap on body → open case. Tap on checkbox already handled.
+  body.addEventListener('click', (e) => {
+    e.stopPropagation();
+    try { openCase(caseId, title, 'user', 'tasks'); } catch (err) { console.error(err); }
+  });
+
+  row.appendChild(content);
+
+  // Gestures: horizontal swipe reveals action; long-press shows action sheet
+  attachRowGestures(row, content, { caseId, it, title, unassigned: !!opts.unassigned, pendingForMe: !!opts.pendingForMe });
+
+  // Accept / decline for pending-for-me rows
+  if (opts.pendingForMe) {
+    const accRow = document.createElement('div');
+    accRow.className = 'mt-accept-row';
+    const dec = document.createElement('button');
+    dec.type = 'button'; dec.textContent = 'Decline';
+    dec.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        await declineTaskAssignment(caseId, it.taskId, { caseTitle: title, taskText: it.text });
+        showToast('Task returned to open');
+      } catch (err) { console.error(err); showToast('Failed to decline task'); }
+    });
+    const acc = document.createElement('button');
+    acc.type = 'button'; acc.textContent = 'Accept'; acc.className = 'primary';
+    acc.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        await acceptTaskAssignment(caseId, it.taskId, { caseTitle: title, taskText: it.text });
+        showToast('Task accepted');
+      } catch (err) { console.error(err); showToast('Failed to accept task'); }
+    });
+    accRow.appendChild(dec);
+    accRow.appendChild(acc);
+    const outer = document.createElement('div');
+    outer.appendChild(row);
+    outer.appendChild(accRow);
+    outer.className = 'mt-pending-wrap';
+    return outer;
+  }
+
+  return row;
+}
+
+async function toggleComplete(caseId, it, rowEl, title) {
+  const prev = it.status;
+  const next = (prev === 'complete') ? 'open' : 'complete';
+  try {
+    await mtSetTaskStatus(caseId, it.taskId, next, { caseTitle: title, text: it.text });
+    it.status = next;
+    rowEl.classList.toggle('mt-complete', next === 'complete');
+    rowEl.classList.toggle('mt-inprogress', next === 'in progress');
+    const check = rowEl.querySelector('.mt-check');
+    if (check) check.setAttribute('aria-label', next === 'complete' ? 'Mark not done' : 'Mark done');
+    if (next === 'complete') {
+      const msg = (it.text || '').length > 28 ? 'Marked done' : `Done · ${it.text}`;
+      showUndoToast(msg, async () => {
+        try {
+          await mtSetTaskStatus(caseId, it.taskId, prev, {});
+          it.status = prev;
+          renderUserTasks();
+        } catch (err) { console.error(err); showToast('Failed to undo'); }
+      });
+    }
+    dismissCoach('check');
+  } catch (err) { console.error('Failed to update status', err); showToast('Failed to update status'); }
+}
+
+async function toggleInProgress(caseId, it, rowEl, title) {
+  const prev = it.status;
+  const next = (prev === 'in progress') ? 'open' : 'in progress';
+  try {
+    await mtSetTaskStatus(caseId, it.taskId, next, { caseTitle: title, text: it.text });
+    it.status = next;
+    rowEl.classList.toggle('mt-inprogress', next === 'in progress');
+    rowEl.classList.toggle('mt-complete', next === 'complete');
+    // Snap swipe closed
+    const content = rowEl.querySelector('.mt-row-content');
+    if (content) { content.style.transform = ''; }
+    showToast(next === 'in progress' ? 'Marked in progress' : 'Reopened');
+    dismissCoach('swipe');
+  } catch (err) { console.error('Failed to update status', err); showToast('Failed to update status'); }
+}
+
+function attachRowGestures(row, content, ctx) {
+  let startX = 0, startY = 0, lastX = 0, tracking = false, claimed = false;
+  let pressTimer = null, longPressed = false;
+  const THRESH_CLAIM = 12;
+  const THRESH_VERT = 10;
+  const REVEAL_WIDTH = 110;
+  const COMMIT_AT = 70;
+
+  const clearTimer = () => { if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; } };
+
+  const onDown = (e) => {
+    const touch = e.touches ? e.touches[0] : e;
+    startX = lastX = touch.clientX;
+    startY = touch.clientY;
+    tracking = true; claimed = false; longPressed = false;
+    row.classList.add('mt-row--dragging');
+    clearTimer();
+    pressTimer = setTimeout(() => {
+      if (!claimed) {
+        longPressed = true;
+        if (navigator.vibrate) { try { navigator.vibrate(14); } catch {} }
+        openTaskActionSheet(ctx, row);
+      }
+    }, 520);
+  };
+  const onMove = (e) => {
+    if (!tracking) return;
+    const touch = e.touches ? e.touches[0] : e;
+    const dx = touch.clientX - startX;
+    const dy = touch.clientY - startY;
+    if (!claimed) {
+      if (Math.abs(dy) > THRESH_VERT && Math.abs(dy) > Math.abs(dx)) {
+        // Vertical scroll — abandon swipe
+        tracking = false;
+        row.classList.remove('mt-row--dragging');
+        content.style.transform = '';
+        clearTimer();
+        return;
+      }
+      if (Math.abs(dx) > THRESH_CLAIM) {
+        claimed = true;
+        clearTimer();
+      }
+    }
+    if (claimed) {
+      lastX = touch.clientX;
+      const clamped = Math.max(-REVEAL_WIDTH, Math.min(0, dx));
+      content.style.transform = `translateX(${clamped}px)`;
+      if (e.cancelable) e.preventDefault();
+    }
+  };
+  const onUp = () => {
+    if (!tracking) return;
+    tracking = false;
+    row.classList.remove('mt-row--dragging');
+    clearTimer();
+    if (!claimed) {
+      content.style.transform = '';
+      return;
+    }
+    const dx = lastX - startX;
+    if (dx <= -COMMIT_AT) {
+      // Commit: toggle in progress
+      content.style.transform = `translateX(-${REVEAL_WIDTH}px)`;
+      setTimeout(() => {
+        toggleInProgress(ctx.caseId, ctx.it, row, ctx.title);
+      }, 120);
+    } else {
+      content.style.transform = '';
+    }
+  };
+  const onCancel = () => {
+    tracking = false;
+    row.classList.remove('mt-row--dragging');
+    content.style.transform = '';
+    clearTimer();
+  };
+
+  content.addEventListener('touchstart', onDown, { passive: true });
+  content.addEventListener('touchmove', onMove, { passive: false });
+  content.addEventListener('touchend', onUp);
+  content.addEventListener('touchcancel', onCancel);
+}
+
+function openTaskActionSheet(ctx, row) {
+  const sheet = buildBottomSheet();
+  const h = document.createElement('h3');
+  h.textContent = 'Task actions';
+  sheet.body.appendChild(h);
+
+  const list = document.createElement('ul');
+  list.className = 'ms-list';
+
+  const addItem = (label, handler) => {
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'ms-list-item';
+    btn.textContent = label;
+    btn.addEventListener('click', async () => {
+      sheet.close();
+      try { await handler(); } catch (err) { console.error(err); }
+    });
+    li.appendChild(btn);
+    list.appendChild(li);
+  };
+
+  if (ctx.it.status === 'in progress') {
+    addItem('Reopen', () => toggleInProgress(ctx.caseId, ctx.it, row, ctx.title));
+  } else if (ctx.it.status !== 'complete') {
+    addItem('Mark in progress', () => toggleInProgress(ctx.caseId, ctx.it, row, ctx.title));
+  }
+  if (ctx.it.status !== 'complete') {
+    addItem('Mark complete', () => toggleComplete(ctx.caseId, ctx.it, row, ctx.title));
+  } else {
+    addItem('Reopen', () => toggleComplete(ctx.caseId, ctx.it, row, ctx.title));
+  }
+  addItem('Open patient', () => { try { openCase(ctx.caseId, ctx.title, 'user', 'tasks'); } catch {} });
+  addItem('Delete task', async () => {
+    if (!confirm('Delete this task?')) return;
+    try { await deleteDoc(doc(db, 'cases', ctx.caseId, 'tasks', ctx.it.taskId)); }
+    catch (err) { console.error(err); showToast('Failed to delete task'); }
+  });
+  sheet.body.appendChild(list);
+  sheet.open();
+}
+
+function renderMobileEmptyState() {
+  if (!userTaskListEl) return;
+  const e = document.createElement('div');
+  e.className = 'mt-empty';
+  const t = document.createElement('p'); t.className = 'mt-empty-title';
+  const s = document.createElement('p'); s.className = 'mt-empty-sub';
+  const anyFilters = filterCount() > 0;
+  if (anyFilters) {
+    t.textContent = 'No tasks match these filters.';
+    s.textContent = 'Try clearing a filter to see more.';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = 'Clear filters';
+    btn.addEventListener('click', () => {
+      currentUserStatusSet = new Set(['open','in progress','complete']);
+      currentUserPriorityFilter = 'all';
+      currentUserSort = 'none';
+      currentUserSearch = '';
+      document.dispatchEvent(new CustomEvent('userToolbar:hydrate', { detail: {
+        statuses: Array.from(currentUserStatusSet), priority: 'all', sort: 'none', search: '', assignee: currentAssigneeFilter
+      }}));
+      saveUserFilterState();
+      renderUserTasks();
+    });
+    e.appendChild(t); e.appendChild(s); e.appendChild(btn);
+  } else {
+    t.textContent = "You're all caught up.";
+    s.textContent = 'Nice work. New tasks will appear here.';
+    e.appendChild(t); e.appendChild(s);
+  }
+  userTaskListEl.appendChild(e);
+}
+
+function filterCount() {
+  let n = 0;
+  if (currentUserStatusSet && currentUserStatusSet.size && currentUserStatusSet.size < 3) n++;
+  if (currentUserPriorityFilter && currentUserPriorityFilter !== 'all') n++;
+  if (currentUserSort && currentUserSort !== 'none') n++;
+  if (currentUserSearch && currentUserSearch.trim()) n++;
+  if (currentAssigneeFilter && currentAssigneeFilter !== 'me') n++;
+  return n;
+}
+
+function updateFilterPillBadge() {
+  const pill = document.getElementById('mobile-filter-btn');
+  const count = document.getElementById('mobile-filter-count');
+  if (!pill || !count) return;
+  const n = filterCount();
+  if (n > 0) {
+    pill.classList.add('has-filters');
+    count.hidden = false;
+    count.textContent = String(n);
+  } else {
+    pill.classList.remove('has-filters');
+    count.hidden = true;
+  }
+}
+
+/* Bottom sheet helper */
+function buildBottomSheet() {
+  const root = document.getElementById('mobile-sheet-root') || document.body;
+  const scrim = document.createElement('div');
+  scrim.className = 'ms-scrim';
+  const sheet = document.createElement('div');
+  sheet.className = 'ms-sheet';
+  const grabber = document.createElement('div');
+  grabber.className = 'ms-grabber';
+  sheet.appendChild(grabber);
+  const body = document.createElement('div');
+  sheet.appendChild(body);
+  root.appendChild(scrim);
+  root.appendChild(sheet);
+  const close = () => {
+    scrim.classList.remove('ms-open');
+    sheet.classList.remove('ms-open');
+    setTimeout(() => { try { scrim.remove(); sheet.remove(); } catch {} }, 220);
+  };
+  scrim.addEventListener('click', close);
+  grabber.addEventListener('click', close);
+  requestAnimationFrame(() => {
+    scrim.classList.add('ms-open');
+    sheet.classList.add('ms-open');
+  });
+  return { scrim, sheet, body, close, open: () => {} };
+}
+
+/* Filter bottom sheet */
+function openFilterSheet() {
+  const sheet = buildBottomSheet();
+  const h = document.createElement('h3');
+  h.textContent = 'Filter tasks';
+  sheet.body.appendChild(h);
+
+  const mkChips = (label, values, current, isMulti, onChange) => {
+    const sec = document.createElement('div'); sec.className = 'ms-section';
+    const lb = document.createElement('div'); lb.className = 'ms-section-label'; lb.textContent = label;
+    sec.appendChild(lb);
+    const wrap = document.createElement('div'); wrap.className = 'ms-chips';
+    const btns = [];
+    for (const v of values) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ms-chip';
+      b.textContent = v.label;
+      b.dataset.val = v.value;
+      const active = isMulti ? current.has(v.value) : current === v.value;
+      if (active) b.classList.add('active');
+      b.addEventListener('click', () => {
+        if (isMulti) {
+          const on = b.classList.toggle('active');
+          onChange(v.value, on);
+        } else {
+          btns.forEach(x => x.classList.remove('active'));
+          b.classList.add('active');
+          onChange(v.value);
+        }
+      });
+      btns.push(b);
+      wrap.appendChild(b);
+    }
+    sec.appendChild(wrap);
+    sheet.body.appendChild(sec);
+  };
+
+  // Assignee
+  const assigneeValues = [
+    { label: 'Me', value: 'me' },
+    { label: 'All', value: 'all' },
+    { label: 'Unassigned', value: 'unassigned' },
+  ];
+  mkChips('Show tasks assigned to', assigneeValues, currentAssigneeFilter, false, (v) => {
+    currentAssigneeFilter = v;
+    setUserHeader();
+    saveUserFilterState();
+    document.dispatchEvent(new CustomEvent('userToolbar:assignee', { detail: { assignee: v } }));
+  });
+
+  // Status
+  mkChips('Status', [
+    { label: 'Open', value: 'open' },
+    { label: 'In progress', value: 'in progress' },
+    { label: 'Complete', value: 'complete' },
+  ], currentUserStatusSet, true, (v, on) => {
+    if (on) currentUserStatusSet.add(v); else currentUserStatusSet.delete(v);
+    saveUserFilterState();
+    renderUserTasks();
+  });
+
+  // Priority
+  mkChips('Priority', [
+    { label: 'All', value: 'all' },
+    { label: 'High', value: 'high' },
+    { label: 'Medium', value: 'medium' },
+    { label: 'Low', value: 'low' },
+  ], currentUserPriorityFilter, false, (v) => {
+    currentUserPriorityFilter = v;
+    saveUserFilterState();
+    renderUserTasks();
+  });
+
+  // Sort
+  mkChips('Sort', [
+    { label: 'By location', value: 'none' },
+    { label: 'Priority high → low', value: 'pri-desc' },
+    { label: 'Priority low → high', value: 'pri-asc' },
+  ], currentUserSort, false, (v) => {
+    currentUserSort = v;
+    saveUserFilterState();
+    renderUserTasks();
+  });
+
+  const actions = document.createElement('div');
+  actions.className = 'ms-actions';
+  const clear = document.createElement('button');
+  clear.type = 'button'; clear.textContent = 'Clear all';
+  clear.addEventListener('click', () => {
+    currentUserStatusSet = new Set(['open','in progress','complete']);
+    currentUserPriorityFilter = 'all';
+    currentUserSort = 'none';
+    currentUserSearch = '';
+    saveUserFilterState();
+    document.dispatchEvent(new CustomEvent('userToolbar:hydrate', { detail: {
+      statuses: Array.from(currentUserStatusSet), priority: 'all', sort: 'none', search: '', assignee: currentAssigneeFilter
+    }}));
+    sheet.close();
+    renderUserTasks();
+  });
+  const done = document.createElement('button');
+  done.type = 'button'; done.textContent = 'Done'; done.className = 'primary';
+  done.addEventListener('click', () => sheet.close());
+  actions.appendChild(clear);
+  actions.appendChild(done);
+  sheet.body.appendChild(actions);
+}
+
+/* Overflow bottom sheet */
+function openOverflowSheet() {
+  const sheet = buildBottomSheet();
+  const h = document.createElement('h3');
+  h.textContent = 'Menu';
+  sheet.body.appendChild(h);
+
+  const list = document.createElement('ul');
+  list.className = 'ms-list';
+
+  const addItem = (label, handler) => {
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'ms-list-item';
+    btn.textContent = label;
+    btn.addEventListener('click', () => { sheet.close(); try { handler(); } catch (err) { console.error(err); } });
+    li.appendChild(btn);
+    list.appendChild(li);
+  };
+  const addDivider = () => {
+    const d = document.createElement('li');
+    const dd = document.createElement('div'); dd.className = 'ms-list-divider';
+    d.appendChild(dd); list.appendChild(d);
+  };
+
+  const currentTab = (function () {
+    if (document.getElementById('tab-table')?.classList.contains('active')) return 'table';
+    if (document.getElementById('tab-my')?.classList.contains('active')) return 'my';
+    if (document.getElementById('tab-updates')?.classList.contains('active')) return 'updates';
+    return '';
+  })();
+
+  if (currentTab !== 'my') addItem('My Tasks', () => showMainTab('my'));
+  if (currentTab !== 'table') addItem('Table view', () => showMainTab('table'));
+  if (currentTab !== 'updates') addItem('Updates', () => showMainTab('updates'));
+  addDivider();
+  addItem('Ward notes', () => {
+    const btn = document.getElementById('quick-ward-notes-btn');
+    if (btn) btn.click();
+  });
+
+  sheet.body.appendChild(list);
+}
+
+/* Mobile topbar wiring */
+function initMobileTopbar() {
+  document.body.classList.add('mobile-simplified');
+
+  const topbar = document.getElementById('mobile-topbar');
+  const searchBar = document.getElementById('mobile-search-bar');
+  const searchBtn = document.getElementById('mobile-search-btn');
+  const searchClose = document.getElementById('mobile-search-close');
+  const searchInput = document.getElementById('mobile-search-input');
+  const filterBtn = document.getElementById('mobile-filter-btn');
+  const overflowBtn = document.getElementById('mobile-overflow-btn');
+  const fab = document.getElementById('mobile-fab');
+
+  if (filterBtn) filterBtn.addEventListener('click', openFilterSheet);
+  if (overflowBtn) overflowBtn.addEventListener('click', openOverflowSheet);
+  if (fab) fab.addEventListener('click', () => {
+    const btn = document.getElementById('quick-new-case-btn');
+    if (btn) btn.click();
+  });
+  if (searchBtn) searchBtn.addEventListener('click', () => {
+    if (searchBar) { searchBar.hidden = false; }
+    if (searchInput) { searchInput.value = currentUserSearch || ''; searchInput.focus(); }
+  });
+  if (searchClose) searchClose.addEventListener('click', () => {
+    if (searchBar) searchBar.hidden = true;
+    if (searchInput) searchInput.value = '';
+    currentUserSearch = '';
+    saveUserFilterState();
+    renderUserTasks();
+  });
+  if (searchInput) searchInput.addEventListener('input', () => {
+    currentUserSearch = searchInput.value || '';
+    saveUserFilterState();
+    renderUserTasks();
+  });
+
+  refreshMobileTopbar();
+}
+
+function refreshMobileTopbar() {
+  if (!isMobileUserView()) {
+    const topbar = document.getElementById('mobile-topbar');
+    const fab = document.getElementById('mobile-fab');
+    if (topbar) topbar.hidden = true;
+    if (fab) fab.hidden = true;
+    document.body.classList.remove('mobile-simplified');
+    return;
+  }
+  document.body.classList.add('mobile-simplified');
+  const topbar = document.getElementById('mobile-topbar');
+  const titleEl = document.getElementById('mobile-topbar-title');
+  const searchBtn = document.getElementById('mobile-search-btn');
+  const filterBtn = document.getElementById('mobile-filter-btn');
+  const fab = document.getElementById('mobile-fab');
+  if (topbar) topbar.hidden = false;
+
+  const activeTab = document.getElementById('tab-table')?.classList.contains('active') ? 'table'
+    : document.getElementById('tab-my')?.classList.contains('active') ? 'my'
+    : document.getElementById('tab-updates')?.classList.contains('active') ? 'updates'
+    : 'my';
+
+  if (titleEl) {
+    if (activeTab === 'table') titleEl.textContent = 'Patients';
+    else if (activeTab === 'updates') titleEl.textContent = 'Updates';
+    else titleEl.textContent = 'My Tasks';
+  }
+  if (searchBtn) searchBtn.hidden = (activeTab !== 'my');
+  if (filterBtn) filterBtn.hidden = (activeTab !== 'my');
+  if (fab) fab.hidden = (activeTab !== 'table');
+
+  updateFilterPillBadge();
+}
+
+/* Coach marks — first-run teaching */
+const COACH_KEYS = { check: 'cm.check.v1', swipe: 'cm.swipe.v1', body: 'cm.body.v1' };
+function coachSeen(key) {
+  try { return localStorage.getItem(key) === '1'; } catch { return false; }
+}
+function markCoachSeen(key) {
+  try { localStorage.setItem(key, '1'); } catch {}
+}
+
+let coachActive = null;
+function dismissCoach(which) {
+  if (!coachActive) return;
+  if (which && coachActive.which !== which) return;
+  const { scrim, bubble, hl } = coachActive;
+  try { scrim.remove(); } catch {}
+  try { bubble.remove(); } catch {}
+  try { hl.remove(); } catch {}
+  markCoachSeen(COACH_KEYS[coachActive.which]);
+  coachActive = null;
+}
+function maybeRunCoachMarks() {
+  if (!isMobileUserView()) return;
+  if (coachActive) return;
+  // Wait a tick for layout
+  requestAnimationFrame(() => {
+    if (!coachSeen(COACH_KEYS.check)) {
+      const first = userTaskListEl.querySelector('.mt-row:not(.mt-pending) .mt-check');
+      if (first) showCoach('check', first, {
+        title: 'Tap to mark done',
+        body: 'Tap the circle to tick a task off your list.'
+      });
+    } else if (!coachSeen(COACH_KEYS.swipe)) {
+      const firstRow = userTaskListEl.querySelector('.mt-row:not(.mt-pending) .mt-row-content');
+      if (firstRow) showCoach('swipe', firstRow, {
+        title: 'Swipe for more',
+        body: 'Swipe a row left to mark it in progress.',
+        demo: 'swipe'
+      });
+    } else if (!coachSeen(COACH_KEYS.body)) {
+      const firstBody = userTaskListEl.querySelector('.mt-row:not(.mt-pending) .mt-body');
+      if (firstBody) showCoach('body', firstBody, {
+        title: 'Open the patient',
+        body: 'Tap a task to open the patient and see full notes.'
+      });
+    }
+  });
+}
+function showCoach(which, target, content) {
+  const root = document.getElementById('coach-mark-root') || document.body;
+  const scrim = document.createElement('div');
+  scrim.className = 'coach-scrim';
+  const bubble = document.createElement('div');
+  bubble.className = 'coach-bubble';
+  const t = document.createElement('div'); t.className = 'coach-title'; t.textContent = content.title;
+  const b = document.createElement('div'); b.className = 'coach-body'; b.textContent = content.body;
+  const btn = document.createElement('button');
+  btn.type = 'button'; btn.textContent = 'Got it';
+  bubble.appendChild(t); bubble.appendChild(b); bubble.appendChild(btn);
+  const hl = document.createElement('div');
+  hl.className = 'coach-highlight';
+  root.appendChild(scrim);
+  root.appendChild(hl);
+  root.appendChild(bubble);
+  const rect = target.getBoundingClientRect();
+  const pad = 6;
+  hl.style.left = `${Math.round(rect.left - pad)}px`;
+  hl.style.top = `${Math.round(rect.top - pad)}px`;
+  hl.style.width = `${Math.round(rect.width + pad * 2)}px`;
+  hl.style.height = `${Math.round(rect.height + pad * 2)}px`;
+  // Position bubble below the target if room, else above
+  const bubbleW = 280;
+  const bubbleH = 120;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  let bx = Math.max(12, Math.min(vw - bubbleW - 12, rect.left + rect.width / 2 - bubbleW / 2));
+  let by = rect.bottom + 14;
+  if (by + bubbleH > vh - 12) by = rect.top - bubbleH - 14;
+  bubble.style.left = `${bx}px`;
+  bubble.style.top = `${Math.max(12, by)}px`;
+  coachActive = { which, scrim, bubble, hl };
+  const dismissAll = () => dismissCoach(which);
+  btn.addEventListener('click', dismissAll);
+  scrim.addEventListener('click', dismissAll);
+}
+
+/* Bootstrap the mobile topbar once DOM is ready */
+(function bootstrapMobile() {
+  const run = () => {
+    try { initMobileTopbar(); } catch (err) { console.error('initMobileTopbar failed', err); }
+    window.addEventListener('resize', () => {
+      try { refreshMobileTopbar(); } catch {}
+      // Re-render the task list on viewport crossover
+      try { if (userTaskListEl && !userDetailEl.hidden) renderUserTasks(); } catch {}
+    });
+    // Refresh on tag updates so ward/bed names appear once loaded
+    document.addEventListener('tags:updated', () => { try { if (isMobileUserView() && userDetailEl && !userDetailEl.hidden) renderUserTasks(); } catch {} });
+    document.addEventListener('subtags:updated', () => { try { if (isMobileUserView() && userDetailEl && !userDetailEl.hidden) renderUserTasks(); } catch {} });
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', run, { once: true });
+  } else {
+    run();
+  }
+})();

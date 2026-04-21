@@ -53,6 +53,26 @@
     </div>
   </header>
   <main class="app">
+    <div id="mobile-topbar" class="mobile-topbar" hidden>
+      <h1 id="mobile-topbar-title" class="mobile-topbar-title">My Tasks</h1>
+      <div class="mobile-topbar-actions">
+        <button id="mobile-search-btn" class="mobile-topbar-icon" type="button" aria-label="Search tasks" hidden>
+          <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </button>
+        <button id="mobile-filter-btn" class="mobile-filter-pill" type="button" aria-label="Filter tasks" hidden>
+          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+          <span class="mobile-filter-label">Filter</span>
+          <span id="mobile-filter-count" class="mobile-filter-count" hidden>0</span>
+        </button>
+        <button id="mobile-overflow-btn" class="mobile-topbar-icon" type="button" aria-label="More options">
+          <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+        </button>
+      </div>
+    </div>
+    <div id="mobile-search-bar" class="mobile-search-bar" hidden>
+      <input id="mobile-search-input" type="search" placeholder="Search tasks" autocomplete="off">
+      <button id="mobile-search-close" class="icon-btn small" type="button" aria-label="Close search">Cancel</button>
+    </div>
     <div class="tabs-bar">
       <div id="main-tabs" class="tabs">
         <button id="tab-table" class="tab active" role="tab" aria-selected="true" aria-controls="table-section">Table</button>
@@ -212,6 +232,11 @@
     </section>
   </main>
   <div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="true"></div>
+  <button id="mobile-fab" class="mobile-fab" type="button" aria-label="New case" hidden>
+    <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+  </button>
+  <div id="mobile-sheet-root"></div>
+  <div id="coach-mark-root"></div>
   <script type="module" src="script.js?v=20260209"></script>
   <!-- React toolbar script omitted on static hosting (GH Pages) -->
 </body>
