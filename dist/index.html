@@ -8,8 +8,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=Sora:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <script type="module" crossorigin src="/catalist/assets/index-Cm0pMgq0.js"></script>
-  <link rel="stylesheet" crossorigin href="/catalist/assets/index-i-WA0kwq.css">
+  <script type="module" crossorigin src="/catalist/assets/index-jsFuogmh.js"></script>
+  <link rel="stylesheet" crossorigin href="/catalist/assets/index-C87frtnX.css">
 </head>
 <body>
   <header class="topbar">
@@ -103,90 +103,92 @@
       <h2 id="case-title" class="case-heading"></h2>
       <div id="case-header-actions" class="case-header-actions"></div>
       <div id="case-tag-chips" class="tag-chips" aria-label="Case tags"></div>
-      <div class="tabs" role="tablist" aria-label="Case sections">
-        <button id="tab-overview" class="tab active" role="tab" aria-controls="overview" aria-selected="true">Overview</button>
-        <button id="tab-wardnotes" class="tab" role="tab" aria-controls="ward-notes" aria-selected="false">Notes</button>
+
+      <div id="case-mobile-tabs" class="case-mobile-tabs" role="tablist" aria-label="Case sections">
+        <button class="case-mobile-tab active" data-panel="overview" type="button" role="tab" aria-selected="true">Overview</button>
+        <button class="case-mobile-tab" data-panel="tasks" type="button" role="tab" aria-selected="false">Tasks</button>
+        <button class="case-mobile-tab" data-panel="wardnotes" type="button" role="tab" aria-selected="false">Notes</button>
       </div>
 
-      <div id="case-panels">
-      <section id="overview" role="tabpanel" aria-labelledby="tab-overview">
-        <div class="overview-grid">
-        <section id="tasks" aria-label="Tasks">
-        <div id="task-toolbar-root" style="margin-bottom: 8px"></div>
-        <form id="task-form" class="composer" autocomplete="off">
-          <button type="button" class="icon-btn" aria-hidden="true" tabindex="-1">+</button>
-          <input id="task-input" placeholder="Add a task…" aria-label="Task description">
-          <button type="submit" class="primary" aria-label="Add task">Add</button>
-        </form>
-        <div id="composer-opts" class="composer-opts" hidden>
-          <label>
-            Assignee
-            <select id="task-assignee" class="assignee-select">
-              <option value="">Unassigned (team)</option>
-            </select>
-          </label>
-          <label>
-            Priority
-            <select id="task-priority">
-              <option value="">None</option>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
-          </label>
-        </div>
-        <ul id="task-list"></ul>
-        </section>
-
-        <section id="notes" aria-label="Overview notes">
-        <div class="stack" id="af-fields">
-          <div class="notes" aria-label="Notes A to E">
-            <div class="note-row">
-              <div class="note-label">Dx</div>
-              <div class="note-content">
-                <div id="notes-A-items" class="note-items" aria-label="Dx items"></div>
-                <button type="button" class="icon-btn small add-note-item" data-letter="A" aria-label="Add Dx header">+ Add header</button>
+      <div id="case-panels" class="case-panels">
+        <section id="notes" class="case-panel" data-panel="overview" aria-label="Overview notes">
+          <div class="stack" id="af-fields">
+            <div class="notes" aria-label="Notes A to E">
+              <div class="note-row">
+                <div class="note-label">Dx</div>
+                <div class="note-content">
+                  <div id="notes-A-items" class="note-items" aria-label="Dx items"></div>
+                  <button type="button" class="icon-btn small add-note-item" data-letter="A" aria-label="Add Dx header">+ Add header</button>
+                </div>
               </div>
-            </div>
-            <div class="note-row">
-              <div class="note-label">Hx</div>
-              <div class="note-content">
-                <div id="notes-B-items" class="note-items" aria-label="Hx items"></div>
-                <button type="button" class="icon-btn small add-note-item" data-letter="B" aria-label="Add Hx header">+ Add header</button>
+              <div class="note-row">
+                <div class="note-label">Hx</div>
+                <div class="note-content">
+                  <div id="notes-B-items" class="note-items" aria-label="Hx items"></div>
+                  <button type="button" class="icon-btn small add-note-item" data-letter="B" aria-label="Add Hx header">+ Add header</button>
+                </div>
               </div>
-            </div>
-            <div class="note-row">
-              <div class="note-label">Meds</div>
-              <div class="note-content">
-                <div id="notes-C-items" class="note-items" aria-label="Meds items"></div>
-                <button type="button" class="icon-btn small add-note-item" data-letter="C" aria-label="Add Meds header">+ Add header</button>
+              <div class="note-row">
+                <div class="note-label">Meds</div>
+                <div class="note-content">
+                  <div id="notes-C-items" class="note-items" aria-label="Meds items"></div>
+                  <button type="button" class="icon-btn small add-note-item" data-letter="C" aria-label="Add Meds header">+ Add header</button>
+                </div>
               </div>
-            </div>
-            <div class="note-row">
-              <div class="note-label">Ix</div>
-              <div class="note-content">
-                <div id="notes-D-items" class="note-items" aria-label="Ix items"></div>
-                <button type="button" class="icon-btn small add-note-item" data-letter="D" aria-label="Add Ix header">+ Add header</button>
+              <div class="note-row">
+                <div class="note-label">Ix</div>
+                <div class="note-content">
+                  <div id="notes-D-items" class="note-items" aria-label="Ix items"></div>
+                  <button type="button" class="icon-btn small add-note-item" data-letter="D" aria-label="Add Ix header">+ Add header</button>
+                </div>
               </div>
-            </div>
-            <div class="note-row">
-              <div class="note-label">Issues</div>
-              <div class="note-content">
-                <div id="notes-E-items" class="note-items" aria-label="Issues items"></div>
-                <button type="button" class="icon-btn small add-note-item" data-letter="E" aria-label="Add Issues header">+ Add header</button>
+              <div class="note-row">
+                <div class="note-label">Issues</div>
+                <div class="note-content">
+                  <div id="notes-E-items" class="note-items" aria-label="Issues items"></div>
+                  <button type="button" class="icon-btn small add-note-item" data-letter="E" aria-label="Add Issues header">+ Add header</button>
+                </div>
               </div>
             </div>
           </div>
-          
-        </div>
         </section>
-        </div>
-      </section>
 
-      <section id="ward-notes" role="tabpanel" aria-labelledby="tab-wardnotes" hidden>
-        <ul id="ward-notes-list" class="ward-notes-list" aria-live="polite" role="list"></ul>
-      </section>
+        <section id="tasks" class="case-panel" data-panel="tasks" aria-label="Tasks">
+          <div id="task-toolbar-root" style="margin-bottom: 8px"></div>
+          <form id="task-form" class="composer" autocomplete="off">
+            <button type="button" class="icon-btn" aria-hidden="true" tabindex="-1">+</button>
+            <input id="task-input" placeholder="Add a task…" aria-label="Task description">
+            <button type="submit" class="primary" aria-label="Add task">Add</button>
+          </form>
+          <div id="composer-opts" class="composer-opts" hidden>
+            <label>
+              Assignee
+              <select id="task-assignee" class="assignee-select">
+                <option value="">Unassigned (team)</option>
+              </select>
+            </label>
+            <label>
+              Priority
+              <select id="task-priority">
+                <option value="">None</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+          </div>
+          <ul id="task-list"></ul>
+        </section>
+
+        <section id="ward-notes" class="case-panel case-panel--drawer" data-panel="wardnotes" aria-label="Ward notes">
+          <div class="case-drawer-header">
+            <h3 class="case-drawer-title">Ward Notes</h3>
+            <button id="ward-notes-close" class="icon-btn small case-drawer-close" type="button" aria-label="Close ward notes">✕</button>
+          </div>
+          <ul id="ward-notes-list" class="ward-notes-list" aria-live="polite" role="list"></ul>
+        </section>
       </div>
+      <div id="ward-notes-scrim" class="ward-notes-scrim" hidden></div>
     </section>
 
     <section id="user-detail" class="card" hidden>

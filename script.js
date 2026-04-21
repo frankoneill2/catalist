@@ -737,6 +737,8 @@ function showCaseList() {
   currentCaseId = null;
   if (unsubTasks) { unsubTasks(); unsubTasks = null; }
   if (unsubNotes) { unsubNotes(); unsubNotes = null; }
+  if (unsubWardNotes) { try { unsubWardNotes(); } catch {} unsubWardNotes = null; }
+  if (typeof closeWardNotesDrawer === 'function') closeWardNotesDrawer();
   compactOrderByCase = new Map();
 }
 
@@ -3694,32 +3696,144 @@ function renderNotesSection(container, letter, items) {
   render();
 }
 
-// --- Form bindings
-function showCaseSection(which) {
-  const isOverview = which === 'overview';
-  if (tabOverviewBtn) {
-    tabOverviewBtn.classList.toggle('active', isOverview);
-    tabOverviewBtn.setAttribute('aria-selected', String(isOverview));
+// --- Case panels: desktop two-column + ward-notes drawer; mobile scroll-snap tabs
+function isDesktopCaseLayout() {
+  return window.matchMedia('(min-width: 900px)').matches;
+}
+
+function openWardNotesDrawer() {
+  document.body.classList.add('ward-notes-drawer-open');
+  const toggle = document.getElementById('ward-notes-drawer-toggle');
+  if (toggle) {
+    toggle.setAttribute('aria-expanded', 'true');
+    toggle.textContent = 'Hide Notes';
   }
-  if (tabWardNotesBtn) {
-    tabWardNotesBtn.classList.toggle('active', !isOverview);
-    tabWardNotesBtn.setAttribute('aria-selected', String(!isOverview));
-  }
-  const overview = document.getElementById('overview');
-  const wardNotes = document.getElementById('ward-notes');
-  if (overview) overview.hidden = !isOverview;
-  if (wardNotes) wardNotes.hidden = isOverview;
-  if (!isOverview) {
-    if (!unsubWardNotes) startRealtimeWardNotes();
-  } else {
-    if (unsubWardNotes) { try { unsubWardNotes(); } catch {} unsubWardNotes = null; }
-    if (overview) overview.querySelectorAll('textarea.auto-grow').forEach(autoResizeTextarea);
+  if (!unsubWardNotes) startRealtimeWardNotes();
+}
+
+function closeWardNotesDrawer() {
+  document.body.classList.remove('ward-notes-drawer-open');
+  const toggle = document.getElementById('ward-notes-drawer-toggle');
+  if (toggle) {
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.textContent = 'Ward Notes';
   }
 }
 
+function toggleWardNotesDrawer() {
+  if (document.body.classList.contains('ward-notes-drawer-open')) closeWardNotesDrawer();
+  else openWardNotesDrawer();
+}
+
+// Mobile scroll-snap panels
+let _caseMobileObserver = null;
+function setActiveMobileTab(name) {
+  const tabs = document.querySelectorAll('.case-mobile-tab');
+  tabs.forEach(b => {
+    const active = b.dataset.panel === name;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-selected', String(active));
+  });
+}
+function scrollToMobilePanel(name, behavior = 'smooth') {
+  const panels = document.getElementById('case-panels');
+  if (!panels) return;
+  const target = panels.querySelector(`.case-panel[data-panel="${name}"]`);
+  if (!target) return;
+  panels.scrollTo({ left: target.offsetLeft, top: 0, behavior });
+  setActiveMobileTab(name);
+  if (name === 'wardnotes' && !unsubWardNotes) startRealtimeWardNotes();
+}
+function bindCaseMobileTabs() {
+  const panels = document.getElementById('case-panels');
+  if (!panels) return;
+  document.querySelectorAll('.case-mobile-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      scrollToMobilePanel(btn.dataset.panel);
+    });
+  });
+  // Sync active tab via scroll position (IntersectionObserver)
+  if (_caseMobileObserver) { try { _caseMobileObserver.disconnect(); } catch {} }
+  _caseMobileObserver = new IntersectionObserver((entries) => {
+    if (!isDesktopCaseLayout()) {
+      // Pick the most visible panel
+      let best = null; let bestRatio = 0;
+      for (const e of entries) {
+        if (e.intersectionRatio > bestRatio) { best = e.target; bestRatio = e.intersectionRatio; }
+      }
+      if (best && best.dataset && best.dataset.panel) {
+        setActiveMobileTab(best.dataset.panel);
+        if (best.dataset.panel === 'wardnotes' && !unsubWardNotes) startRealtimeWardNotes();
+      }
+    }
+  }, { root: panels, threshold: [0.25, 0.5, 0.75] });
+  panels.querySelectorAll('.case-panel').forEach(p => _caseMobileObserver.observe(p));
+}
+
+// Injected on first binding (desktop drawer toggle button lives in #case-header-actions)
+function ensureWardNotesDrawerToggle() {
+  const wrap = document.getElementById('case-header-actions');
+  if (!wrap || document.getElementById('ward-notes-drawer-toggle')) return;
+  const btn = document.createElement('button');
+  btn.id = 'ward-notes-drawer-toggle';
+  btn.className = 'btn';
+  btn.type = 'button';
+  btn.textContent = 'Ward Notes';
+  btn.setAttribute('aria-haspopup', 'dialog');
+  btn.setAttribute('aria-expanded', 'false');
+  btn.addEventListener('click', toggleWardNotesDrawer);
+  // Insert before the overflow (⋯) button if present, else append
+  const overflow = document.getElementById('case-overflow-btn');
+  if (overflow) wrap.insertBefore(btn, overflow); else wrap.appendChild(btn);
+}
+
+// Compatibility shim: older call sites that reset to Overview still work.
+function showCaseSection(which) {
+  if (which === 'ward-notes') {
+    if (isDesktopCaseLayout()) openWardNotesDrawer();
+    else scrollToMobilePanel('wardnotes', 'auto');
+    return;
+  }
+  // Default: reset to Overview
+  if (isDesktopCaseLayout()) {
+    closeWardNotesDrawer();
+  } else {
+    scrollToMobilePanel('overview', 'auto');
+  }
+  document.querySelectorAll('textarea.auto-grow').forEach(autoResizeTextarea);
+}
+
 function bindCaseTabs() {
-  if (tabOverviewBtn) tabOverviewBtn.addEventListener('click', () => showCaseSection('overview'));
-  if (tabWardNotesBtn) tabWardNotesBtn.addEventListener('click', () => showCaseSection('ward-notes'));
+  ensureWardNotesDrawerToggle();
+  bindCaseMobileTabs();
+  // Scrim + close + Esc close the drawer on desktop
+  const scrim = document.getElementById('ward-notes-scrim');
+  if (scrim && !scrim.dataset.bound) {
+    scrim.dataset.bound = '1';
+    scrim.addEventListener('click', closeWardNotesDrawer);
+  }
+  const closeBtn = document.getElementById('ward-notes-close');
+  if (closeBtn && !closeBtn.dataset.bound) {
+    closeBtn.dataset.bound = '1';
+    closeBtn.addEventListener('click', closeWardNotesDrawer);
+  }
+  if (!window.__wardNotesEscBound) {
+    window.__wardNotesEscBound = true;
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && document.body.classList.contains('ward-notes-drawer-open')) {
+        closeWardNotesDrawer();
+      }
+    });
+  }
+  // Re-evaluate layout on resize: close drawer if shrinking to mobile
+  if (!window.__wardNotesResizeBound) {
+    window.__wardNotesResizeBound = true;
+    window.addEventListener('resize', () => {
+      if (!isDesktopCaseLayout() && document.body.classList.contains('ward-notes-drawer-open')) {
+        closeWardNotesDrawer();
+      }
+    }, { passive: true });
+  }
 }
 
 function renderWardNoteBody(container, body) {
@@ -5279,8 +5393,9 @@ window.addEventListener('DOMContentLoaded', async () => {
   colDBody = document.getElementById('colD-body');
   colEBody = document.getElementById('colE-body');
   // Notes embedded tasks removed
-  tabOverviewBtn = document.getElementById('tab-overview');
-  tabWardNotesBtn = document.getElementById('tab-wardnotes');
+  // Legacy case-detail tab buttons were replaced by mobile tabs + desktop drawer.
+  tabOverviewBtn = null;
+  tabWardNotesBtn = null;
   wardNotesSection = document.getElementById('ward-notes');
   wardNotesListEl = document.getElementById('ward-notes-list');
   newWardNoteBtn = document.getElementById('new-ward-note');

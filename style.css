@@ -94,13 +94,164 @@ ul {
   border: 1px solid #e5e7eb;
 }
 
-/* Overview layout: notes and tasks side by side on desktop */
-.overview-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+/* ----- Case panels: two-column desktop + ward-notes drawer; mobile scroll-snap ----- */
+
+/* Mobile tab bar (hidden on desktop) */
+.case-mobile-tabs {
+  display: none;
+  position: sticky;
+  top: var(--table-sticky-offset, 56px);
+  z-index: 6;
+  background: #fff;
+  padding: 6px 0;
+  margin: 0 0 10px;
+  gap: 4px;
+  border-bottom: 1px solid var(--border-soft, #e5e7eb);
+}
+.case-mobile-tab {
+  flex: 1 1 0;
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--muted, #64748b);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.case-mobile-tab:hover { background: var(--surface-hover, #f1f5f9); color: var(--text, #0f172a); }
+.case-mobile-tab.active {
+  background: var(--text, #0f172a);
+  color: #fff;
+  border-color: var(--text, #0f172a);
+}
+
+/* Desktop: 2-column grid for overview + tasks; ward-notes becomes a drawer */
+.case-panels { display: grid; grid-template-columns: 1fr; gap: 12px; }
 @media (min-width: 900px) {
-  .overview-grid { grid-template-columns: 1fr 1fr; align-items: start; }
-  /* Keep Tasks on the right, Notes on the left */
-  .overview-grid #notes { order: 1; }
-  .overview-grid #tasks { order: 2; }
+  .case-panels {
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+  }
+  .case-panels #notes { grid-column: 1; }
+  .case-panels #tasks { grid-column: 2; }
+
+  /* Ward notes becomes a right-side drawer */
+  .case-panels #ward-notes.case-panel--drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    height: 100dvh;
+    width: min(560px, 92vw);
+    background: #fff;
+    border-left: 1px solid var(--border-soft, #e5e7eb);
+    box-shadow: -16px 0 40px rgba(15, 23, 42, 0.18);
+    z-index: 40;
+    transform: translateX(100%);
+    transition: transform 240ms cubic-bezier(0.22, 0.8, 0.36, 1);
+    display: flex;
+    flex-direction: column;
+    padding: 12px 16px 16px;
+    overflow: hidden;
+  }
+  body.ward-notes-drawer-open .case-panels #ward-notes.case-panel--drawer {
+    transform: translateX(0);
+  }
+  .case-drawer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-soft, #e5e7eb);
+    margin-bottom: 10px;
+  }
+  .case-drawer-title {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--text, #0f172a);
+  }
+  .case-drawer-close {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    font-size: 14px;
+  }
+  .case-panels #ward-notes .ward-notes-list {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+  .ward-notes-scrim {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.32);
+    z-index: 39;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms ease;
+  }
+  body.ward-notes-drawer-open .ward-notes-scrim {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* Mobile (<900px): scroll-snap horizontal panels, three tabs */
+@media (max-width: 899.98px) {
+  .case-mobile-tabs { display: flex; }
+  /* Desktop drawer toggle button is hidden on mobile (tabs handle it) */
+  #ward-notes-drawer-toggle { display: none !important; }
+
+  .case-panels {
+    display: flex;
+    grid-template-columns: none;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: visible;
+    scroll-snap-type: x mandatory;
+    scroll-behavior: smooth;
+    gap: 0;
+    /* Break out of card padding so each panel fills viewport width */
+    margin-inline: calc(-1 * var(--case-card-padding, 10px));
+    padding-inline: 0;
+    /* Hide horizontal scrollbar */
+    scrollbar-width: none;
+  }
+  .case-panels::-webkit-scrollbar { display: none; }
+  .case-panel {
+    flex: 0 0 100%;
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+    min-width: 0;
+    padding-inline: var(--case-card-padding, 10px);
+    /* Allow each panel to grow with its content */
+    align-self: start;
+  }
+  /* Drawer styles don't apply on mobile; ward-notes is just a panel */
+  .case-panels #ward-notes.case-panel--drawer {
+    position: static;
+    transform: none;
+    box-shadow: none;
+    border-left: none;
+    padding: 0 var(--case-card-padding, 10px);
+    background: transparent;
+    height: auto;
+    width: auto;
+    display: block;
+  }
+  .case-drawer-header { display: none; }
+  .ward-notes-scrim { display: none !important; }
 }
 
 /* Ward Notes tab */
@@ -1551,23 +1702,11 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
 
 /* Print header inside print window */
 .print-header { font-size: 12px; color: #111827; margin: 8px 0 6px; padding-bottom: 4px; border-bottom: 1px solid #e5e7eb; }
-#case-detail .tabs {
-  position: sticky;
-  top: 56px; /* below sticky topbar */
-  z-index: 6;
-  background: #fff;
-  padding-top: 4px;
-  /* Full-width segmented control with two equal columns */
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  width: 100%;
-  margin: 0 auto;
-}
+/* Case-detail legacy .tabs removed — replaced by .case-mobile-tabs (mobile) and drawer (desktop) */
+#case-detail .tabs { display: none; }
 
-/* Desktop: two-column layout and visible tabs */
+/* Desktop: two-column layout */
 @media (min-width: 900px) {
-  /* Keep tabs visible on desktop */
-  #case-detail .tabs { display: grid; }
   /* Compact case card and headings */
   #case-detail.card { padding: 8px 10px; }
   #case-detail .case-heading { margin: 2px 0 8px; }
@@ -1628,9 +1767,9 @@ body.print-mode #table-section .assignee-panel { display: none !important; }
   font-size: 0.95rem; /* slightly denser document feel */
 }
 
-/* In Overview, let Notes expand to the full column width */
+/* In the case panels, let the structured Notes stack expand to the full column width */
 @media (min-width: 900px) {
-  .overview-grid .notes { max-width: none; margin: 0; }
+  .case-panels #notes .notes { max-width: none; margin: 0; }
 }
 
 .note-row {
