@@ -66,6 +66,7 @@ let updatesSearch = '';
 // Keep the last cases snapshot docs for instant client-side filtering/sorting
 let lastCasesDocs = null; // Array of document snapshots
 let renderTableFromDocs = null; // function(docsArray)
+let pagerState = null; // { sequence: [{id, title}], index } — mobile Table pager
 let tableTaskUnsubs = new Map(); // per-case tasks listeners in table
 let pendingDischargeCaseIds = new Set(); // keep discharged rows in active table until navigation/refresh
 let showDischargedCases = false;
@@ -2291,6 +2292,12 @@ function startRealtimeTable() {
       }
       for (const id of locIds) loadSubtagsFor(id);
     } catch {}
+
+    // Mobile: delegate to the list view and skip the desktop table build entirely
+    if (typeof isMobileTableView === 'function' && isMobileTableView()) {
+      try { await renderTableMobileList(docs); } catch (err) { console.error('mobile table render failed', err); }
+      return;
+    }
 
     const presentTaskListeners = new Set();
     let visibleCases = 0;
@@ -7491,6 +7498,10 @@ function initMobileTopbar() {
     const btn = document.getElementById('quick-new-case-btn');
     if (btn) btn.click();
   });
+  const backBtn = document.getElementById('mobile-topbar-back');
+  if (backBtn) backBtn.addEventListener('click', () => {
+    if (pagerState) closeMobileCasePager();
+  });
   if (searchBtn) searchBtn.addEventListener('click', () => {
     if (searchBar) { searchBar.hidden = false; }
     if (searchInput) { searchInput.value = currentUserSearch || ''; searchInput.focus(); }
@@ -7518,6 +7529,7 @@ function refreshMobileTopbar() {
     if (topbar) topbar.hidden = true;
     if (fab) fab.hidden = true;
     document.body.classList.remove('mobile-simplified');
+    document.body.classList.remove('mobile-pager');
     return;
   }
   document.body.classList.add('mobile-simplified');
@@ -7526,7 +7538,30 @@ function refreshMobileTopbar() {
   const searchBtn = document.getElementById('mobile-search-btn');
   const filterBtn = document.getElementById('mobile-filter-btn');
   const fab = document.getElementById('mobile-fab');
+  const backBtn = document.getElementById('mobile-topbar-back');
+  const counterEl = document.getElementById('mobile-topbar-counter');
   if (topbar) topbar.hidden = false;
+
+  // Pager mode — back arrow, patient name, position counter
+  if (pagerState && document.body.classList.contains('mobile-pager')) {
+    if (backBtn) backBtn.hidden = false;
+    if (counterEl) {
+      counterEl.hidden = false;
+      counterEl.textContent = `${pagerState.index + 1}/${pagerState.sequence.length}`;
+    }
+    if (titleEl) {
+      const t = (caseTitleEl && caseTitleEl.textContent) ? caseTitleEl.textContent : 'Patient';
+      titleEl.textContent = t;
+    }
+    if (searchBtn) searchBtn.hidden = true;
+    if (filterBtn) filterBtn.hidden = true;
+    if (fab) fab.hidden = true;
+    updateFilterPillBadge();
+    return;
+  }
+
+  if (backBtn) backBtn.hidden = true;
+  if (counterEl) counterEl.hidden = true;
 
   const activeTab = document.getElementById('tab-table')?.classList.contains('active') ? 'table'
     : document.getElementById('tab-my')?.classList.contains('active') ? 'my'
@@ -7636,12 +7671,21 @@ function showCoach(which, target, content) {
     try { initMobileTopbar(); } catch (err) { console.error('initMobileTopbar failed', err); }
     window.addEventListener('resize', () => {
       try { refreshMobileTopbar(); } catch {}
-      // Re-render the task list on viewport crossover
       try { if (userTaskListEl && !userDetailEl.hidden) renderUserTasks(); } catch {}
+      try {
+        if (tableSection && !tableSection.hidden && typeof renderTableFromDocs === 'function' && lastCasesDocs) {
+          renderTableFromDocs(lastCasesDocs);
+        }
+      } catch {}
     });
-    // Refresh on tag updates so ward/bed names appear once loaded
-    document.addEventListener('tags:updated', () => { try { if (isMobileUserView() && userDetailEl && !userDetailEl.hidden) renderUserTasks(); } catch {} });
-    document.addEventListener('subtags:updated', () => { try { if (isMobileUserView() && userDetailEl && !userDetailEl.hidden) renderUserTasks(); } catch {} });
+    document.addEventListener('tags:updated', () => {
+      try { if (isMobileUserView() && userDetailEl && !userDetailEl.hidden) renderUserTasks(); } catch {}
+      try { if (isMobileTableView() && tableSection && !tableSection.hidden && lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs); } catch {}
+    });
+    document.addEventListener('subtags:updated', () => {
+      try { if (isMobileUserView() && userDetailEl && !userDetailEl.hidden) renderUserTasks(); } catch {}
+      try { if (isMobileTableView() && tableSection && !tableSection.hidden && lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs); } catch {}
+    });
   };
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', run, { once: true });
@@ -7649,3 +7693,253 @@ function showCoach(which, target, content) {
     run();
   }
 })();
+
+/* ================== Mobile Table view: list + pager ================== */
+
+function isMobileTableView() {
+  if (!isMobileUserView()) return false;
+  const tab = document.getElementById('tab-table');
+  return !!(tab && tab.classList.contains('active'));
+}
+
+async function renderTableMobileList(docs) {
+  const container = document.getElementById('mobile-table-list');
+  if (!container) return;
+  container.hidden = false;
+  container.innerHTML = '';
+
+  // Decrypt titles and filter
+  const rows = [];
+  for (const d of docs) {
+    const data = d.data();
+    if (!caseMatchesTagFilters(data.caseTags || {})) continue;
+    const isDischarged = isCaseDischarged(data);
+    const pendingDischarge = pendingDischargeCaseIds && pendingDischargeCaseIds.has(d.id);
+    const renderAsDischarged = isDischarged && !pendingDischarge;
+    if (renderAsDischarged && !showDischargedCases) continue;
+    let title = '';
+    try { title = await decryptText(data.titleCipher, data.titleIv); } catch {}
+    if (!title || !title.trim()) continue;
+    rows.push({ id: d.id, title, tags: data.caseTags || {}, discharged: renderAsDischarged });
+  }
+
+  if (!rows.length) {
+    container.appendChild(renderMobileTableEmptyState());
+    return;
+  }
+
+  // Group by ward
+  const byWard = new Map();
+  for (const r of rows) {
+    const key = r.tags.location || '';
+    if (!byWard.has(key)) byWard.set(key, []);
+    byWard.get(key).push(r);
+  }
+  const wardKeys = Array.from(byWard.keys()).sort((a, b) => {
+    const ka = mtWardSortKey(a), kb = mtWardSortKey(b);
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
+
+  for (const wardKey of wardKeys) {
+    const entries = byWard.get(wardKey) || [];
+    entries.sort((a, b) => {
+      const ka = mtBedSortKey(a.tags.location, a.tags.room);
+      const kb = mtBedSortKey(b.tags.location, b.tags.room);
+      if (ka !== kb) return ka < kb ? -1 : 1;
+      const ta = a.title.toLowerCase(), tb = b.title.toLowerCase();
+      return ta < tb ? -1 : ta > tb ? 1 : 0;
+    });
+    const wname = wardKey ? (mtWardName(wardKey) || 'Ward') : 'No location';
+    const sec = buildMobileSection('ward', wname, entries.length);
+    const body = sec.querySelector('.mt-section-body');
+    for (const r of entries) body.appendChild(buildMobileTableRow(r));
+    container.appendChild(sec);
+  }
+}
+
+function buildMobileTableRow(r) {
+  const row = document.createElement('div');
+  row.className = 'mt-row mt-table-row';
+  row.dataset.caseId = r.id;
+  if (r.discharged) row.classList.add('mt-table-row--discharged');
+
+  const content = document.createElement('div');
+  content.className = 'mt-row-content';
+
+  const body = document.createElement('div');
+  body.className = 'mt-body';
+
+  const line1 = document.createElement('div');
+  line1.className = 'mt-table-title';
+  const bed = mtBedName(r.tags.location, r.tags.room);
+  const bedSpan = document.createElement('span');
+  bedSpan.className = 'mt-table-bed';
+  bedSpan.textContent = bed || '—';
+  const nameSpan = document.createElement('span');
+  nameSpan.className = 'mt-table-name';
+  nameSpan.textContent = r.title;
+  line1.appendChild(bedSpan);
+  line1.appendChild(document.createTextNode(' · '));
+  line1.appendChild(nameSpan);
+  body.appendChild(line1);
+
+  // Consultant on line 2
+  let consultantName = '';
+  if (r.tags.consultant) {
+    try {
+      const arr = tagsByType.get('consultant') || [];
+      const t = arr.find(x => x.id === r.tags.consultant);
+      consultantName = (t && t.name) || '';
+    } catch {}
+  }
+  if (consultantName) {
+    const line2 = document.createElement('div');
+    line2.className = 'mt-meta';
+    line2.textContent = consultantName;
+    body.appendChild(line2);
+  }
+
+  content.appendChild(body);
+  row.appendChild(content);
+
+  row.addEventListener('click', () => {
+    openMobileCasePager(r.id, r.title);
+  });
+  return row;
+}
+
+function renderMobileTableEmptyState() {
+  const wrap = document.createElement('div');
+  wrap.className = 'mt-empty';
+  const t = document.createElement('div'); t.className = 'mt-empty-title'; t.textContent = 'No patients';
+  const b = document.createElement('div'); b.className = 'mt-empty-body'; b.textContent = 'Tap the + button to add a case.';
+  wrap.appendChild(t); wrap.appendChild(b);
+  return wrap;
+}
+
+/* ---- pager ---- */
+
+function openMobileCasePager(caseId, title) {
+  // Build the sequence from the currently-rendered list DOM (preserves filter+sort order the user just saw)
+  const sequence = [];
+  const list = document.getElementById('mobile-table-list');
+  if (list) {
+    list.querySelectorAll('.mt-table-row').forEach(row => {
+      const id = row.dataset.caseId;
+      const nameEl = row.querySelector('.mt-table-name');
+      const name = nameEl ? nameEl.textContent : '';
+      if (id) sequence.push({ id, title: name });
+    });
+  }
+  let index = sequence.findIndex(s => s.id === caseId);
+  if (index === -1) {
+    sequence.unshift({ id: caseId, title: title || '' });
+    index = 0;
+  }
+  pagerState = { sequence, index };
+  document.body.classList.add('mobile-pager');
+  try { openCase(caseId, title || sequence[index].title || '', 'table', 'overview'); } catch (err) { console.error('openCase failed', err); }
+  attachPagerSwipeHandlers();
+  refreshMobileTopbar();
+}
+
+function closeMobileCasePager() {
+  detachPagerSwipeHandlers();
+  document.body.classList.remove('mobile-pager');
+  pagerState = null;
+  try { showMainTab('table'); } catch {}
+  refreshMobileTopbar();
+}
+
+async function advanceMobilePager(delta) {
+  if (!pagerState) return;
+  const next = pagerState.index + delta;
+  if (next < 0 || next >= pagerState.sequence.length) {
+    // Bounce feedback
+    const el = document.getElementById('case-detail');
+    if (el) {
+      el.style.transition = 'transform 180ms ease';
+      el.style.transform = `translateX(${delta < 0 ? 24 : -24}px)`;
+      setTimeout(() => { if (el) { el.style.transform = ''; } }, 180);
+      setTimeout(() => { if (el) el.style.transition = ''; }, 360);
+    }
+    return;
+  }
+  pagerState.index = next;
+  const target = pagerState.sequence[next];
+  try { openCase(target.id, target.title || '', 'table', 'overview'); } catch (err) { console.error('openCase failed', err); }
+  refreshMobileTopbar();
+}
+
+/* swipe gesture */
+let pagerTouch = null;
+function onPagerTouchStart(e) {
+  if (!pagerState) return;
+  const t = e.touches && e.touches[0];
+  if (!t) return;
+  const target = e.target;
+  if (target && target.closest && target.closest('input, textarea, .cell-editable, .cell-title, .cell-body-panel, .composer, select, button, a, [contenteditable="true"]')) {
+    pagerTouch = null;
+    return;
+  }
+  pagerTouch = { x: t.clientX, y: t.clientY, startX: t.clientX, claimed: false };
+}
+function onPagerTouchMove(e) {
+  if (!pagerTouch) return;
+  const t = e.touches && e.touches[0];
+  if (!t) return;
+  const dx = t.clientX - pagerTouch.x;
+  const dy = t.clientY - pagerTouch.y;
+  if (!pagerTouch.claimed) {
+    if (Math.abs(dy) > 10) { pagerTouch = null; return; }
+    if (Math.abs(dx) > 16) pagerTouch.claimed = true;
+  }
+  if (pagerTouch.claimed) {
+    if (e.cancelable) e.preventDefault();
+    const el = document.getElementById('case-detail');
+    if (el) el.style.transform = `translateX(${dx}px)`;
+  }
+}
+function onPagerTouchEnd(e) {
+  if (!pagerTouch) return;
+  const t = (e.changedTouches && e.changedTouches[0]) || null;
+  const el = document.getElementById('case-detail');
+  const claimed = pagerTouch.claimed;
+  const startX = pagerTouch.startX;
+  pagerTouch = null;
+  if (!el) return;
+  if (!claimed) { el.style.transform = ''; return; }
+  const dx = t ? (t.clientX - startX) : 0;
+  if (Math.abs(dx) > 70) {
+    // Commit paginate
+    const delta = dx < 0 ? 1 : -1;
+    el.style.transition = 'transform 180ms ease';
+    el.style.transform = `translateX(${delta < 0 ? '100%' : '-100%'})`;
+    setTimeout(() => {
+      if (el) { el.style.transform = ''; el.style.transition = ''; }
+      advanceMobilePager(delta);
+    }, 190);
+  } else {
+    el.style.transition = 'transform 180ms ease';
+    el.style.transform = '';
+    setTimeout(() => { if (el) el.style.transition = ''; }, 220);
+  }
+}
+function attachPagerSwipeHandlers() {
+  const el = document.getElementById('case-detail');
+  if (!el) return;
+  el.addEventListener('touchstart', onPagerTouchStart, { passive: true });
+  el.addEventListener('touchmove', onPagerTouchMove, { passive: false });
+  el.addEventListener('touchend', onPagerTouchEnd, { passive: true });
+  el.addEventListener('touchcancel', onPagerTouchEnd, { passive: true });
+}
+function detachPagerSwipeHandlers() {
+  const el = document.getElementById('case-detail');
+  if (!el) return;
+  el.removeEventListener('touchstart', onPagerTouchStart);
+  el.removeEventListener('touchmove', onPagerTouchMove);
+  el.removeEventListener('touchend', onPagerTouchEnd);
+  el.removeEventListener('touchcancel', onPagerTouchEnd);
+  el.style.transform = '';
+  el.style.transition = '';
+}

@@ -5160,3 +5160,108 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
   0%, 100% { box-shadow: 0 0 0 4px rgba(15,95,136,0.55), 0 0 0 9999px rgba(15, 23, 42, 0.55); }
   50% { box-shadow: 0 0 0 8px rgba(15,95,136,0.35), 0 0 0 9999px rgba(15, 23, 42, 0.55); }
 }
+
+/* ========== Mobile Table: list + pager ========== */
+
+.mobile-table-list { display: none; }
+.mobile-topbar-back[hidden],
+.mobile-topbar-counter[hidden] { display: none !important; }
+
+@media (max-width: 900px) {
+  /* Hide desktop table chrome + table body on mobile; show the list */
+  body.mobile-simplified #table-root { display: none !important; }
+  body.mobile-simplified #table-tags-controls { display: none !important; }
+  body.mobile-simplified .show-filters-btn { display: none !important; }
+  body.mobile-simplified #mobile-table-list { display: block; }
+
+  #mobile-table-list {
+    margin: 0 -4px;
+    padding: 0;
+  }
+  #mobile-table-list .mt-section:last-child { margin-bottom: 120px; }
+
+  .mt-table-row {
+    cursor: pointer;
+    -webkit-tap-highlight-color: rgba(15, 95, 136, 0.08);
+  }
+  .mt-table-row .mt-row-content {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    background: #fff;
+  }
+  .mt-table-row:active .mt-row-content { background: #f1f5f9; }
+  .mt-table-title {
+    font: 600 15px/1.3 'Inter', system-ui, sans-serif;
+    color: #0f172a;
+  }
+  .mt-table-bed { color: #0f172a; font-weight: 700; }
+  .mt-table-name { color: #0f172a; font-weight: 500; }
+  .mt-table-row--discharged .mt-table-name {
+    color: #94a3b8;
+    text-decoration: line-through;
+  }
+
+  /* Topbar extras */
+  .mobile-topbar-back { margin-left: -8px; }
+  .mobile-topbar-counter {
+    font: 600 12px/1 'Inter', system-ui, sans-serif;
+    color: #64748b;
+    padding: 0 6px;
+    white-space: nowrap;
+  }
+
+  /* ===== Pager mode: stack Hx / Issues / Tasks in the case-detail section ===== */
+  body.mobile-pager .case-mobile-tabs { display: none !important; }
+  body.mobile-pager .tabs-bar { display: none !important; }
+  body.mobile-pager #case-header-actions { display: none !important; }
+  body.mobile-pager .ward-notes-scrim { display: none !important; }
+  body.mobile-pager #back-btn { display: none !important; }
+  body.mobile-pager #case-detail > .case-heading { display: none !important; }
+  body.mobile-pager #case-tag-chips {
+    margin-top: 0;
+  }
+
+  /* Stack the three panels vertically; no horizontal scroll snap */
+  body.mobile-pager .case-panels {
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: visible !important;
+    scroll-snap-type: none !important;
+    margin-inline: 0 !important;
+    gap: 16px;
+  }
+  body.mobile-pager .case-panel {
+    flex: 0 0 auto !important;
+    padding-inline: 0 !important;
+    scroll-snap-align: none !important;
+    width: auto !important;
+    min-width: 0 !important;
+  }
+
+  /* Mirror the desktop table cells: show Hx (B) + Issues (E) only; hide Dx, Meds, Ix */
+  body.mobile-pager .note-row[data-letter="A"],
+  body.mobile-pager .note-row[data-letter="C"],
+  body.mobile-pager .note-row[data-letter="D"] { display: none !important; }
+
+  /* Ward notes panel doesn't belong in the Table-mirror view */
+  body.mobile-pager .case-panel[data-panel="wardnotes"] { display: none !important; }
+
+  /* Swipe affordances */
+  body.mobile-pager #case-detail {
+    will-change: transform;
+    touch-action: pan-y;
+    transition: transform 0ms linear;
+    padding-bottom: 48px;
+  }
+
+  /* Give each section a light visual break */
+  body.mobile-pager #notes,
+  body.mobile-pager #tasks {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 14px;
+    padding: 12px !important;
+  }
+}
