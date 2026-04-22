@@ -7504,6 +7504,23 @@ function initMobileTopbar() {
     const btn = document.getElementById('quick-new-case-btn');
     if (btn) btn.click();
   });
+  // Prev/next chevrons cycle through the three tabs: Patients → My Tasks → Updates
+  const TAB_ORDER = ['table', 'my', 'updates'];
+  const currentTabKey = () => {
+    if (document.getElementById('tab-table')?.classList.contains('active')) return 'table';
+    if (document.getElementById('tab-my')?.classList.contains('active')) return 'my';
+    if (document.getElementById('tab-updates')?.classList.contains('active')) return 'updates';
+    return 'my';
+  };
+  const cycleTab = (delta) => {
+    const idx = TAB_ORDER.indexOf(currentTabKey());
+    const next = (idx + delta + TAB_ORDER.length) % TAB_ORDER.length;
+    try { showMainTab(TAB_ORDER[next]); } catch {}
+  };
+  const prevBtn = document.getElementById('mobile-topbar-prev');
+  const nextBtn = document.getElementById('mobile-topbar-next');
+  if (prevBtn) prevBtn.addEventListener('click', () => cycleTab(-1));
+  if (nextBtn) nextBtn.addEventListener('click', () => cycleTab(1));
   if (searchBtn) searchBtn.addEventListener('click', () => {
     if (searchBar) { searchBar.hidden = false; }
     if (searchInput) { searchInput.value = currentUserSearch || ''; searchInput.focus(); }

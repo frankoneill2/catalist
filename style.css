@@ -4641,7 +4641,16 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    text-align: center;
   }
+  .mobile-topbar-nav {
+    width: 36px;
+    height: 36px;
+    flex: 0 0 auto;
+    color: #475569;
+  }
+  .mobile-topbar-nav:hover,
+  .mobile-topbar-nav:active { background: #f1f5f9; color: #0f172a; }
   .mobile-topbar-actions {
     display: flex;
     align-items: center;
