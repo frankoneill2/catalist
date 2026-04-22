@@ -5712,15 +5712,28 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Default tab
   const mobileDefault = window.matchMedia && window.matchMedia('(max-width: 900px)').matches;
   showMainTab(mobileDefault ? 'my' : 'table');
-  // URL deep link: open case if ?case=
-  try {
-    const url = new URL(window.location.href);
-    const caseId = url.searchParams.get('case');
-    if (caseId) {
-      // Title is unknown without decrypt; open with placeholder
-      openCase(caseId, 'Case', 'table', 'notes');
-    }
-  } catch {}
+  // URL deep link: open case if ?case= (desktop only — on mobile we always
+  // land on My Tasks so the app doesn't resume into a patient case page
+  // from a stale URL left over from a previous session)
+  if (!mobileDefault) {
+    try {
+      const url = new URL(window.location.href);
+      const caseId = url.searchParams.get('case');
+      if (caseId) {
+        // Title is unknown without decrypt; open with placeholder
+        openCase(caseId, 'Case', 'table', 'notes');
+      }
+    } catch {}
+  } else {
+    // Strip any ?case= from the URL so a later refresh also lands on My Tasks
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('case')) {
+        url.searchParams.delete('case');
+        window.history.replaceState({}, '', url.toString());
+      }
+    } catch {}
+  }
   // Handle browser back/forward between table and case
   window.addEventListener('popstate', () => {
     try {
