@@ -4666,14 +4666,17 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
     text-overflow: ellipsis;
     text-align: center;
   }
-  .mobile-topbar-nav {
-    width: 36px;
-    height: 36px;
+  .mobile-topbar-icon.mobile-topbar-nav {
+    width: 46px;
+    height: 46px;
     flex: 0 0 auto;
-    color: #475569;
+    color: #0f5f88;
+    background: #eef6fb;
+    border-radius: 10px;
   }
-  .mobile-topbar-nav:hover,
-  .mobile-topbar-nav:active { background: #f1f5f9; color: #0f172a; }
+  .mobile-topbar-icon.mobile-topbar-nav:hover,
+  .mobile-topbar-icon.mobile-topbar-nav:active { background: #d9ecf6; color: #0b3f5d; }
+  .mobile-topbar-icon.mobile-topbar-nav svg { width: 30px; height: 30px; flex: 0 0 auto; }
   .mobile-topbar-actions {
     display: flex;
     align-items: center;
@@ -5275,29 +5278,89 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
     align-items: center;
     justify-content: space-between;
     width: 100%;
-    padding: 12px 14px;
-    background: transparent;
+    padding: 14px 14px;
+    background: #f1f5f9;
     border: 0;
+    border-top: 1px solid #e2e8f0;
     cursor: pointer;
-    font: 700 11px/1 'Inter', system-ui, sans-serif;
+    font: 700 12px/1 'Inter', system-ui, sans-serif;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: #64748b;
+    color: #334155;
     text-align: left;
+  }
+  body.mobile-simplified #table-section .data-table td[data-cell-section].is-open .cell-toggle {
+    background: #e0edf4;
+    color: #0b3f5d;
   }
   body.mobile-simplified #table-section .data-table td[data-cell-section] .cell-toggle-chevron {
     transition: transform 160ms ease;
-    color: #94a3b8;
+    color: #0f5f88;
+    width: 24px;
+    height: 24px;
   }
   body.mobile-simplified #table-section .data-table td[data-cell-section].is-open .cell-toggle-chevron {
     transform: rotate(180deg);
   }
   body.mobile-simplified #table-section .data-table td[data-cell-section] .cell-body {
     display: none;
-    padding: 0 14px 12px;
+    padding: 10px 14px 12px;
+    background: #ffffff;
   }
   body.mobile-simplified #table-section .data-table td[data-cell-section].is-open .cell-body {
     display: block;
+  }
+
+  /* Line-level (nested) accordion: visually subtler than section-level */
+  body.mobile-simplified #table-section .line-info-btn {
+    width: 32px;
+    height: 32px;
+    opacity: 1;
+    border-radius: 8px;
+    border-color: #cbd5e1;
+    color: #475569;
+  }
+  body.mobile-simplified #table-section .line-info-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+  body.mobile-simplified #table-section .line-info-btn[aria-expanded="true"] svg {
+    transform: rotate(180deg);
+    transition: transform 160ms ease;
+  }
+  /* Inline panel is redundant on mobile — hide header + footer (shortcuts bar) */
+  body.mobile-simplified .cell-body-panel--inline .cell-body-header,
+  body.mobile-simplified .cell-body-panel--inline .cell-body-foot {
+    display: none;
+  }
+  body.mobile-simplified .cell-body-panel--inline {
+    background: #f8fafc;
+    border: 1px dashed #cbd5e1;
+    border-radius: 10px;
+  }
+  body.mobile-simplified .cell-body-panel--inline .cell-body-text {
+    border-radius: 10px;
+    min-height: 56px;
+  }
+
+  /* Ward group header row (mobile only) */
+  body.mobile-simplified #table-section .data-table tr.ward-group-header-row {
+    display: block;
+    margin: 18px 0 8px;
+  }
+  body.mobile-simplified #table-section .data-table tr.ward-group-header-row:first-child {
+    margin-top: 4px;
+  }
+  body.mobile-simplified #table-section .data-table td.ward-group-header-cell {
+    display: block;
+    padding: 10px 14px;
+    background: linear-gradient(180deg, #0f5f88 0%, #0c4e74 100%);
+    color: #ffffff;
+    font: 700 12px/1.2 'Inter', system-ui, sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    border-radius: 10px;
+    box-shadow: 0 2px 6px rgba(15, 95, 136, 0.18);
   }
 
   /* Name cell: keep name, summary, chips comfortable on a small screen */

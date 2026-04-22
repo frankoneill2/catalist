@@ -744,6 +744,7 @@ function showCaseList() {
 }
 
 async function openCase(id, title, source = 'list', initialTab = 'overview') {
+  if (typeof isMobileUserView === 'function' && isMobileUserView()) return;
   clearPendingDischargeState();
   currentCaseId = id;
   backTarget = source === 'user' ? 'user' : (source === 'table' ? 'table' : (source === 'updates' ? 'updates' : 'list'));
@@ -2282,6 +2283,23 @@ function startRealtimeTable() {
       docs = scored.map(s=>s.d);
     }
 
+    // On mobile with no explicit sort, group patients by ward so ward headers stay contiguous.
+    if (isMobileUserView() && (!activeTagSort || activeTagSort === 'none')) {
+      const locArr = tagsByType.get('location') || [];
+      const locOrder = new Map();
+      locArr.forEach((t, i) => locOrder.set(t.id, i));
+      const scored = [];
+      for (const d of docs) {
+        const ct = (d.data() || {}).caseTags || {};
+        const idx = ct.location && locOrder.has(ct.location) ? locOrder.get(ct.location) : 999999;
+        let title = '';
+        try { title = await decryptText(d.data().titleCipher, d.data().titleIv); } catch {}
+        scored.push({ d, idx, title });
+      }
+      scored.sort((a, b) => a.idx - b.idx || a.title.localeCompare(b.title));
+      docs = scored.map(s => s.d);
+    }
+
     // Preload subtags for every location referenced so room chips appear on first paint.
     try {
       const locIds = new Set();
@@ -2295,6 +2313,14 @@ function startRealtimeTable() {
     const presentTaskListeners = new Set();
     let visibleCases = 0;
     let dischargedVisibleCases = 0;
+    let lastWardIdActive = undefined;
+    const mobileWardHeaders = isMobileUserView();
+    const resolveWardLabel = (id) => {
+      if (!id) return 'Unassigned ward';
+      const arr = tagsByType.get('location') || [];
+      const t = arr.find(x => x.id === id);
+      return (t && t.name) ? t.name : 'Unassigned ward';
+    };
     for (const d of docs) {
       const data = d.data();
       let title = '';
@@ -2319,7 +2345,11 @@ function startRealtimeTable() {
       const nameActions = document.createElement('div'); nameActions.className = 'name-actions';
       const btn = document.createElement('button');
       btn.className = 'patient-link'; btn.textContent = title;
-      btn.addEventListener('click', () => { tableScrollY = window.scrollY; openCase(d.id, title, 'table', 'notes'); });
+      btn.addEventListener('click', () => {
+        if (isMobileUserView()) return;
+        tableScrollY = window.scrollY;
+        openCase(d.id, title, 'table', 'notes');
+      });
       nameTitle.appendChild(btn);
       nameRow.appendChild(nameTitle);
 
@@ -2711,7 +2741,7 @@ function startRealtimeTable() {
               const info = document.createElement('button');
               info.type = 'button';
               info.className = 'line-info-btn';
-              info.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" width="12" height="12"><path d="M3.5 6.5L8 11l4.5-4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+              info.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" width="18" height="18"><path d="M3.5 6.5L8 11l4.5-4.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
               info.setAttribute('aria-haspopup', 'dialog');
               info.setAttribute('aria-expanded', 'false');
               const refreshInfoState = () => {
@@ -2994,7 +3024,7 @@ function startRealtimeTable() {
         cellToggle.type = 'button';
         cellToggle.className = 'cell-toggle';
         cellToggle.setAttribute('aria-expanded', 'false');
-        cellToggle.innerHTML = `<span class="cell-toggle-label">${sectionLabels[letter]}</span><svg class="cell-toggle-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false" width="14" height="14"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+        cellToggle.innerHTML = `<span class="cell-toggle-label">${sectionLabels[letter]}</span><svg class="cell-toggle-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false" width="24" height="24"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
         cellToggle.addEventListener('click', (e) => {
           e.stopPropagation();
           const next = !td.classList.contains('is-open');
@@ -3012,6 +3042,20 @@ function startRealtimeTable() {
         dischargedTbody.appendChild(tr);
         dischargedVisibleCases += 1;
       } else {
+        if (mobileWardHeaders) {
+          const wardId = (data.caseTags && data.caseTags.location) || '';
+          if (wardId !== lastWardIdActive) {
+            const hdrTr = document.createElement('tr');
+            hdrTr.className = 'ward-group-header-row';
+            const hdrTd = document.createElement('td');
+            hdrTd.colSpan = 4;
+            hdrTd.className = 'ward-group-header-cell';
+            hdrTd.textContent = resolveWardLabel(wardId);
+            hdrTr.appendChild(hdrTd);
+            tbody.appendChild(hdrTr);
+            lastWardIdActive = wardId;
+          }
+        }
         tbody.appendChild(tr);
         visibleCases += 1;
       }
