@@ -4004,33 +4004,53 @@ function bindCaseTabs() {
   }
 }
 
-function renderWardNoteBody(container, body) {
+function renderWardNoteBody(container, body, opts = {}) {
   if (!container) return;
   const doc = container.ownerDocument || document;
   const mk = (tag) => doc.createElement(tag);
   container.innerHTML = '';
-  if (!body) return;
-  const blocks = body
+  const hasOverride = opts && (Array.isArray(opts.issueTitles) || Array.isArray(opts.taskTitles) || typeof opts.noteText === 'string' || typeof opts.dxText === 'string');
+  if (!body && !hasOverride) return;
+  const blocks = (body || '')
     .split(/\n\s*\n/)
     .map(s => (s || '').trim())
     .filter(Boolean);
-  if (!blocks.length) return;
 
-  const dxLine = blocks[0] || '';
-  const dxText = dxLine.replace(/^Δ\s*/, '').trim();
-  const hasDx = !!dxText && !/^Diagnosis not specified$/i.test(dxText);
+  const dxLineRaw = blocks[0] || '';
+  const parsedDxText = dxLineRaw.replace(/^Δ\s*/, '').trim();
 
-  const issueTitles = [];
-  let noteText = '';
-  let tasksText = '';
-  for (let i = 1; i < blocks.length; i += 2) {
+  const parsedIssueTitles = [];
+  let parsedNoteText = '';
+  let parsedTasksText = '';
+  const knownHeads = new Set(['Note', 'Other', 'Tasks']);
+  let i = 1;
+  while (i < blocks.length) {
     const head = blocks[i];
-    const next = blocks[i + 1] || '';
-    if (head === 'Note') { noteText = next; continue; }
-    if (head === 'Other') { continue; }
-    if (head === 'Tasks') { tasksText = next; continue; }
-    if (head) issueTitles.push(head);
+    if (knownHeads.has(head)) {
+      const next = blocks[i + 1] || '';
+      if (head === 'Note') parsedNoteText = next;
+      else if (head === 'Tasks') parsedTasksText = next;
+      i += 2;
+      continue;
+    }
+    // Treat as an issue title; skip its body block (if the next block is also a known head, don't consume it)
+    if (head) parsedIssueTitles.push(head);
+    const nextHead = blocks[i + 1];
+    if (nextHead && !knownHeads.has(nextHead) && (i + 2 < blocks.length || !knownHeads.has(nextHead))) {
+      // next block is the issue body; skip it
+      i += 2;
+    } else {
+      i += 1;
+    }
   }
+
+  const dxText = (typeof opts.dxText === 'string') ? opts.dxText.trim() : parsedDxText;
+  const hasDx = !!dxText && !/^Diagnosis not specified$/i.test(dxText);
+  const issueTitles = Array.isArray(opts.issueTitles) ? opts.issueTitles.filter(s => typeof s === 'string' && s.trim()).map(s => s.trim()) : parsedIssueTitles;
+  const noteText = (typeof opts.noteText === 'string') ? opts.noteText : parsedNoteText;
+  const taskTitles = Array.isArray(opts.taskTitles)
+    ? opts.taskTitles.filter(s => typeof s === 'string' && s.trim()).map(s => s.trim())
+    : parsedTasksText.split('\n').map(s => s.trim().replace(/^•\s*/, '')).filter(Boolean);
 
   if (hasDx) {
     const dx = mk('div'); dx.className = 'ward-note-section ward-note-section--dx';
@@ -4060,13 +4080,12 @@ function renderWardNoteBody(container, body) {
     container.appendChild(note);
   }
 
-  if (tasksText) {
+  if (taskTitles.length) {
     const tasks = mk('div'); tasks.className = 'ward-note-section ward-note-section--tasks';
     const label = mk('div'); label.className = 'ward-note-label'; label.textContent = 'New tasks';
     const list = mk('ul'); list.className = 'ward-note-tasks';
-    const lines = tasksText.split('\n').map(s => s.trim()).filter(Boolean);
-    for (const line of lines) {
-      const li = mk('li'); li.textContent = line.replace(/^•\s*/, '');
+    for (const line of taskTitles) {
+      const li = mk('li'); li.textContent = line;
       list.appendChild(li);
     }
     tasks.appendChild(label); tasks.appendChild(list);
@@ -4101,10 +4120,39 @@ function startRealtimeWardNotes() {
       head.appendChild(meta);
       li.appendChild(head);
       const preview = document.createElement('div'); preview.className='ward-note-preview';
-      try { if (data.compiledCipher && data.compiledIv) {
-        const body = await decryptText(data.compiledCipher, data.compiledIv);
-        renderWardNoteBody(preview, body);
-      } } catch {}
+      try {
+        let body = '';
+        if (data.compiledCipher && data.compiledIv) {
+          body = await decryptText(data.compiledCipher, data.compiledIv);
+        }
+        const opts = {};
+        try {
+          if (data.issueTitlesCipher && data.issueTitlesIv) {
+            const s = await decryptText(data.issueTitlesCipher, data.issueTitlesIv);
+            const arr = JSON.parse(s);
+            if (Array.isArray(arr)) opts.issueTitles = arr;
+          }
+        } catch {}
+        try {
+          if (data.taskTitlesCipher && data.taskTitlesIv) {
+            const s = await decryptText(data.taskTitlesCipher, data.taskTitlesIv);
+            const arr = JSON.parse(s);
+            if (Array.isArray(arr)) opts.taskTitles = arr;
+          }
+        } catch {}
+        try {
+          if (data.noteCipher && data.noteIv) {
+            opts.noteText = await decryptText(data.noteCipher, data.noteIv);
+          }
+        } catch {}
+        try {
+          if (data.diagnosesLineCipher && data.diagnosesLineIv) {
+            const dxLine = await decryptText(data.diagnosesLineCipher, data.diagnosesLineIv);
+            opts.dxText = (dxLine || '').replace(/^Δ\s*/, '').trim();
+          }
+        } catch {}
+        renderWardNoteBody(preview, body, opts);
+      } catch {}
       li.appendChild(preview);
       list.appendChild(li);
     }
@@ -4144,9 +4192,9 @@ function formatDateTimeLabel(d) {
   return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
-function buildWardNoteBodyHtml(body) {
+function buildWardNoteBodyHtml(body, opts) {
   const wrap = document.createElement('div');
-  renderWardNoteBody(wrap, body);
+  renderWardNoteBody(wrap, body, opts || {});
   return wrap.innerHTML;
 }
 
@@ -4180,7 +4228,12 @@ function buildWardNotePrintItemHtml(note) {
 
   const body = document.createElement('div');
   body.className = 'ward-note-preview';
-  body.innerHTML = buildWardNoteBodyHtml(note.compiled || '');
+  const opts = {};
+  if (Array.isArray(note.issueTitles)) opts.issueTitles = note.issueTitles;
+  if (Array.isArray(note.taskTitles)) opts.taskTitles = note.taskTitles;
+  if (typeof note.noteText === 'string') opts.noteText = note.noteText;
+  if (typeof note.dxText === 'string') opts.dxText = note.dxText;
+  body.innerHTML = buildWardNoteBodyHtml(note.compiled || '', opts);
   article.appendChild(body);
 
   return article.outerHTML;
@@ -4223,8 +4276,33 @@ async function fetchWardNotesRange(start, end) {
     const data = item.data || {};
     let heading = '';
     let compiled = '';
+    let issueTitles = null;
+    let taskTitles = null;
+    let noteText = null;
+    let dxText = null;
     try { if (data.headingCipher && data.headingIv) heading = await decryptText(data.headingCipher, data.headingIv); } catch {}
     try { if (data.compiledCipher && data.compiledIv) compiled = await decryptText(data.compiledCipher, data.compiledIv); } catch {}
+    try {
+      if (data.issueTitlesCipher && data.issueTitlesIv) {
+        const s = await decryptText(data.issueTitlesCipher, data.issueTitlesIv);
+        const arr = JSON.parse(s);
+        if (Array.isArray(arr)) issueTitles = arr;
+      }
+    } catch {}
+    try {
+      if (data.taskTitlesCipher && data.taskTitlesIv) {
+        const s = await decryptText(data.taskTitlesCipher, data.taskTitlesIv);
+        const arr = JSON.parse(s);
+        if (Array.isArray(arr)) taskTitles = arr;
+      }
+    } catch {}
+    try { if (data.noteCipher && data.noteIv) noteText = await decryptText(data.noteCipher, data.noteIv); } catch {}
+    try {
+      if (data.diagnosesLineCipher && data.diagnosesLineIv) {
+        const dxLine = await decryptText(data.diagnosesLineCipher, data.diagnosesLineIv);
+        dxText = (dxLine || '').replace(/^Δ\s*/, '').trim();
+      }
+    } catch {}
     const createdAt = data.createdAt && data.createdAt.toDate ? data.createdAt.toDate() : null;
     return {
       id: item.id,
@@ -4234,6 +4312,10 @@ async function fetchWardNotesRange(start, end) {
       createdAt,
       heading,
       compiled,
+      issueTitles,
+      taskTitles,
+      noteText,
+      dxText,
     };
   }));
 
@@ -4896,7 +4978,7 @@ async function openWardNoteComposerV2() {
   noteLabel.textContent = 'Note';
   const noteHelp = document.createElement('span');
   noteHelp.className = 'ward-note-composer-hint';
-  noteHelp.textContent = 'Enter saves · Shift + Enter for a new line';
+  noteHelp.textContent = 'Shift + Enter saves · Enter for a new line';
   noteLabel.appendChild(noteHelp);
   const noteTextarea = document.createElement('textarea');
   noteTextarea.id = 'wn-free-text';
@@ -5090,9 +5172,8 @@ async function openWardNoteComposerV2() {
         const title = (it.title || '').trim();
         const bodyText = (it.body || '').trim();
         if (!title) continue;
-        if (!bodyText) continue;
         parts.push(title);
-        parts.push(bodyText);
+        if (bodyText) parts.push(bodyText);
       }
 
       if (freeText) {
@@ -5108,16 +5189,23 @@ async function openWardNoteComposerV2() {
       }
 
       const compiled = parts.join('\n\n');
+      const issueTitlesList = issueItems
+        .map(it => (it.title || '').trim())
+        .filter(Boolean);
       const eHead = await encryptText(heading);
       const eComp = await encryptText(compiled);
       const eDx = await encryptText(dxLine);
       const eNote = await encryptText(freeText);
+      const eIssues = await encryptText(JSON.stringify(issueTitlesList));
+      const eTaskTitles = await encryptText(JSON.stringify(savedTaskTitles));
 
       await addDoc(collection(db, 'cases', currentCaseId, 'wardNotes'), {
         headingCipher: eHead.cipher, headingIv: eHead.iv,
         compiledCipher: eComp.cipher, compiledIv: eComp.iv,
         diagnosesLineCipher: eDx.cipher, diagnosesLineIv: eDx.iv,
         noteCipher: eNote.cipher, noteIv: eNote.iv,
+        issueTitlesCipher: eIssues.cipher, issueTitlesIv: eIssues.iv,
+        taskTitlesCipher: eTaskTitles.cipher, taskTitlesIv: eTaskTitles.iv,
         newTaskIds: savedTaskDocIds,
         author: username || null,
         createdAt: serverTimestamp(),
@@ -5148,9 +5236,9 @@ async function openWardNoteComposerV2() {
     if (e.key === 'Enter') { e.preventDefault(); noteTextarea.focus(); }
   });
 
-  // Enter in textarea submits the note (Shift+Enter inserts newline)
+  // Shift+Enter submits the note; plain Enter inserts a newline
   noteTextarea.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    if (e.key === 'Enter' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
       e.preventDefault();
       doSave();
     }
