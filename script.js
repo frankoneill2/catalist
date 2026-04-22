@@ -2364,6 +2364,52 @@ function startRealtimeTable() {
       });
       nameActions.appendChild(newNoteBtn);
 
+      const beginRename = () => {
+        if (btn.parentNode !== nameTitle) return;
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'patient-rename-input';
+        input.value = title;
+        input.setAttribute('aria-label', 'Edit patient name');
+        btn.replaceWith(input);
+        input.focus();
+        try { input.select(); } catch {}
+        let done = false;
+        const finish = async (save) => {
+          if (done) return; done = true;
+          const next = (input.value || '').trim();
+          if (save && next && next !== title) {
+            try {
+              const enc = await encryptText(next);
+              await updateDoc(doc(db, 'cases', d.id), { titleCipher: enc.cipher, titleIv: enc.iv });
+              title = next;
+              btn.textContent = next;
+              if (currentCaseId === d.id && caseTitleEl) caseTitleEl.textContent = next;
+              showToast('Renamed');
+            } catch (err) {
+              console.error(err);
+              showToast('Rename failed');
+            }
+          }
+          if (input.parentNode) input.replaceWith(btn);
+        };
+        input.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter') { ev.preventDefault(); finish(true); }
+          else if (ev.key === 'Escape') { ev.preventDefault(); finish(false); }
+        });
+        input.addEventListener('blur', () => finish(true));
+      };
+
+      const renameBtn = document.createElement('button');
+      renameBtn.type = 'button';
+      renameBtn.className = 'name-action-btn';
+      renameBtn.textContent = 'Rename';
+      renameBtn.title = 'Rename patient';
+      renameBtn.addEventListener('click', (e) => { e.stopPropagation(); beginRename(); });
+      nameActions.appendChild(renameBtn);
+
+      btn.addEventListener('dblclick', (e) => { e.preventDefault(); e.stopPropagation(); beginRename(); });
+
       const deleteCase = async () => {
         if (!confirm('Delete this case and all its items?')) return;
         try {

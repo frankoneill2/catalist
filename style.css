@@ -1358,6 +1358,19 @@ button:focus-visible {
 }
 .patient-link { background: none; border: none; color: var(--primary); cursor: pointer; font-weight: 600; padding: 0; }
 .patient-link:hover { text-decoration: underline; }
+.patient-rename-input {
+  font: 600 inherit;
+  font-size: 1rem;
+  color: var(--primary, #0c4e74);
+  padding: 4px 8px;
+  border: 1px solid var(--primary, #0c4e74);
+  border-radius: 6px;
+  background: #fff;
+  outline: none;
+  min-width: 0;
+  max-width: 100%;
+}
+body.mobile-simplified .patient-rename-input { font-size: 16px; padding: 6px 10px; }
 
 /* Tasks cell inside the table */
 .cell-tasks {
