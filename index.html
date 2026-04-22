@@ -54,11 +54,7 @@
   </header>
   <main class="app">
     <div id="mobile-topbar" class="mobile-topbar" hidden>
-      <button id="mobile-topbar-back" class="mobile-topbar-icon mobile-topbar-back" type="button" aria-label="Back" hidden>
-        <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-      </button>
       <h1 id="mobile-topbar-title" class="mobile-topbar-title">My Tasks</h1>
-      <span id="mobile-topbar-counter" class="mobile-topbar-counter" hidden></span>
       <div class="mobile-topbar-actions">
         <button id="mobile-search-btn" class="mobile-topbar-icon" type="button" aria-label="Search tasks" hidden>
           <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -117,7 +113,6 @@
         </div>
       </div>
       <button id="show-filters-btn" class="show-filters-btn" type="button" hidden>Show Filters</button>
-      <div id="mobile-table-list" class="mobile-table-list" aria-label="Patient list" hidden></div>
       <div id="table-root" class="table-root" aria-label="Cases table view"></div>
     </section>
     
@@ -138,35 +133,35 @@
         <section id="notes" class="case-panel" data-panel="overview" aria-label="Overview notes">
           <div class="stack" id="af-fields">
             <div class="notes" aria-label="Notes A to E">
-              <div class="note-row" data-letter="A">
+              <div class="note-row">
                 <div class="note-label">Dx</div>
                 <div class="note-content">
                   <div id="notes-A-items" class="note-items" aria-label="Dx items"></div>
                   <button type="button" class="icon-btn small add-note-item" data-letter="A" aria-label="Add Dx header">+ Add header</button>
                 </div>
               </div>
-              <div class="note-row" data-letter="B">
+              <div class="note-row">
                 <div class="note-label">Hx</div>
                 <div class="note-content">
                   <div id="notes-B-items" class="note-items" aria-label="Hx items"></div>
                   <button type="button" class="icon-btn small add-note-item" data-letter="B" aria-label="Add Hx header">+ Add header</button>
                 </div>
               </div>
-              <div class="note-row" data-letter="C">
+              <div class="note-row">
                 <div class="note-label">Meds</div>
                 <div class="note-content">
                   <div id="notes-C-items" class="note-items" aria-label="Meds items"></div>
                   <button type="button" class="icon-btn small add-note-item" data-letter="C" aria-label="Add Meds header">+ Add header</button>
                 </div>
               </div>
-              <div class="note-row" data-letter="D">
+              <div class="note-row">
                 <div class="note-label">Ix</div>
                 <div class="note-content">
                   <div id="notes-D-items" class="note-items" aria-label="Ix items"></div>
                   <button type="button" class="icon-btn small add-note-item" data-letter="D" aria-label="Add Ix header">+ Add header</button>
                 </div>
               </div>
-              <div class="note-row" data-letter="E">
+              <div class="note-row">
                 <div class="note-label">Issues</div>
                 <div class="note-content">
                   <div id="notes-E-items" class="note-items" aria-label="Issues items"></div>
@@ -242,7 +237,7 @@
   </button>
   <div id="mobile-sheet-root"></div>
   <div id="coach-mark-root"></div>
-  <script type="module" src="script.js?v=20260422a"></script>
+  <script type="module" src="script.js?v=20260422b"></script>
   <!-- React toolbar script omitted on static hosting (GH Pages) -->
 </body>
 </html>
