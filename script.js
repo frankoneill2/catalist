@@ -4018,53 +4018,46 @@ function renderWardNoteBody(container, body) {
 
   const dxLine = blocks[0] || '';
   const dxText = dxLine.replace(/^Δ\s*/, '').trim();
-  const dx = mk('div'); dx.className = 'ward-note-section ward-note-section--dx';
-  const dxLabel = mk('div'); dxLabel.className = 'ward-note-label'; dxLabel.textContent = 'Diagnosis';
-  const dxValue = mk('div'); dxValue.className = 'ward-note-text'; dxValue.textContent = dxText || 'Not specified';
-  dx.appendChild(dxLabel); dx.appendChild(dxValue);
-  container.appendChild(dx);
+  const hasDx = !!dxText && !/^Diagnosis not specified$/i.test(dxText);
 
-  const issues = [];
-  let otherText = '';
-  let tasksText = '';
+  const issueTitles = [];
   let noteText = '';
+  let tasksText = '';
   for (let i = 1; i < blocks.length; i += 2) {
     const head = blocks[i];
     const next = blocks[i + 1] || '';
     if (head === 'Note') { noteText = next; continue; }
-    if (head === 'Other') { otherText = next; continue; }
+    if (head === 'Other') { continue; }
     if (head === 'Tasks') { tasksText = next; continue; }
-    issues.push({ title: head, body: next });
+    if (head) issueTitles.push(head);
   }
 
-  if (issues.length) {
-    const group = mk('div'); group.className = 'ward-note-group';
-    const groupHead = mk('div'); groupHead.className = 'ward-note-group-head'; groupHead.textContent = 'Issues';
-    group.appendChild(groupHead);
-    for (const it of issues) {
-      const section = mk('div'); section.className = 'ward-note-section';
-      const title = mk('div'); title.className = 'ward-note-subhead'; title.textContent = it.title || 'Untitled issue';
-      const bodyEl = mk('div'); bodyEl.className = 'ward-note-text'; bodyEl.textContent = it.body || '';
-      section.appendChild(title); section.appendChild(bodyEl);
-      group.appendChild(section);
+  if (hasDx) {
+    const dx = mk('div'); dx.className = 'ward-note-section ward-note-section--dx';
+    const dxLabel = mk('div'); dxLabel.className = 'ward-note-label'; dxLabel.textContent = 'Diagnosis';
+    const dxValue = mk('div'); dxValue.className = 'ward-note-text'; dxValue.textContent = dxText;
+    dx.appendChild(dxLabel); dx.appendChild(dxValue);
+    container.appendChild(dx);
+  }
+
+  if (issueTitles.length) {
+    const sec = mk('div'); sec.className = 'ward-note-section ward-note-section--issues';
+    const label = mk('div'); label.className = 'ward-note-label'; label.textContent = 'Issues';
+    const list = mk('ul'); list.className = 'ward-note-issues';
+    for (const title of issueTitles) {
+      const li = mk('li'); li.textContent = title;
+      list.appendChild(li);
     }
-    container.appendChild(group);
+    sec.appendChild(label); sec.appendChild(list);
+    container.appendChild(sec);
   }
 
   if (noteText) {
     const note = mk('div'); note.className = 'ward-note-section ward-note-section--note';
     const label = mk('div'); label.className = 'ward-note-label'; label.textContent = 'Note';
-    const text = mk('div'); text.className = 'ward-note-text ward-note-text--prose'; text.textContent = noteText;
+    const text = mk('div'); text.className = 'ward-note-text ward-note-text--prose ward-note-text--boxed'; text.textContent = noteText;
     note.appendChild(label); note.appendChild(text);
     container.appendChild(note);
-  }
-
-  if (otherText) {
-    const other = mk('div'); other.className = 'ward-note-section ward-note-section--other';
-    const label = mk('div'); label.className = 'ward-note-label'; label.textContent = 'Other';
-    const text = mk('div'); text.className = 'ward-note-text'; text.textContent = otherText;
-    other.appendChild(label); other.appendChild(text);
-    container.appendChild(other);
   }
 
   if (tasksText) {
