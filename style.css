@@ -1192,6 +1192,15 @@ button:focus-visible {
   overflow: visible;
   animation: cell-body-panel-in 140ms cubic-bezier(0.2, 0.9, 0.3, 1);
 }
+/* Inline accordion variant (mobile) — flows beneath the line, no pointer */
+.cell-body-panel--inline {
+  position: static;
+  width: auto;
+  margin: 6px 0 4px;
+  box-shadow: none;
+  border-color: #e2e8f0;
+}
+.cell-body-panel--inline .cell-body-pointer { display: none; }
 @keyframes cell-body-panel-in {
   from { opacity: 0; transform: translateY(-4px) scale(0.985); }
   to { opacity: 1; transform: translateY(0) scale(1); }
@@ -1463,6 +1472,11 @@ button:focus-visible {
 
 /* Hide legacy selects in the table filter bar */
 #table-tags-controls select { display: none; }
+
+/* Letter-cell toggle / expand-all control only apply on mobile — hide on desktop */
+#table-section .data-table td[data-cell-section] > .cell-toggle { display: none; }
+#table-section .data-table td[data-cell-section] > .cell-body { display: contents; }
+.mobile-expand-all-btn { display: none; }
 
 /* Mobile filters button */
 .mobile-filters-btn { display: none; height: 28px; padding: 0 10px; border: 1px solid #e5e7eb; border-radius: 999px; background: #fff; font-size: 12px; }
@@ -4616,6 +4630,15 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
 .mobile-filter-pill[hidden],
 .mobile-filter-count[hidden] { display: none !important; }
 
+/* Reserved controls keep their layout slot but are invisible and inert —
+   this keeps the topbar title in the same position across tabs even when
+   the Filter/Search pills don't apply. */
+.mobile-topbar-icon.is-reserved,
+.mobile-filter-pill.is-reserved {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 @media (max-width: 900px) {
   /* Hide the desktop tabs bar + the React task toolbar on mobile */
   body.mobile-simplified .tabs-bar { display: none !important; }
@@ -4673,10 +4696,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
   .mobile-topbar-icon:active { background: #f1f5f9; }
   .mobile-filter-pill {
     height: 36px;
-    padding: 0 12px;
+    padding: 0 10px;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
     border: 1px solid #e2e8f0;
     background: #fff;
     border-radius: 9999px;
@@ -4684,6 +4707,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
     color: #334155;
     cursor: pointer;
   }
+  /* On mobile topbar, keep the pill icon-only so the title can fit */
+  .mobile-filter-pill .mobile-filter-label { display: none; }
   .mobile-filter-pill.has-filters {
     border-color: #0f5f88;
     color: #0f5f88;
@@ -5222,20 +5247,58 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
     padding: 12px 14px 10px;
   }
 
-  /* Pseudo-label before the History / Issues / Tasks cells (thead is hidden) */
-  body.mobile-simplified #table-section .data-table td:nth-child(2)::before,
-  body.mobile-simplified #table-section .data-table td:nth-child(3)::before,
-  body.mobile-simplified #table-section .data-table td:nth-child(4)::before {
-    display: block;
+  /* Expand / collapse all toggle sits above the cards on mobile */
+  body.mobile-simplified #table-section .mobile-expand-all-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 2px 10px;
+    padding: 6px 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 9999px;
+    background: #fff;
+    color: #334155;
+    font: 600 12px/1 'Inter', system-ui, sans-serif;
+    cursor: pointer;
+  }
+  body.mobile-simplified #table-section .mobile-expand-all-btn:hover,
+  body.mobile-simplified #table-section .mobile-expand-all-btn:active {
+    background: #f1f5f9;
+  }
+
+  /* Letter-cell accordion: tappable header + collapsible body (mobile only) */
+  body.mobile-simplified #table-section .data-table td[data-cell-section] {
+    padding: 0;
+  }
+  body.mobile-simplified #table-section .data-table td[data-cell-section] .cell-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 12px 14px;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
     font: 700 11px/1 'Inter', system-ui, sans-serif;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: #64748b;
-    margin-bottom: 6px;
+    text-align: left;
   }
-  body.mobile-simplified #table-section .data-table td:nth-child(2)::before { content: 'History'; }
-  body.mobile-simplified #table-section .data-table td:nth-child(3)::before { content: 'Issues'; }
-  body.mobile-simplified #table-section .data-table td:nth-child(4)::before { content: 'Tasks'; }
+  body.mobile-simplified #table-section .data-table td[data-cell-section] .cell-toggle-chevron {
+    transition: transform 160ms ease;
+    color: #94a3b8;
+  }
+  body.mobile-simplified #table-section .data-table td[data-cell-section].is-open .cell-toggle-chevron {
+    transform: rotate(180deg);
+  }
+  body.mobile-simplified #table-section .data-table td[data-cell-section] .cell-body {
+    display: none;
+    padding: 0 14px 12px;
+  }
+  body.mobile-simplified #table-section .data-table td[data-cell-section].is-open .cell-body {
+    display: block;
+  }
 
   /* Name cell: keep name, summary, chips comfortable on a small screen */
   body.mobile-simplified #table-section .data-table td:first-child .name-row {

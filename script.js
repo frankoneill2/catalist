@@ -2556,6 +2556,7 @@ function startRealtimeTable() {
       tr.appendChild(tdName);
       for (const letter of ['B','E','F']) {
         const td = document.createElement('td');
+        td.dataset.cellSection = letter;
         if (letter === 'F') {
           const wrap = document.createElement('div'); wrap.className = 'cell-tasks';
           const ul = document.createElement('ul'); wrap.appendChild(ul);
@@ -2728,6 +2729,8 @@ function startRealtimeTable() {
               let overPanel = false;
               let savePanelDraft = null;
               let scrollRaf = 0;
+              let inlineMode = false;
+              const isMobileViewport = () => !!(window.matchMedia && window.matchMedia('(max-width: 900px)').matches);
               const positionPanel = () => {
                 if (!panel) return;
                 const r = info.getBoundingClientRect();
@@ -2777,6 +2780,7 @@ function startRealtimeTable() {
                 if (panel) { panel.remove(); panel = null; }
                 body = null;
                 persisted = false;
+                inlineMode = false;
                 info.setAttribute('aria-expanded', 'false');
                 document.removeEventListener('mousedown', onDocDown, true);
                 document.removeEventListener('keydown', onKeyDown, true);
@@ -2787,8 +2791,15 @@ function startRealtimeTable() {
               };
               const openPanel = ({ focusText } = {}) => {
                 if (panel) { if (focusText) body?.focus(); return; }
+                inlineMode = isMobileViewport();
+                // On mobile: close any other inline detail already open in the
+                // same cell so the accordion behaviour matches the section toggles.
+                if (inlineMode) {
+                  const host = line.parentElement;
+                  if (host) host.querySelectorAll('.cell-body-panel--inline').forEach(p => p.remove());
+                }
                 panel = document.createElement('div');
-                panel.className = 'cell-body-panel';
+                panel.className = inlineMode ? 'cell-body-panel cell-body-panel--inline' : 'cell-body-panel';
                 panel.setAttribute('role', 'dialog');
                 panel.setAttribute('aria-label', 'Item detail');
 
@@ -2828,8 +2839,13 @@ function startRealtimeTable() {
                 pointer.className = 'cell-body-pointer';
                 panel.appendChild(pointer);
 
-                document.body.appendChild(panel);
-                requestAnimationFrame(positionPanel);
+                if (inlineMode) {
+                  // Render directly beneath the line — no absolute positioning.
+                  line.insertAdjacentElement('afterend', panel);
+                } else {
+                  document.body.appendChild(panel);
+                  requestAnimationFrame(positionPanel);
+                }
 
                 savePanelDraft = () => {
                   const next = (body.textContent || '');
@@ -2861,25 +2877,34 @@ function startRealtimeTable() {
                 panel.addEventListener('mouseenter', () => { overPanel = true; });
                 panel.addEventListener('mouseleave', () => {
                   overPanel = false;
-                  if (!persisted && !overBtn) setTimeout(() => { if (!persisted && !overBtn && panel) cleanup(); }, 160);
+                  if (!persisted && !overBtn && !inlineMode) setTimeout(() => { if (!persisted && !overBtn && panel) cleanup(); }, 160);
                 });
                 panel.addEventListener('mousedown', promote);
-                window.addEventListener('resize', positionPanel);
-                window.addEventListener('scroll', onScroll, true);
+                if (!inlineMode) {
+                  window.addEventListener('resize', positionPanel);
+                  window.addEventListener('scroll', onScroll, true);
+                }
+                if (inlineMode) {
+                  // Inline accordions behave as toggles on tap, so mark persistent
+                  // immediately (no hover-peek state on touch devices).
+                  promote();
+                }
                 if (focusText) setTimeout(() => body.focus(), 0);
               };
               info.addEventListener('mouseenter', () => {
+                if (isMobileViewport()) return;
                 overBtn = true;
                 if (!persisted) openPanel();
               });
               info.addEventListener('mouseleave', () => {
+                if (isMobileViewport()) return;
                 overBtn = false;
                 if (!persisted && !overPanel) setTimeout(() => { if (!persisted && !overBtn && panel) cleanup(); }, 160);
               });
               info.addEventListener('click', (e) => {
                 e.stopPropagation();
-                if (!panel) openPanel({ focusText: true });
-                else body?.focus();
+                if (panel) { cleanup(); return; }
+                openPanel({ focusText: true });
               });
               line.appendChild(info);
               container.appendChild(line);
@@ -2961,6 +2986,26 @@ function startRealtimeTable() {
           // Per-line info icons handle body previews; remove old cell-level info button
           td.appendChild(container);
         }
+        // Wrap the cell's content in a collapsible body with a tappable header
+        // so that on mobile each section (History / Issues / Tasks) can be
+        // expanded/collapsed independently. Desktop CSS keeps body always-visible.
+        const sectionLabels = { B: 'History', E: 'Issues', F: 'Tasks' };
+        const cellToggle = document.createElement('button');
+        cellToggle.type = 'button';
+        cellToggle.className = 'cell-toggle';
+        cellToggle.setAttribute('aria-expanded', 'false');
+        cellToggle.innerHTML = `<span class="cell-toggle-label">${sectionLabels[letter]}</span><svg class="cell-toggle-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false" width="14" height="14"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+        cellToggle.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const next = !td.classList.contains('is-open');
+          td.classList.toggle('is-open', next);
+          cellToggle.setAttribute('aria-expanded', String(next));
+        });
+        const cellBody = document.createElement('div');
+        cellBody.className = 'cell-body';
+        while (td.firstChild) cellBody.appendChild(td.firstChild);
+        td.appendChild(cellToggle);
+        td.appendChild(cellBody);
         tr.appendChild(td);
       }
       if (renderAsDischarged) {
@@ -5515,6 +5560,19 @@ window.addEventListener('DOMContentLoaded', async () => {
   const filtersKey = 'tableFiltersHidden';
   if (hideFiltersBtn) hideFiltersBtn.addEventListener('click', () => setTableFiltersHidden(true));
   if (showFiltersBtn) showFiltersBtn.addEventListener('click', () => setTableFiltersHidden(false));
+  const expandAllBtn = document.getElementById('mobile-expand-all-btn');
+  if (expandAllBtn) expandAllBtn.addEventListener('click', () => {
+    const pressed = expandAllBtn.getAttribute('aria-pressed') === 'true';
+    const next = !pressed;
+    expandAllBtn.setAttribute('aria-pressed', String(next));
+    expandAllBtn.textContent = next ? 'Collapse all' : 'Expand all';
+    const cells = tableRoot ? tableRoot.querySelectorAll('td[data-cell-section]') : [];
+    cells.forEach((td) => {
+      td.classList.toggle('is-open', next);
+      const tog = td.querySelector('.cell-toggle');
+      if (tog) tog.setAttribute('aria-expanded', String(next));
+    });
+  });
   try {
     const stored = localStorage.getItem(filtersKey);
     const hidden = stored === null ? true : stored === '1';
@@ -7568,9 +7626,30 @@ function refreshMobileTopbar() {
     else if (activeTab === 'updates') titleEl.textContent = 'Updates';
     else titleEl.textContent = 'My Tasks';
   }
-  if (searchBtn) searchBtn.hidden = (activeTab !== 'my');
-  if (filterBtn) filterBtn.hidden = (activeTab !== 'my');
+  const searchInactive = (activeTab !== 'my');
+  const filterInactive = (activeTab !== 'my');
+  if (searchBtn) {
+    searchBtn.hidden = false;
+    searchBtn.classList.toggle('is-reserved', searchInactive);
+    searchBtn.setAttribute('aria-hidden', String(searchInactive));
+    searchBtn.tabIndex = searchInactive ? -1 : 0;
+  }
+  if (filterBtn) {
+    filterBtn.hidden = false;
+    filterBtn.classList.toggle('is-reserved', filterInactive);
+    filterBtn.setAttribute('aria-hidden', String(filterInactive));
+    filterBtn.tabIndex = filterInactive ? -1 : 0;
+  }
   if (fab) fab.hidden = (activeTab !== 'table');
+
+  const searchBar = document.getElementById('mobile-search-bar');
+  const searchInput = document.getElementById('mobile-search-input');
+  if (activeTab !== 'my' && searchBar && !searchBar.hidden) {
+    searchBar.hidden = true;
+    if (searchInput) searchInput.value = '';
+    currentUserSearch = '';
+    try { saveUserFilterState(); } catch {}
+  }
 
   updateFilterPillBadge();
 }
