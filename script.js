@@ -612,24 +612,20 @@ function setTableFiltersHidden(hidden) {
   const bar = document.getElementById('table-tags-controls');
   const root = document.getElementById('table-section');
   if (!bar || !root) return;
-  let ph = document.getElementById('filters-placeholder');
+  const showBtn = document.getElementById('show-filters-btn');
   if (hidden) {
     bar.style.display = 'none';
-    if (!ph) {
-      ph = document.createElement('div'); ph.id = 'filters-placeholder'; ph.className = 'filters-placeholder';
-      root.insertBefore(ph, document.getElementById('table-root'));
+    if (showBtn) {
+      showBtn.hidden = false;
+      if (!showBtn.dataset.bound) {
+        showBtn.addEventListener('click', () => setTableFiltersHidden(false));
+        showBtn.dataset.bound = '1';
+      }
     }
-    ph.innerHTML = '';
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'show-filters-btn';
-    btn.textContent = 'Show Filters';
-    btn.addEventListener('click', () => setTableFiltersHidden(false));
-    ph.appendChild(btn);
     try { localStorage.setItem('tableFiltersHidden', '1'); } catch {}
   } else {
     bar.style.display = '';
-    if (ph) ph.remove();
+    if (showBtn) showBtn.hidden = true;
     try { localStorage.setItem('tableFiltersHidden', '0'); } catch {}
   }
   scheduleTableStickyOffsetUpdate();
@@ -3093,14 +3089,49 @@ function startRealtimeTable() {
           if (wardId !== lastWardIdActive) {
             const hdrTr = document.createElement('tr');
             hdrTr.className = 'ward-group-header-row';
+            hdrTr.dataset.wardId = wardId || '__none__';
             const hdrTd = document.createElement('td');
             hdrTd.colSpan = 4;
             hdrTd.className = 'ward-group-header-cell';
-            hdrTd.textContent = resolveWardLabel(wardId);
+            const toggle = document.createElement('button');
+            toggle.type = 'button';
+            toggle.className = 'ward-group-toggle';
+            toggle.setAttribute('aria-expanded', 'true');
+            toggle.innerHTML = `<span class="ward-group-label"></span><svg class="ward-group-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false" width="22" height="22"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+            toggle.querySelector('.ward-group-label').textContent = resolveWardLabel(wardId);
+            toggle.addEventListener('click', () => {
+              const expanded = toggle.getAttribute('aria-expanded') === 'true';
+              const next = !expanded;
+              toggle.setAttribute('aria-expanded', next ? 'true' : 'false');
+              const key = hdrTr.dataset.wardId;
+              const rows = tbody.querySelectorAll(`tr.ward-group-patient[data-ward-id="${CSS.escape(key)}"]`);
+              rows.forEach(r => { r.hidden = !next; });
+              try {
+                const collapsed = JSON.parse(sessionStorage.getItem('mobileWardsCollapsed') || '[]');
+                const set = new Set(collapsed);
+                if (next) set.delete(key); else set.add(key);
+                sessionStorage.setItem('mobileWardsCollapsed', JSON.stringify([...set]));
+              } catch {}
+            });
+            hdrTd.appendChild(toggle);
             hdrTr.appendChild(hdrTd);
             tbody.appendChild(hdrTr);
             lastWardIdActive = wardId;
+            // Restore collapsed state from session
+            try {
+              const collapsed = JSON.parse(sessionStorage.getItem('mobileWardsCollapsed') || '[]');
+              if (collapsed.includes(hdrTr.dataset.wardId)) {
+                toggle.setAttribute('aria-expanded', 'false');
+              }
+            } catch {}
           }
+          tr.classList.add('ward-group-patient');
+          tr.dataset.wardId = wardId || '__none__';
+          // Apply existing collapse state
+          try {
+            const collapsed = JSON.parse(sessionStorage.getItem('mobileWardsCollapsed') || '[]');
+            if (collapsed.includes(tr.dataset.wardId)) tr.hidden = true;
+          } catch {}
         }
         tbody.appendChild(tr);
         visibleCases += 1;
