@@ -101,9 +101,6 @@ function mountUserToolbar() {
     const [priority, setPriority] = useState<Priority>('all');
     const [sort, setSort] = useState<Sort>('none');
     const [search, setSearch] = useState('');
-    const [assignee, setAssignee] = useState<string>('me');
-    const [userOptions, setUserOptions] = useState<string[]>([]);
-    
     const toggleStatus = (s: Status) => {
       setStatuses(prev => {
         const next = new Set(prev);
@@ -120,46 +117,20 @@ function mountUserToolbar() {
       dispatch('userToolbar:clear', {});
     };
     const onSearchChange = (q: string) => { setSearch(q); dispatch('userToolbar:search', { query: q }); };
-    const onAssigneeChange = (a: string) => { setAssignee(a); dispatch('userToolbar:assignee', { assignee: a }); };
-
-    // Receive user list for Assignee options
-    useEffect(() => {
-      const handler = (e: any) => {
-        const d = (e && e.detail) || {};
-        if (Array.isArray(d.users)) setUserOptions(d.users as string[]);
-      };
-      document.addEventListener('userToolbar:users', handler);
-      return () => document.removeEventListener('userToolbar:users', handler);
-    }, []);
 
     const selected = useMemo(() => statuses, [statuses]);
-    const debug = (() => { try { return new URL(window.location.href).searchParams.get('debug') === '1'; } catch { return false; } })();
-    useEffect(() => {
-      if (!debug) return;
-      console.log('[MyTasksToolbar] mounted', { assignee, users: userOptions });
-    }, [debug]);
     return (
-      <>
-        <TaskToolbar
-          selectedStatuses={selected}
-          onToggleStatus={toggleStatus}
-          priority={priority}
-          onPriorityChange={onPriorityChange}
-          sort={sort}
-          onSortChange={onSortChange}
-          onClear={onClear}
-          search={search}
-          onSearchChange={onSearchChange}
-          assignee={assignee}
-          assigneeOptions={userOptions}
-          onAssigneeChange={onAssigneeChange}
-        />
-        {debug && (
-          <div style={{marginTop:'6px', padding:'6px 8px', border:'1px dashed #c7d2fe', borderRadius:'8px', background:'#eef2ff', color:'#1e3a8a', fontSize:'12px'}}>
-            Debug: My Tasks toolbar mounted — assignee: <strong>{assignee}</strong>; users: {userOptions.length}
-          </div>
-        )}
-      </>
+      <TaskToolbar
+        selectedStatuses={selected}
+        onToggleStatus={toggleStatus}
+        priority={priority}
+        onPriorityChange={onPriorityChange}
+        sort={sort}
+        onSortChange={onSortChange}
+        onClear={onClear}
+        search={search}
+        onSearchChange={onSearchChange}
+      />
     );
   };
 

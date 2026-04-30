@@ -81,7 +81,7 @@
     <div class="tabs-bar">
       <div id="main-tabs" class="tabs">
         <button id="tab-table" class="tab active" role="tab" aria-selected="true" aria-controls="table-section">Table</button>
-        <button id="tab-my" class="tab" role="tab" aria-selected="false" aria-controls="user-detail">My Tasks</button>
+        <button id="tab-my" class="tab" role="tab" aria-selected="false" aria-controls="user-detail">Task list</button>
         <button id="tab-updates" class="tab" role="tab" aria-selected="false" aria-controls="updates-section">Updates</button>
       </div>
       <div class="tabs-actions">
@@ -220,6 +220,10 @@
 
     <section id="user-detail" class="card" hidden>
       <h2 id="user-title" class="case-heading"></h2>
+      <div id="user-mode-toggle" class="mode-toggle" role="tablist" aria-label="Task list view">
+        <button type="button" class="mode-toggle-btn active" data-mode="me" role="tab" aria-selected="true">My Tasks</button>
+        <button type="button" class="mode-toggle-btn" data-mode="all" role="tab" aria-selected="false">All Tasks</button>
+      </div>
       <div id="user-toolbar-root" style="margin-bottom: 8px"></div>
       <ul id="user-task-list"></ul>
     </section>

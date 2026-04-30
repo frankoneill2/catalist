@@ -3091,6 +3091,67 @@ kbd {
   letter-spacing: 0.01em;
 }
 
+.task-list-sub {
+  color: #64748b;
+  font-weight: 500;
+  font-size: 0.85em;
+}
+
+.mode-toggle {
+  display: inline-flex;
+  background: #eef2f7;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+  margin-bottom: 12px;
+  align-self: flex-start;
+}
+.mode-toggle-btn {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 8px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #475569;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+  letter-spacing: 0.01em;
+}
+.mode-toggle-btn:hover { color: #0f172a; }
+.mode-toggle-btn.active {
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.user-case-card--empty {
+  background: #f8fafc;
+  border: 1px dashed #e2e8f0;
+  box-shadow: none;
+  padding: 8px 12px;
+  margin-bottom: 6px;
+}
+.user-case-card--empty .user-case-header {
+  margin: 0;
+  padding: 0;
+}
+.user-case-card--empty .user-case-header h3 {
+  font-weight: 500;
+}
+.user-case-card--empty .link-btn {
+  color: #475569;
+  font-weight: 500;
+}
+.user-case-empty-label {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  font-style: italic;
+  margin-left: auto;
+}
+
 /* =============================================================================
    Catalist — Clinical UI (v2)
    A disciplined, dense, information-first redesign for hospital workflows.
@@ -5049,6 +5110,20 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
     font-size: 13px;
     font-weight: 600;
     color: #0f172a;
+  }
+  .mt-section--patient-empty .mt-section-head--patient {
+    background: #fafbfc;
+    color: #64748b;
+  }
+  .mt-section--patient-empty .mt-section-head--patient .mt-patient-name {
+    font-weight: 500;
+  }
+  .mt-patient-no-tasks {
+    padding: 6px 14px 10px;
+    font-size: 12px;
+    color: #94a3b8;
+    font-style: italic;
+    background: #fff;
   }
 
   .mt-section-body {

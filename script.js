@@ -90,6 +90,8 @@ let currentTaskOrder = null;
 let userPerCase = new Map(); // caseId -> [{ taskId, text, status }]
 let userCaseTitles = new Map(); // caseId -> title
 let userCaseMeta = new Map(); // caseId -> { title, wardId, bedId }
+// All non-discharged cases for the My Tasks page (so patients without tasks still appear)
+let allCasesMeta = new Map(); // caseId -> { title, wardId, bedId }
 let currentUserFilter = 'all';
 let userFilterEl; // legacy single-select (no longer used)
 let currentUserStatusSet = new Set(['open', 'in progress', 'complete']);
@@ -5750,6 +5752,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   userTitleEl = document.getElementById('user-title');
   userTaskListEl = document.getElementById('user-task-list');
   userBackBtn = document.getElementById('user-back-btn');
+  setupTaskListModeToggle();
   brandHome = document.getElementById('brand-home');
   headerClockEl = document.getElementById('header-clock');
   sessionUserChipEl = document.getElementById('session-user-chip');
@@ -6569,12 +6572,45 @@ function openUser(name) {
 
 function setUserHeader() {
   if (!userTitleEl) return;
-  let label = '';
-  if (currentAssigneeFilter === 'all') label = 'All tasks';
-  else if (currentAssigneeFilter === 'unassigned') label = 'Unassigned tasks';
-  else if (currentAssigneeFilter === 'me') label = `${username || currentUserPageName || 'Me'}'s tasks`;
-  else if (currentAssigneeFilter.startsWith('name:')) label = `${currentAssigneeFilter.slice(5)}'s tasks`;
-  userTitleEl.innerHTML = `${label} <button id="change-user-link" class="change-user-link" type="button">(Change user)</button>`;
+  let sub = '';
+  if (currentAssigneeFilter === 'unassigned') sub = ' · Unassigned';
+  else if (currentAssigneeFilter.startsWith('name:')) sub = ` · ${currentAssigneeFilter.slice(5)}`;
+  userTitleEl.innerHTML = `Task list<span class="task-list-sub">${sub}</span> <button id="change-user-link" class="change-user-link" type="button">(Change user)</button>`;
+  syncTaskListModeToggle();
+}
+
+function syncTaskListModeToggle() {
+  const wrap = document.getElementById('user-mode-toggle');
+  if (!wrap) return;
+  const mode = currentAssigneeFilter === 'all' ? 'all' : 'me';
+  wrap.querySelectorAll('.mode-toggle-btn').forEach((btn) => {
+    const active = btn.dataset.mode === mode;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', String(active));
+  });
+}
+
+function setupTaskListModeToggle() {
+  const wrap = document.getElementById('user-mode-toggle');
+  if (!wrap || wrap.dataset.bound === '1') return;
+  wrap.dataset.bound = '1';
+  wrap.addEventListener('click', (e) => {
+    const btn = e.target.closest('.mode-toggle-btn');
+    if (!btn) return;
+    const mode = btn.dataset.mode === 'all' ? 'all' : 'me';
+    if (currentAssigneeFilter === mode) return;
+    currentAssigneeFilter = mode;
+    saveUserFilterState();
+    setUserHeader();
+    const cached = userTasksCacheByKey.get(assigneeKey());
+    if (cached && cached.perCase && cached.titles) {
+      userPerCase = new Map(cached.perCase);
+      userCaseTitles = new Map(cached.titles);
+      if (cached.meta) userCaseMeta = new Map(cached.meta);
+      renderUserTasks();
+    }
+    startRealtimeUserTasks(currentUserPageName || username);
+  });
 }
 
 function assigneeKey() {
@@ -6731,6 +6767,29 @@ async function startRealtimeUserTasks(name) {
     attachSource('assigned', query(tasksRef, where('assignee', '==', targetUser)));
     attachSource('open', query(tasksRef, where('assignee', '==', null)));
   }
+
+  // Subscribe to all cases so patients without active tasks still appear
+  const casesUnsub = onSnapshot(collection(db, 'cases'), async (snap) => {
+    const next = new Map();
+    const decryptJobs = [];
+    for (const d of snap.docs) {
+      const dat = d.data() || {};
+      if (isCaseDischarged(dat)) continue;
+      const ct = dat.caseTags || {};
+      const entry = { title: '(case)', wardId: ct.location || null, bedId: ct.room || null };
+      next.set(d.id, entry);
+      decryptJobs.push(
+        safeDecryptText(dat.titleCipher, dat.titleIv)
+          .then((t) => { entry.title = t || '(case)'; })
+          .catch(() => {})
+      );
+    }
+    await Promise.all(decryptJobs);
+    allCasesMeta = next;
+    if (userTasksEditing) { userTasksRebuildPending = true; return; }
+    renderUserTasks();
+  }, (err) => console.error('All cases listener error', err));
+  unsubUserTasks.push(casesUnsub);
 }
 
 function renderUserTasks() {
@@ -6743,19 +6802,19 @@ function renderUserTasks() {
   const targetUser = currentAssigneeFilter === 'me'
     ? (username || currentUserPageName)
     : (currentAssigneeFilter.startsWith('name:') ? currentAssigneeFilter.slice(5) : (username || currentUserPageName));
-  const sections = {
+  const buckets = {
     pending: new Map(),
-    assigned: new Map(),
-    open: new Map(),
+    main: new Map(),
     completedOld: new Map(),
   };
 
-  const addToSection = (section, caseId, item) => {
-    if (!sections[section].has(caseId)) sections[section].set(caseId, []);
-    sections[section].get(caseId).push(item);
+  const addToBucket = (bucket, caseId, item) => {
+    if (!buckets[bucket].has(caseId)) buckets[bucket].set(caseId, []);
+    buckets[bucket].get(caseId).push(item);
   };
 
   for (const [caseId, originalItems] of userPerCase.entries()) {
+    if (!allCasesMeta.has(caseId)) continue; // skip discharged or missing cases
     let items = originalItems || [];
     if (currentUserStatusSet && currentUserStatusSet.size) items = items.filter(i => currentUserStatusSet.has(i.status));
     if (currentUserPriorityFilter !== 'all') items = items.filter(i => (i.priority || '') === currentUserPriorityFilter);
@@ -6768,40 +6827,31 @@ function renderUserTasks() {
       const pending = normalizeTaskAssignmentState(it) === TASK_ASSIGNMENT.PENDING && !!it.assignee;
       const oldDone = it.status === 'complete' && !isCompletedToday(it);
       const isMine = (it.assignee === targetUser);
-      const visibleHere = (currentAssigneeFilter === 'unassigned')
-        ? openTask
-        : (currentAssigneeFilter === 'all' || openTask || isMine);
-      if (oldDone && visibleHere) {
-        addToSection('completedOld', caseId, it);
-        continue;
-      }
-      if (currentAssigneeFilter === 'unassigned') {
-        if (openTask) addToSection('open', caseId, it);
-        continue;
-      }
-      if (currentAssigneeFilter === 'all') {
-        if (openTask) addToSection('open', caseId, it);
-        else if (pending) addToSection('pending', caseId, it);
-        else addToSection('assigned', caseId, it);
-        continue;
-      }
-      if (openTask) addToSection('open', caseId, it);
-      else if (isMine && pending) addToSection('pending', caseId, it);
-      else if (isMine) addToSection('assigned', caseId, it);
+      let include = false;
+      if (currentAssigneeFilter === 'all') include = true;
+      else if (currentAssigneeFilter === 'unassigned') include = openTask;
+      else include = isMine || openTask;
+      if (!include) continue;
+      if (oldDone) { addToBucket('completedOld', caseId, it); continue; }
+      const includePending = pending && (currentAssigneeFilter === 'all' || isMine);
+      if (includePending) addToBucket('pending', caseId, it);
+      else addToBucket('main', caseId, it);
     }
   }
 
   const priVal = (p) => p === 'high' ? 3 : p === 'medium' ? 2 : p === 'low' ? 1 : 0;
   const tsVal = (ts) => (ts && ts.toMillis) ? ts.toMillis() : 0;
-  const sortCases = (map) => Array.from(map.keys()).sort((a, b) => {
-    const ma = userCaseMeta.get(a) || {};
-    const mb = userCaseMeta.get(b) || {};
+  const metaFor = (cid) => allCasesMeta.get(cid) || userCaseMeta.get(cid) || {};
+  const titleFor = (cid) => metaFor(cid).title || userCaseTitles.get(cid) || '(case)';
+  const sortCaseIds = (ids) => ids.slice().sort((a, b) => {
+    const ma = metaFor(a), mb = metaFor(b);
     const wka = mtWardSortKey(ma.wardId), wkb = mtWardSortKey(mb.wardId);
     if (wka !== wkb) return wka < wkb ? -1 : 1;
     const bka = mtBedSortKey(ma.wardId, ma.bedId), bkb = mtBedSortKey(mb.wardId, mb.bedId);
     if (bka !== bkb) return bka < bkb ? -1 : 1;
-    return (userCaseTitles.get(a) || '').localeCompare(userCaseTitles.get(b) || '');
+    return (titleFor(a)).localeCompare(titleFor(b));
   });
+  const sortCases = (map) => sortCaseIds(Array.from(map.keys()));
   const sectionCount = (map) => Array.from(map.values()).reduce((sum, arr) => sum + arr.length, 0);
 
   const buildUserTaskRow = (caseId, title, it) => {
@@ -7034,54 +7084,43 @@ function renderUserTasks() {
     return li;
   };
 
-  const renderSection = (sectionKey, titleLabel, opts = {}) => {
-    const map = sections[sectionKey];
-    const total = sectionCount(map);
-    if (!total) return false;
-    const wrap = document.createElement('section');
-    wrap.className = `task-section task-section--${sectionKey}`;
-    const head = document.createElement('div');
-    head.className = 'task-section-head';
-    const h = document.createElement('h3');
-    h.textContent = titleLabel;
-    const badge = document.createElement('span');
-    badge.className = 'badge';
-    badge.textContent = String(total);
-    head.appendChild(h);
-    head.appendChild(badge);
-    wrap.appendChild(head);
-
-    for (const caseId of sortCases(map)) {
-      const items = map.get(caseId) || [];
-      if (!items.length) continue;
-      const caseTitle = userCaseTitles.get(caseId) || '(case)';
-      const cmeta = userCaseMeta.get(caseId) || {};
-      const wardName = cmeta.wardId ? (mtWardName(cmeta.wardId) || '') : '';
-      const bedName = mtBedName(cmeta.wardId, cmeta.bedId) || '';
-      const caseCard = document.createElement('div');
-      caseCard.className = 'card user-case-card';
-      const header = document.createElement('div');
-      header.className = 'user-case-header';
-      const hh = document.createElement('h3');
-      const link = document.createElement('button');
-      link.className = 'link-btn';
-      link.textContent = caseTitle;
-      link.setAttribute('aria-label', `Open case ${caseTitle}`);
-      link.addEventListener('click', () => openCase(caseId, caseTitle, 'user', 'notes'));
-      hh.appendChild(link);
-      header.appendChild(hh);
-      if (wardName || bedName) {
-        const loc = document.createElement('span');
-        loc.className = 'user-case-loc';
-        loc.textContent = [bedName, wardName].filter(Boolean).join(' · ');
-        header.appendChild(loc);
-      }
+  const buildPatientCard = (caseId, items, opts = {}) => {
+    const caseTitle = titleFor(caseId);
+    const cmeta = metaFor(caseId);
+    const wardName = cmeta.wardId ? (mtWardName(cmeta.wardId) || '') : '';
+    const bedName = mtBedName(cmeta.wardId, cmeta.bedId) || '';
+    const caseCard = document.createElement('div');
+    caseCard.className = 'card user-case-card' + (items.length ? '' : ' user-case-card--empty');
+    const header = document.createElement('div');
+    header.className = 'user-case-header';
+    const hh = document.createElement('h3');
+    const link = document.createElement('button');
+    link.className = 'link-btn';
+    link.textContent = caseTitle;
+    link.setAttribute('aria-label', `Open case ${caseTitle}`);
+    link.addEventListener('click', () => openCase(caseId, caseTitle, 'user', 'notes'));
+    hh.appendChild(link);
+    header.appendChild(hh);
+    if (wardName || bedName) {
+      const loc = document.createElement('span');
+      loc.className = 'user-case-loc';
+      loc.textContent = [bedName, wardName].filter(Boolean).join(' · ');
+      header.appendChild(loc);
+    }
+    if (items.length) {
       const countBadge = document.createElement('span');
       countBadge.className = 'badge';
       countBadge.textContent = String(items.length);
       header.appendChild(countBadge);
-      caseCard.appendChild(header);
+    } else {
+      const noTasks = document.createElement('span');
+      noTasks.className = 'user-case-empty-label';
+      noTasks.textContent = 'No tasks';
+      header.appendChild(noTasks);
+    }
+    caseCard.appendChild(header);
 
+    if (items.length) {
       let sorted = [...items];
       if (opts.pendingSort) {
         sorted.sort((a,b) => tsVal(b.assignedAt) - tsVal(a.assignedAt));
@@ -7090,14 +7129,61 @@ function renderUserTasks() {
       const ul = document.createElement('ul');
       for (const it of sorted) ul.appendChild(buildUserTaskRow(caseId, caseTitle, it));
       caseCard.appendChild(ul);
-      wrap.appendChild(caseCard);
+    }
+    return caseCard;
+  };
+
+  const renderPendingSection = () => {
+    const map = buckets.pending;
+    const total = sectionCount(map);
+    if (!total) return false;
+    const wrap = document.createElement('section');
+    wrap.className = 'task-section task-section--pending';
+    const head = document.createElement('div');
+    head.className = 'task-section-head';
+    const h = document.createElement('h3');
+    h.textContent = currentAssigneeFilter === 'all' ? 'Pending Acceptance' : 'Pending Your Acceptance';
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.textContent = String(total);
+    head.appendChild(h);
+    head.appendChild(badge);
+    wrap.appendChild(head);
+    for (const caseId of sortCases(map)) {
+      const items = map.get(caseId) || [];
+      if (!items.length) continue;
+      wrap.appendChild(buildPatientCard(caseId, items, { pendingSort: true }));
+    }
+    userTaskListEl.appendChild(wrap);
+    return true;
+  };
+
+  const renderPatientsSection = () => {
+    const ids = sortCaseIds(Array.from(allCasesMeta.keys()));
+    if (!ids.length) return false;
+    const wrap = document.createElement('section');
+    wrap.className = 'task-section task-section--patients';
+    const head = document.createElement('div');
+    head.className = 'task-section-head';
+    const h = document.createElement('h3');
+    h.textContent = currentAssigneeFilter === 'all' ? 'All tasks by patient' : (currentAssigneeFilter === 'unassigned' ? 'Unassigned tasks by patient' : 'Patients');
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    const total = sectionCount(buckets.main);
+    badge.textContent = String(total);
+    head.appendChild(h);
+    head.appendChild(badge);
+    wrap.appendChild(head);
+    for (const caseId of ids) {
+      const items = buckets.main.get(caseId) || [];
+      wrap.appendChild(buildPatientCard(caseId, items));
     }
     userTaskListEl.appendChild(wrap);
     return true;
   };
 
   const renderCompletedOlderSection = () => {
-    const map = sections.completedOld;
+    const map = buckets.completedOld;
     const total = sectionCount(map);
     if (!total) return false;
     const wrap = document.createElement('section');
@@ -7128,29 +7214,8 @@ function renderUserTasks() {
     for (const caseId of sortCases(map)) {
       const items = map.get(caseId) || [];
       if (!items.length) continue;
-      const caseTitle = userCaseTitles.get(caseId) || '(case)';
-      const caseCard = document.createElement('div');
-      caseCard.className = 'card user-case-card';
-      const header = document.createElement('div');
-      header.className = 'user-case-header';
-      const hh = document.createElement('h3');
-      const link = document.createElement('button');
-      link.className = 'link-btn';
-      link.textContent = caseTitle;
-      link.setAttribute('aria-label', `Open case ${caseTitle}`);
-      link.addEventListener('click', () => openCase(caseId, caseTitle, 'user', 'notes'));
-      hh.appendChild(link);
-      header.appendChild(hh);
-      const countBadge = document.createElement('span');
-      countBadge.className = 'badge';
-      countBadge.textContent = String(items.length);
-      header.appendChild(countBadge);
-      caseCard.appendChild(header);
       const sorted = [...items].sort((a, b) => tsVal(b.completedAt) - tsVal(a.completedAt));
-      const ul = document.createElement('ul');
-      for (const it of sorted) ul.appendChild(buildUserTaskRow(caseId, caseTitle, it));
-      caseCard.appendChild(ul);
-      body.appendChild(caseCard);
+      body.appendChild(buildPatientCard(caseId, sorted));
     }
     wrap.appendChild(body);
 
@@ -7166,21 +7231,12 @@ function renderUserTasks() {
     return true;
   };
 
-  let rendered = false;
-  if (currentAssigneeFilter === 'unassigned') {
-    rendered = renderSection('open', 'Open Tasks', {}) || rendered;
-  } else {
-    const pendingLabel = (currentAssigneeFilter === 'all')
-      ? 'Pending Acceptance'
-      : `Pending Your Acceptance`;
-    rendered = renderSection('pending', pendingLabel, { pendingSort: true }) || rendered;
-    rendered = renderSection('assigned', 'Assigned Tasks', {}) || rendered;
-    rendered = renderSection('open', 'Open Tasks', {}) || rendered;
-  }
-  rendered = renderCompletedOlderSection() || rendered;
+  renderPendingSection();
+  renderPatientsSection();
+  renderCompletedOlderSection();
 
-  if (!rendered) {
-    userTaskListEl.innerHTML = '<li style="list-style:none;color:var(--muted);padding:8px 0;">No tasks match current filters.</li>';
+  if (!userTaskListEl.children.length) {
+    userTaskListEl.innerHTML = '<li style="list-style:none;color:var(--muted);padding:8px 0;">No patients to show.</li>';
   }
 }
 
@@ -7300,10 +7356,10 @@ function renderUserTasksMobile() {
   // Update header title according to filter state
   const titleEl = document.getElementById('mobile-topbar-title');
   if (titleEl) {
-    if (currentAssigneeFilter === 'all') titleEl.textContent = 'All tasks';
-    else if (currentAssigneeFilter === 'unassigned') titleEl.textContent = 'Unassigned';
-    else if (currentAssigneeFilter.startsWith('name:')) titleEl.textContent = `${currentAssigneeFilter.slice(5)}'s tasks`;
-    else titleEl.textContent = 'My Tasks';
+    if (currentAssigneeFilter === 'all') titleEl.textContent = 'Task list · All';
+    else if (currentAssigneeFilter === 'unassigned') titleEl.textContent = 'Task list · Unassigned';
+    else if (currentAssigneeFilter.startsWith('name:')) titleEl.textContent = `Task list · ${currentAssigneeFilter.slice(5)}`;
+    else titleEl.textContent = 'Task list';
   }
   updateFilterPillBadge();
 
@@ -7311,12 +7367,17 @@ function renderUserTasksMobile() {
     ? (username || currentUserPageName)
     : (currentAssigneeFilter.startsWith('name:') ? currentAssigneeFilter.slice(5) : (username || currentUserPageName));
 
-  const pending = []; // items pending acceptance for me
-  const mine = [];    // items assigned to me/target
-  const unassigned = []; // open/team tasks
-  const completedOld = []; // tasks completed before today
+  const pendingByCase = new Map();      // caseId -> items pending
+  const mainByCase = new Map();         // caseId -> items for main patient list
+  const completedOldByCase = new Map(); // caseId -> items completed earlier
+
+  const addTo = (map, caseId, it) => {
+    if (!map.has(caseId)) map.set(caseId, []);
+    map.get(caseId).push(it);
+  };
 
   for (const [caseId, originalItems] of userPerCase.entries()) {
+    if (!allCasesMeta.has(caseId)) continue;
     let items = originalItems || [];
     if (currentUserStatusSet && currentUserStatusSet.size) items = items.filter(i => currentUserStatusSet.has(i.status));
     if (currentUserPriorityFilter !== 'all') items = items.filter(i => (i.priority || '') === currentUserPriorityFilter);
@@ -7329,116 +7390,84 @@ function renderUserTasksMobile() {
       const isPending = normalizeTaskAssignmentState(it) === TASK_ASSIGNMENT.PENDING && !!it.assignee;
       const isMine = (it.assignee === targetUser);
       const oldDone = it.status === 'complete' && !isCompletedToday(it);
-      const visibleHere = (currentAssigneeFilter === 'unassigned')
-        ? openTask
-        : (currentAssigneeFilter === 'all' || openTask || isMine);
-      if (oldDone && visibleHere) {
-        completedOld.push({ caseId, it });
-        continue;
-      }
-      if (currentAssigneeFilter === 'unassigned') {
-        if (openTask) unassigned.push({ caseId, it });
-        continue;
-      }
-      if (currentAssigneeFilter === 'all') {
-        if (openTask) unassigned.push({ caseId, it });
-        else if (isPending) pending.push({ caseId, it });
-        else mine.push({ caseId, it });
-        continue;
-      }
-      if (openTask) unassigned.push({ caseId, it });
-      else if (isMine && isPending) pending.push({ caseId, it });
-      else if (isMine) mine.push({ caseId, it });
+      let include = false;
+      if (currentAssigneeFilter === 'all') include = true;
+      else if (currentAssigneeFilter === 'unassigned') include = openTask;
+      else include = isMine || openTask;
+      if (!include) continue;
+      if (oldDone) { addTo(completedOldByCase, caseId, it); continue; }
+      const includePending = isPending && (currentAssigneeFilter === 'all' || isMine);
+      if (includePending) addTo(pendingByCase, caseId, it);
+      else addTo(mainByCase, caseId, it);
     }
   }
 
   const priVal = (p) => p === 'high' ? 3 : p === 'medium' ? 2 : p === 'low' ? 1 : 0;
-  const sortByLocation = (entries) => {
-    entries.sort((a, b) => {
-      const ma = userCaseMeta.get(a.caseId) || {};
-      const mb = userCaseMeta.get(b.caseId) || {};
-      const wka = mtWardSortKey(ma.wardId), wkb = mtWardSortKey(mb.wardId);
-      if (wka !== wkb) return wka < wkb ? -1 : 1;
-      const bka = mtBedSortKey(ma.wardId, ma.bedId), bkb = mtBedSortKey(mb.wardId, mb.bedId);
-      if (bka !== bkb) return bka < bkb ? -1 : 1;
-      const ta = (ma.title || '').toLowerCase();
-      const tb = (mb.title || '').toLowerCase();
-      if (ta !== tb) return ta < tb ? -1 : 1;
-      if (currentUserSort === 'pri-desc') return priVal(b.it.priority) - priVal(a.it.priority);
-      if (currentUserSort === 'pri-asc') return priVal(a.it.priority) - priVal(b.it.priority);
-      return 0;
-    });
-    return entries;
+  const metaFor = (cid) => allCasesMeta.get(cid) || userCaseMeta.get(cid) || {};
+  const titleFor = (cid) => metaFor(cid).title || userCaseTitles.get(cid) || '(case)';
+  const sortCaseIds = (ids) => ids.slice().sort((a, b) => {
+    const ma = metaFor(a), mb = metaFor(b);
+    const wka = mtWardSortKey(ma.wardId), wkb = mtWardSortKey(mb.wardId);
+    if (wka !== wkb) return wka < wkb ? -1 : 1;
+    const bka = mtBedSortKey(ma.wardId, ma.bedId), bkb = mtBedSortKey(mb.wardId, mb.bedId);
+    if (bka !== bkb) return bka < bkb ? -1 : 1;
+    return titleFor(a).localeCompare(titleFor(b));
+  });
+  const sortItemsForCase = (items) => {
+    if (currentUserSort === 'pri-desc') return [...items].sort((a, b) => priVal(b.priority) - priVal(a.priority));
+    if (currentUserSort === 'pri-asc') return [...items].sort((a, b) => priVal(a.priority) - priVal(b.priority));
+    return items;
   };
 
-  // 1. Pending-acceptance section pinned top
-  if (pending.length) {
-    const sec = buildMobileSection('pending', 'Pending your acceptance', pending.length);
-    const body = sec.querySelector('.mt-section-body');
-    sortByLocation(pending);
-    for (const { caseId, it } of pending) body.appendChild(buildMobileRow(caseId, it, { pendingForMe: true }));
-    userTaskListEl.appendChild(sec);
-  }
+  const totalRendered = { count: 0 };
 
-  // 2. Main list — group by patient (case), ordered by location
-  sortByLocation(mine);
-  const byPatient = new Map(); // caseId -> [entries]
-  for (const entry of mine) {
-    if (!byPatient.has(entry.caseId)) byPatient.set(entry.caseId, []);
-    byPatient.get(entry.caseId).push(entry);
-  }
-  for (const [caseId, entries] of byPatient.entries()) {
-    if (!entries.length) continue;
-    const meta = userCaseMeta.get(caseId) || {};
-    const title = meta.title || userCaseTitles.get(caseId) || '(case)';
-    const bed = mtBedName(meta.wardId, meta.bedId) || '';
-    const ward = meta.wardId ? (mtWardName(meta.wardId) || '') : '';
-    const sec = buildMobilePatientSection(caseId, title, bed, ward, entries.length);
+  // 1. Pending-acceptance pinned at top (only patients who have pending tasks)
+  if (pendingByCase.size) {
+    const totalPending = Array.from(pendingByCase.values()).reduce((s, a) => s + a.length, 0);
+    const label = currentAssigneeFilter === 'me' ? 'Pending your acceptance' : 'Pending acceptance';
+    const sec = buildMobileSection('pending', label, totalPending);
     const body = sec.querySelector('.mt-section-body');
-    for (const { it } of entries) body.appendChild(buildMobileRow(caseId, it, { hidePatient: true }));
-    userTaskListEl.appendChild(sec);
-  }
-
-  // 3. Unassigned demoted section (only in "me" mode; in "all"/"unassigned" keep pinned bottom too)
-  if (unassigned.length) {
-    sortByLocation(unassigned);
-    const label = currentAssigneeFilter === 'unassigned' ? 'Unassigned tasks' : 'Unassigned on your wards';
-    const sec = buildMobileSection('unassigned', label, unassigned.length);
-    const body = sec.querySelector('.mt-section-body');
-    let lastCase = null;
-    for (const { caseId, it } of unassigned) {
-      if (caseId !== lastCase) {
-        const meta = userCaseMeta.get(caseId) || {};
-        const title = meta.title || userCaseTitles.get(caseId) || '(case)';
-        const bed = mtBedName(meta.wardId, meta.bedId) || '';
-        const ward = meta.wardId ? (mtWardName(meta.wardId) || '') : '';
-        const sub = document.createElement('div');
-        sub.className = 'mt-patient-subhead';
-        const nm = document.createElement('button');
-        nm.type = 'button';
-        nm.className = 'mt-patient-name';
-        nm.textContent = title;
-        nm.addEventListener('click', (e) => { e.stopPropagation(); try { openCase(caseId, title, 'user', 'tasks'); } catch (err) { console.error(err); } });
-        sub.appendChild(nm);
-        const locParts = [bed, ward].filter(Boolean);
-        if (locParts.length) {
-          const loc = document.createElement('span');
-          loc.className = 'mt-patient-loc';
-          loc.textContent = locParts.join(' · ');
-          sub.appendChild(loc);
-        }
-        body.appendChild(sub);
-        lastCase = caseId;
+    for (const cid of sortCaseIds(Array.from(pendingByCase.keys()))) {
+      const items = pendingByCase.get(cid) || [];
+      for (const it of items) {
+        const isMine = (it.assignee === targetUser);
+        body.appendChild(buildMobileRow(cid, it, { pendingForMe: isMine }));
       }
-      body.appendChild(buildMobileRow(caseId, it, { unassigned: true, hidePatient: true }));
     }
     userTaskListEl.appendChild(sec);
+    totalRendered.count += totalPending;
   }
 
-  // 4. Completed earlier (collapsed by default)
-  if (completedOld.length) {
-    sortByLocation(completedOld);
-    const sec = buildMobileSection('completed-old', 'Completed earlier', completedOld.length);
+  // 2. Patients section — every active patient, ordered by location
+  const patientIds = sortCaseIds(Array.from(allCasesMeta.keys()));
+  if (patientIds.length) {
+    for (const caseId of patientIds) {
+      const meta = metaFor(caseId);
+      const title = titleFor(caseId);
+      const bed = mtBedName(meta.wardId, meta.bedId) || '';
+      const ward = meta.wardId ? (mtWardName(meta.wardId) || '') : '';
+      const items = mainByCase.get(caseId) || [];
+      const sec = buildMobilePatientSection(caseId, title, bed, ward, items.length);
+      if (!items.length) sec.classList.add('mt-section--patient-empty');
+      const body = sec.querySelector('.mt-section-body');
+      for (const it of sortItemsForCase(items)) {
+        body.appendChild(buildMobileRow(caseId, it, { hidePatient: true }));
+      }
+      if (!items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'mt-patient-no-tasks';
+        empty.textContent = 'No tasks';
+        body.appendChild(empty);
+      }
+      userTaskListEl.appendChild(sec);
+      totalRendered.count += items.length;
+    }
+  }
+
+  // 3. Completed earlier (collapsed by default)
+  if (completedOldByCase.size) {
+    const totalCompleted = Array.from(completedOldByCase.values()).reduce((s, a) => s + a.length, 0);
+    const sec = buildMobileSection('completed-old', 'Completed earlier', totalCompleted);
     sec.classList.add('mt-section--collapsible');
     const body = sec.querySelector('.mt-section-body');
     body.hidden = true;
@@ -7451,32 +7480,31 @@ function renderUserTasksMobile() {
     chev.className = 'mt-section-chev';
     chev.textContent = '▸';
     head.appendChild(chev);
-    let lastCase = null;
-    for (const { caseId, it } of completedOld) {
-      if (caseId !== lastCase) {
-        const meta = userCaseMeta.get(caseId) || {};
-        const title = meta.title || userCaseTitles.get(caseId) || '(case)';
-        const bed = mtBedName(meta.wardId, meta.bedId) || '';
-        const ward = meta.wardId ? (mtWardName(meta.wardId) || '') : '';
-        const sub = document.createElement('div');
-        sub.className = 'mt-patient-subhead';
-        const nm = document.createElement('button');
-        nm.type = 'button';
-        nm.className = 'mt-patient-name';
-        nm.textContent = title;
-        nm.addEventListener('click', (e) => { e.stopPropagation(); try { openCase(caseId, title, 'user', 'tasks'); } catch (err) { console.error(err); } });
-        sub.appendChild(nm);
-        const locParts = [bed, ward].filter(Boolean);
-        if (locParts.length) {
-          const loc = document.createElement('span');
-          loc.className = 'mt-patient-loc';
-          loc.textContent = locParts.join(' · ');
-          sub.appendChild(loc);
-        }
-        body.appendChild(sub);
-        lastCase = caseId;
+    for (const cid of sortCaseIds(Array.from(completedOldByCase.keys()))) {
+      const items = completedOldByCase.get(cid) || [];
+      const meta = metaFor(cid);
+      const title = titleFor(cid);
+      const bed = mtBedName(meta.wardId, meta.bedId) || '';
+      const ward = meta.wardId ? (mtWardName(meta.wardId) || '') : '';
+      const sub = document.createElement('div');
+      sub.className = 'mt-patient-subhead';
+      const nm = document.createElement('button');
+      nm.type = 'button';
+      nm.className = 'mt-patient-name';
+      nm.textContent = title;
+      nm.addEventListener('click', (e) => { e.stopPropagation(); try { openCase(cid, title, 'user', 'tasks'); } catch (err) { console.error(err); } });
+      sub.appendChild(nm);
+      const locParts = [bed, ward].filter(Boolean);
+      if (locParts.length) {
+        const loc = document.createElement('span');
+        loc.className = 'mt-patient-loc';
+        loc.textContent = locParts.join(' · ');
+        sub.appendChild(loc);
       }
-      body.appendChild(buildMobileRow(caseId, it, { hidePatient: true }));
+      body.appendChild(sub);
+      for (const it of items.slice().sort((a, b) => tsToMillis(b.completedAt) - tsToMillis(a.completedAt))) {
+        body.appendChild(buildMobileRow(cid, it, { hidePatient: true }));
+      }
     }
     const toggle = () => {
       const expanded = head.getAttribute('aria-expanded') === 'true';
@@ -7488,11 +7516,14 @@ function renderUserTasksMobile() {
     head.addEventListener('click', toggle);
     head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
     userTaskListEl.appendChild(sec);
+    totalRendered.count += totalCompleted;
   }
 
-  const total = pending.length + mine.length + unassigned.length + completedOld.length;
-  if (total === 0) renderMobileEmptyState();
-  else maybeRunCoachMarks();
+  if (!patientIds.length && !pendingByCase.size && !completedOldByCase.size) {
+    renderMobileEmptyState();
+  } else {
+    maybeRunCoachMarks();
+  }
 }
 
 function buildMobilePatientSection(caseId, title, bed, ward, count) {
