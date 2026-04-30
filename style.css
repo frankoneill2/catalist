@@ -3061,6 +3061,36 @@ kbd {
   font-weight: 600;
 }
 
+.star-btn {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0 4px;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  color: #cbd5e1;
+  transition: color 0.12s ease, transform 0.12s ease;
+  flex: 0 0 auto;
+}
+.star-btn:hover { color: #f59e0b; transform: scale(1.05); }
+.star-btn.is-important { color: #f59e0b; }
+.star-btn.is-important:hover { color: #d97706; }
+
+.case-task.task-important {
+  background: linear-gradient(90deg, rgba(251, 191, 36, 0.13), rgba(251, 191, 36, 0.04) 60%, transparent);
+  box-shadow: inset 3px 0 0 #f59e0b;
+}
+.case-task.task-important .task-text { font-weight: 600; }
+
+.user-case-loc {
+  font-size: 0.78rem;
+  color: #64748b;
+  font-weight: 500;
+  margin-left: 8px;
+  letter-spacing: 0.01em;
+}
+
 /* =============================================================================
    Catalist — Clinical UI (v2)
    A disciplined, dense, information-first redesign for hospital workflows.
@@ -4931,6 +4961,94 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
     text-transform: uppercase;
     letter-spacing: 0.04em;
     margin-right: 2px;
+  }
+  .mt-row.mt-important {
+    background: linear-gradient(90deg, rgba(251, 191, 36, 0.18), rgba(251, 191, 36, 0.04) 60%, #fff);
+  }
+  .mt-row.mt-important .mt-text { font-weight: 600; }
+
+  .mt-star {
+    appearance: none;
+    background: none;
+    border: 0;
+    padding: 4px 6px;
+    font-size: 18px;
+    line-height: 1;
+    color: #cbd5e1;
+    cursor: pointer;
+    flex: 0 0 auto;
+    align-self: center;
+    transition: color 0.12s ease, transform 0.12s ease;
+  }
+  .mt-star.is-important { color: #f59e0b; }
+  .mt-star:active { transform: scale(0.92); }
+
+  .mt-del {
+    appearance: none;
+    background: none;
+    border: 0;
+    padding: 4px 8px;
+    font-size: 16px;
+    line-height: 1;
+    color: #cbd5e1;
+    cursor: pointer;
+    flex: 0 0 auto;
+    align-self: center;
+    transition: color 0.12s ease;
+  }
+  .mt-del:hover, .mt-del:active { color: #ef4444; }
+
+  .mt-section--patient {
+    margin-bottom: 8px;
+  }
+  .mt-section-head--patient {
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 14px 6px;
+    color: #0f172a;
+    background: #f4f6f9;
+  }
+  .mt-patient-left {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .mt-patient-name {
+    appearance: none;
+    background: none;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .mt-patient-name:active { color: #2563eb; }
+  .mt-patient-loc {
+    font-size: 11px;
+    font-weight: 500;
+    color: #64748b;
+    text-transform: none;
+    letter-spacing: 0.01em;
+  }
+  .mt-patient-subhead {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 8px 14px 4px;
+    background: #f8fafc;
+    border-top: 1px solid #e2e8f0;
+  }
+  .mt-patient-subhead .mt-patient-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: #0f172a;
   }
 
   .mt-section-body {
