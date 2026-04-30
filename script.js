@@ -283,6 +283,18 @@ function isCompletedToday(item) {
   return ms >= startOfTodayMs();
 }
 
+function stableSortStarredFirst(items) {
+  // Pin starred tasks to the top while preserving the relative order of the rest
+  if (!Array.isArray(items) || items.length < 2) return items;
+  const starred = [];
+  const rest = [];
+  for (const it of items) {
+    const flag = !!(it && (it.important || (it.data && it.data.important)));
+    if (flag) starred.push(it); else rest.push(it);
+  }
+  return [...starred, ...rest];
+}
+
 async function toggleTaskImportant(caseId, taskId, currentValue) {
   const next = !currentValue;
   await updateDoc(doc(db, 'cases', caseId, 'tasks', taskId), { important: next });
@@ -1237,6 +1249,8 @@ async function loadCompactTasks(caseId, caseTitle, ul, moreBtn) {
     const order = compactOrderByCase.get(caseId) || items.map(i => i.id);
     const idx = new Map(order.map((id, i) => [id, i]));
     items.sort((a, b) => (idx.get(a.id) ?? 999999) - (idx.get(b.id) ?? 999999));
+    // Pin starred tasks to the top within this patient
+    items = stableSortStarredFirst(items);
 
     const limit = 4;
     const expanded = ul.dataset.expanded === 'true';
@@ -5357,6 +5371,8 @@ function renderCaseTasks() {
     const idx = new Map((currentTaskOrder || []).map((id,i)=>[id,i]));
     ordered = [...visible].sort((a,b)=>(idx.get(a.id)??999999)-(idx.get(b.id)??999999));
   }
+  // Starred tasks always pinned to the top within this patient
+  ordered = stableSortStarredFirst(ordered);
   // Re-render list with ordered
   taskListEl.innerHTML = '';
   for (const item of ordered) {
@@ -7131,6 +7147,8 @@ function renderUserTasks() {
         sorted.sort((a,b) => tsVal(b.assignedAt) - tsVal(a.assignedAt));
       } else if (currentUserSort === 'pri-desc') sorted.sort((a,b) => priVal(b.priority) - priVal(a.priority));
       else if (currentUserSort === 'pri-asc') sorted.sort((a,b) => priVal(a.priority) - priVal(b.priority));
+      // Starred tasks always pinned to the top within a patient (stable for ties)
+      sorted = stableSortStarredFirst(sorted);
       const ul = document.createElement('ul');
       for (const it of sorted) ul.appendChild(buildUserTaskRow(caseId, caseTitle, it));
       caseCard.appendChild(ul);
@@ -7419,9 +7437,10 @@ function renderUserTasksMobile() {
     return titleFor(a).localeCompare(titleFor(b));
   });
   const sortItemsForCase = (items) => {
-    if (currentUserSort === 'pri-desc') return [...items].sort((a, b) => priVal(b.priority) - priVal(a.priority));
-    if (currentUserSort === 'pri-asc') return [...items].sort((a, b) => priVal(a.priority) - priVal(b.priority));
-    return items;
+    let arr = items;
+    if (currentUserSort === 'pri-desc') arr = [...items].sort((a, b) => priVal(b.priority) - priVal(a.priority));
+    else if (currentUserSort === 'pri-asc') arr = [...items].sort((a, b) => priVal(a.priority) - priVal(b.priority));
+    return stableSortStarredFirst(arr);
   };
 
   const totalRendered = { count: 0 };
@@ -7433,7 +7452,7 @@ function renderUserTasksMobile() {
     const sec = buildMobileSection('pending', label, totalPending);
     const body = sec.querySelector('.mt-section-body');
     for (const cid of sortCaseIds(Array.from(pendingByCase.keys()))) {
-      const items = pendingByCase.get(cid) || [];
+      const items = stableSortStarredFirst(pendingByCase.get(cid) || []);
       for (const it of items) {
         const isMine = (it.assignee === targetUser);
         body.appendChild(buildMobileRow(cid, it, { pendingForMe: isMine }));
@@ -7507,7 +7526,8 @@ function renderUserTasksMobile() {
         sub.appendChild(loc);
       }
       body.appendChild(sub);
-      for (const it of items.slice().sort((a, b) => tsToMillis(b.completedAt) - tsToMillis(a.completedAt))) {
+      const sorted = stableSortStarredFirst(items.slice().sort((a, b) => tsToMillis(b.completedAt) - tsToMillis(a.completedAt)));
+      for (const it of sorted) {
         body.appendChild(buildMobileRow(cid, it, { hidePatient: true }));
       }
     }
