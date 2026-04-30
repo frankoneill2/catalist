@@ -6768,7 +6768,8 @@ async function startRealtimeUserTasks(name) {
     attachSource('open', query(tasksRef, where('assignee', '==', null)));
   }
 
-  // Subscribe to all cases so patients without active tasks still appear
+  // Subscribe to all cases so patients without active tasks still appear.
+  // Skip discharged cases and empty/untitled "beds" (matches the patient table).
   const casesUnsub = onSnapshot(collection(db, 'cases'), async (snap) => {
     const next = new Map();
     const decryptJobs = [];
@@ -6776,15 +6777,19 @@ async function startRealtimeUserTasks(name) {
       const dat = d.data() || {};
       if (isCaseDischarged(dat)) continue;
       const ct = dat.caseTags || {};
-      const entry = { title: '(case)', wardId: ct.location || null, bedId: ct.room || null };
-      next.set(d.id, entry);
+      const entry = { title: '', wardId: ct.location || null, bedId: ct.room || null, _id: d.id };
       decryptJobs.push(
         safeDecryptText(dat.titleCipher, dat.titleIv)
-          .then((t) => { entry.title = t || '(case)'; })
-          .catch(() => {})
+          .then((t) => { entry.title = (t || '').trim(); })
+          .catch(() => { entry.title = ''; })
       );
+      next.set(d.id, entry);
     }
     await Promise.all(decryptJobs);
+    // Drop cases without a real title (empty beds)
+    for (const [id, m] of Array.from(next.entries())) {
+      if (!m.title) next.delete(id);
+    }
     allCasesMeta = next;
     if (userTasksEditing) { userTasksRebuildPending = true; return; }
     renderUserTasks();
