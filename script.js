@@ -250,6 +250,44 @@ function buildTaskCreationPayload({ textCipher, textIv, statusCipher, statusIv, 
   };
 }
 
+function buildTaskStatusPatch(nextStatus, statusCipher, statusIv) {
+  const patch = { statusCipher, statusIv };
+  patch.completedAt = nextStatus === 'complete' ? serverTimestamp() : null;
+  return patch;
+}
+
+function startOfTodayMs() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function tsToMillis(ts) {
+  if (!ts) return 0;
+  if (typeof ts.toMillis === 'function') return ts.toMillis();
+  if (ts.seconds) return ts.seconds * 1000 + Math.floor((ts.nanoseconds || 0) / 1e6);
+  if (ts instanceof Date) return ts.getTime();
+  if (typeof ts === 'number') return ts;
+  return 0;
+}
+
+function isCompletedToday(item) {
+  if (!item || item.status !== 'complete') return false;
+  const ms = tsToMillis(item.completedAt);
+  if (!ms) {
+    // Optimistic local write where serverTimestamp() hasn't resolved yet — treat as today
+    return !!item.hasPendingWrites;
+  }
+  return ms >= startOfTodayMs();
+}
+
+function isFromPreviousDay(item) {
+  if (!item) return false;
+  const ms = tsToMillis(item.createdAt);
+  if (!ms) return false;
+  return ms < startOfTodayMs();
+}
+
 function buildTaskAssignmentPatch(nextAssignee) {
   const assignee = nextAssignee || null;
   if (!assignee) {
@@ -1209,7 +1247,7 @@ async function loadCompactTasks(caseId, caseTitle, ul, moreBtn) {
         const next = order[(idx + 1) % order.length];
         try {
           const { cipher, iv } = await encryptText(next);
-          await updateDoc(doc(db, 'cases', caseId, 'tasks', it.id), { statusCipher: cipher, statusIv: iv });
+          await updateDoc(doc(db, 'cases', caseId, 'tasks', it.id), buildTaskStatusPatch(next, cipher, iv));
           it.status = next;
           statusBtn.textContent = icon(next);
           statusBtn.setAttribute('aria-label', `Task status: ${next}`);
@@ -1466,7 +1504,7 @@ function startRealtimeTasks(caseId) {
           const idx = order.indexOf(li.dataset.status || 'open');
           const next = order[(idx + 1) % order.length];
           const { cipher, iv } = await encryptText(next);
-          await updateDoc(doc(db, 'cases', caseId, 'tasks', docSnap.id), { statusCipher: cipher, statusIv: iv });
+          await updateDoc(doc(db, 'cases', caseId, 'tasks', docSnap.id), buildTaskStatusPatch(next, cipher, iv));
           li.dataset.status = next;
           statusBtn.textContent = statusIcon(next);
           statusBtn.setAttribute('aria-label', statusLabel(next));
@@ -3486,7 +3524,7 @@ function buildCompactTaskRow(caseId, it, opts = {}) {
     if (statusBtn.disabled) return;
     const order = ['open','in progress','complete'];
     const next = order[(order.indexOf(it.status)+1)%order.length];
-    try { const { cipher, iv } = await encryptText(next); await updateDoc(doc(db,'cases',caseId,'tasks',it.id),{ statusCipher:cipher, statusIv:iv }); it.status=next; statusBtn.textContent=icon(next); statusBtn.setAttribute('aria-label',`Task status: ${next}`); li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')) + (pendingAcceptance ? ' task-pending-acceptance' : ''); if (next==='complete') { try { const tEnc = await encryptText(it.text || ''); await logUpdate({ type: 'task_completed', caseId, caseTitle: (opts && opts.caseTitle) || 'Case', taskId: it.id, taskTextCipher: tEnc.cipher, taskTextIv: tEnc.iv }); } catch {} } } catch(err){ console.error('Failed to update status',err); showToast('Failed to update status'); }
+    try { const { cipher, iv } = await encryptText(next); await updateDoc(doc(db,'cases',caseId,'tasks',it.id), buildTaskStatusPatch(next, cipher, iv)); it.status=next; statusBtn.textContent=icon(next); statusBtn.setAttribute('aria-label',`Task status: ${next}`); li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')) + (pendingAcceptance ? ' task-pending-acceptance' : ''); if (next==='complete') { try { const tEnc = await encryptText(it.text || ''); await logUpdate({ type: 'task_completed', caseId, caseTitle: (opts && opts.caseTitle) || 'Case', taskId: it.id, taskTextCipher: tEnc.cipher, taskTextIv: tEnc.iv }); } catch {} } } catch(err){ console.error('Failed to update status',err); showToast('Failed to update status'); }
   });
   const text = document.createElement('span'); text.className='task-text'; text.textContent = it.text;
   // Inline edit behavior: click to turn into a contenteditable field
@@ -4783,7 +4821,7 @@ async function openWardNoteComposer() {
         const next = order[(order.indexOf(t.status)+1)%order.length];
         try {
           const { cipher, iv } = await encryptText(next);
-          await updateDoc(doc(db,'cases',currentCaseId,'tasks',t.id), { statusCipher: cipher, statusIv: iv });
+          await updateDoc(doc(db,'cases',currentCaseId,'tasks',t.id), buildTaskStatusPatch(next, cipher, iv));
         } catch {}
       });
       const span = document.createElement('span'); span.textContent = t.text || '';
@@ -5315,7 +5353,7 @@ function buildTaskListItem(item, opts = {}) {
     const next = order[(order.indexOf(statusBtn.getAttribute('aria-label')?.split(': ')[1] || status) + 1) % order.length];
     try {
       const { cipher, iv } = await encryptText(next);
-      await updateDoc(doc(db, 'cases', caseId, 'tasks', taskId), { statusCipher: cipher, statusIv: iv });
+      await updateDoc(doc(db, 'cases', caseId, 'tasks', taskId), buildTaskStatusPatch(next, cipher, iv));
       statusBtn.textContent = icon(next);
       statusBtn.setAttribute('aria-label', `Task status: ${next}`);
       li.className = 'case-task ' + (next === 'in progress' ? 's-inprogress' : (next === 'complete' ? 's-complete' : 's-open')) + (pendingAcceptance ? ' task-pending-acceptance' : '');
@@ -6553,6 +6591,9 @@ async function startRealtimeUserTasks(name) {
           assignedAt: dat.assignedAt || null,
           acceptedBy: dat.acceptedBy || null,
           acceptedAt: dat.acceptedAt || null,
+          createdAt: dat.createdAt || null,
+          completedAt: dat.completedAt || null,
+          hasPendingWrites: !!(d.metadata && d.metadata.hasPendingWrites),
           text: null,
           status: null,
         };
@@ -6650,6 +6691,7 @@ function renderUserTasks() {
     pending: new Map(),
     assigned: new Map(),
     open: new Map(),
+    completedOld: new Map(),
   };
 
   const addToSection = (section, caseId, item) => {
@@ -6668,6 +6710,15 @@ function renderUserTasks() {
     for (const it of items) {
       const openTask = isTaskOpenForTeam(it);
       const pending = normalizeTaskAssignmentState(it) === TASK_ASSIGNMENT.PENDING && !!it.assignee;
+      const oldDone = it.status === 'complete' && !isCompletedToday(it);
+      const isMine = (it.assignee === targetUser);
+      const visibleHere = (currentAssigneeFilter === 'unassigned')
+        ? openTask
+        : (currentAssigneeFilter === 'all' || openTask || isMine);
+      if (oldDone && visibleHere) {
+        addToSection('completedOld', caseId, it);
+        continue;
+      }
       if (currentAssigneeFilter === 'unassigned') {
         if (openTask) addToSection('open', caseId, it);
         continue;
@@ -6679,8 +6730,8 @@ function renderUserTasks() {
         continue;
       }
       if (openTask) addToSection('open', caseId, it);
-      else if (it.assignee === targetUser && pending) addToSection('pending', caseId, it);
-      else if (it.assignee === targetUser) addToSection('assigned', caseId, it);
+      else if (isMine && pending) addToSection('pending', caseId, it);
+      else if (isMine) addToSection('assigned', caseId, it);
     }
   }
 
@@ -6694,7 +6745,9 @@ function renderUserTasks() {
     const pendingForMe = pending && (it.assignee === username);
     const li = document.createElement('li');
     const statusCls = it.status === 'in progress' ? 's-inprogress' : (it.status === 'complete' ? 's-complete' : 's-open');
-    li.className = 'case-task ' + statusCls + (pending ? ' task-pending-acceptance' : '');
+    const stale = it.status !== 'complete' && isFromPreviousDay(it);
+    li.className = 'case-task ' + statusCls + (pending ? ' task-pending-acceptance' : '') + (stale ? ' task-stale' : '');
+    if (stale) li.title = 'Carried over from a previous day';
 
     const statusBtn = document.createElement('button');
     statusBtn.type = 'button';
@@ -6711,7 +6764,7 @@ function renderUserTasks() {
       const next=order[(order.indexOf(it.status)+1)%order.length];
       try{
         const {cipher, iv}= await encryptText(next);
-        await updateDoc(doc(db,'cases',caseId,'tasks',it.taskId),{ statusCipher:cipher, statusIv:iv });
+        await updateDoc(doc(db,'cases',caseId,'tasks',it.taskId), buildTaskStatusPatch(next, cipher, iv));
         it.status=next;
         statusBtn.textContent=icon(next);
         statusBtn.setAttribute('aria-label',`Task status: ${next}`);
@@ -6961,6 +7014,76 @@ function renderUserTasks() {
     return true;
   };
 
+  const renderCompletedOlderSection = () => {
+    const map = sections.completedOld;
+    const total = sectionCount(map);
+    if (!total) return false;
+    const wrap = document.createElement('section');
+    wrap.className = 'task-section task-section--completed-old';
+    const head = document.createElement('button');
+    head.type = 'button';
+    head.className = 'task-section-head completed-old-toggle';
+    head.setAttribute('aria-expanded', 'false');
+    const h = document.createElement('h3');
+    h.textContent = 'Completed earlier';
+    const right = document.createElement('span');
+    right.className = 'completed-old-right';
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.textContent = String(total);
+    const chev = document.createElement('span');
+    chev.className = 'completed-old-chev';
+    chev.textContent = '▸';
+    right.appendChild(badge);
+    right.appendChild(chev);
+    head.appendChild(h);
+    head.appendChild(right);
+    wrap.appendChild(head);
+
+    const body = document.createElement('div');
+    body.className = 'completed-old-body';
+    body.hidden = true;
+    for (const caseId of sortCases(map)) {
+      const items = map.get(caseId) || [];
+      if (!items.length) continue;
+      const caseTitle = userCaseTitles.get(caseId) || '(case)';
+      const caseCard = document.createElement('div');
+      caseCard.className = 'card user-case-card';
+      const header = document.createElement('div');
+      header.className = 'user-case-header';
+      const hh = document.createElement('h3');
+      const link = document.createElement('button');
+      link.className = 'link-btn';
+      link.textContent = caseTitle;
+      link.setAttribute('aria-label', `Open case ${caseTitle}`);
+      link.addEventListener('click', () => openCase(caseId, caseTitle, 'user', 'notes'));
+      hh.appendChild(link);
+      header.appendChild(hh);
+      const countBadge = document.createElement('span');
+      countBadge.className = 'badge';
+      countBadge.textContent = String(items.length);
+      header.appendChild(countBadge);
+      caseCard.appendChild(header);
+      const sorted = [...items].sort((a, b) => tsVal(b.completedAt) - tsVal(a.completedAt));
+      const ul = document.createElement('ul');
+      for (const it of sorted) ul.appendChild(buildUserTaskRow(caseId, caseTitle, it));
+      caseCard.appendChild(ul);
+      body.appendChild(caseCard);
+    }
+    wrap.appendChild(body);
+
+    head.addEventListener('click', () => {
+      const expanded = head.getAttribute('aria-expanded') === 'true';
+      const next = !expanded;
+      head.setAttribute('aria-expanded', String(next));
+      body.hidden = !next;
+      chev.textContent = next ? '▾' : '▸';
+    });
+
+    userTaskListEl.appendChild(wrap);
+    return true;
+  };
+
   let rendered = false;
   if (currentAssigneeFilter === 'unassigned') {
     rendered = renderSection('open', 'Open Tasks', {}) || rendered;
@@ -6972,6 +7095,7 @@ function renderUserTasks() {
     rendered = renderSection('assigned', 'Assigned Tasks', {}) || rendered;
     rendered = renderSection('open', 'Open Tasks', {}) || rendered;
   }
+  rendered = renderCompletedOlderSection() || rendered;
 
   if (!rendered) {
     userTaskListEl.innerHTML = '<li style="list-style:none;color:var(--muted);padding:8px 0;">No tasks match current filters.</li>';
@@ -7078,7 +7202,7 @@ function showUndoToast(message, onUndo) {
 
 async function mtSetTaskStatus(caseId, taskId, nextStatus, opts = {}) {
   const { cipher, iv } = await encryptText(nextStatus);
-  await updateDoc(doc(db, 'cases', caseId, 'tasks', taskId), { statusCipher: cipher, statusIv: iv });
+  await updateDoc(doc(db, 'cases', caseId, 'tasks', taskId), buildTaskStatusPatch(nextStatus, cipher, iv));
   if (nextStatus === 'complete' && opts.caseTitle && opts.text) {
     try {
       const tEnc = await encryptText(opts.text || '');
@@ -7108,6 +7232,7 @@ function renderUserTasksMobile() {
   const pending = []; // items pending acceptance for me
   const mine = [];    // items assigned to me/target
   const unassigned = []; // open/team tasks
+  const completedOld = []; // tasks completed before today
 
   for (const [caseId, originalItems] of userPerCase.entries()) {
     let items = originalItems || [];
@@ -7120,6 +7245,15 @@ function renderUserTasksMobile() {
     for (const it of items) {
       const openTask = isTaskOpenForTeam(it);
       const isPending = normalizeTaskAssignmentState(it) === TASK_ASSIGNMENT.PENDING && !!it.assignee;
+      const isMine = (it.assignee === targetUser);
+      const oldDone = it.status === 'complete' && !isCompletedToday(it);
+      const visibleHere = (currentAssigneeFilter === 'unassigned')
+        ? openTask
+        : (currentAssigneeFilter === 'all' || openTask || isMine);
+      if (oldDone && visibleHere) {
+        completedOld.push({ caseId, it });
+        continue;
+      }
       if (currentAssigneeFilter === 'unassigned') {
         if (openTask) unassigned.push({ caseId, it });
         continue;
@@ -7131,8 +7265,8 @@ function renderUserTasksMobile() {
         continue;
       }
       if (openTask) unassigned.push({ caseId, it });
-      else if (it.assignee === targetUser && isPending) pending.push({ caseId, it });
-      else if (it.assignee === targetUser) mine.push({ caseId, it });
+      else if (isMine && isPending) pending.push({ caseId, it });
+      else if (isMine) mine.push({ caseId, it });
     }
   }
 
@@ -7194,7 +7328,36 @@ function renderUserTasksMobile() {
     userTaskListEl.appendChild(sec);
   }
 
-  const total = pending.length + mine.length + unassigned.length;
+  // 4. Completed earlier (collapsed by default)
+  if (completedOld.length) {
+    completedOld.sort((a, b) => tsToMillis(b.it.completedAt) - tsToMillis(a.it.completedAt));
+    const sec = buildMobileSection('completed-old', 'Completed earlier', completedOld.length);
+    sec.classList.add('mt-section--collapsible');
+    const body = sec.querySelector('.mt-section-body');
+    body.hidden = true;
+    const head = sec.querySelector('.mt-section-head');
+    head.classList.add('mt-section-head--toggle');
+    head.setAttribute('role', 'button');
+    head.setAttribute('aria-expanded', 'false');
+    head.tabIndex = 0;
+    const chev = document.createElement('span');
+    chev.className = 'mt-section-chev';
+    chev.textContent = '▸';
+    head.appendChild(chev);
+    for (const { caseId, it } of completedOld) body.appendChild(buildMobileRow(caseId, it, {}));
+    const toggle = () => {
+      const expanded = head.getAttribute('aria-expanded') === 'true';
+      const next = !expanded;
+      head.setAttribute('aria-expanded', String(next));
+      body.hidden = !next;
+      chev.textContent = next ? '▾' : '▸';
+    };
+    head.addEventListener('click', toggle);
+    head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+    userTaskListEl.appendChild(sec);
+  }
+
+  const total = pending.length + mine.length + unassigned.length + completedOld.length;
   if (total === 0) renderMobileEmptyState();
   else maybeRunCoachMarks();
 }
@@ -7231,6 +7394,10 @@ function buildMobileRow(caseId, it, opts = {}) {
   else if (it.status === 'in progress') row.classList.add('mt-inprogress');
   if (it.priority === 'high') row.classList.add('mt-pri-high');
   if (opts.pendingForMe) row.classList.add('mt-pending');
+  if (it.status !== 'complete' && isFromPreviousDay(it)) {
+    row.classList.add('mt-stale');
+    row.title = 'Carried over from a previous day';
+  }
 
   // Swipe action layer
   const actionLayer = document.createElement('div');
