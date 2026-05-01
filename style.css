@@ -3082,6 +3082,26 @@ kbd {
 }
 .case-task.task-important .status-btn { color: #b45309; }
 
+/* "Assigned to me" indicator — visible across all task views */
+.case-task.task-mine:not(.task-important) {
+  box-shadow: inset 3px 0 0 #2563eb;
+}
+.case-task.task-mine .task-text::after {
+  content: 'you';
+  display: inline-block;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #1d4ed8;
+  background: #dbeafe;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  vertical-align: middle;
+  font-weight: 600;
+}
+
 .user-case-loc {
   font-size: 0.78rem;
   color: #64748b;
@@ -5031,6 +5051,53 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
   }
   .mt-row.mt-important .mt-meta { color: #92400e; }
 
+  .mt-row.mt-mine:not(.mt-important) {
+    box-shadow: inset 4px 0 0 #2563eb;
+  }
+  .mt-row.mt-mine .mt-text::after {
+    content: 'you';
+    display: inline-block;
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #1d4ed8;
+    background: #dbeafe;
+    border: 1px solid #bfdbfe;
+    border-radius: 999px;
+    padding: 1px 6px;
+    margin-left: 6px;
+    vertical-align: middle;
+    font-weight: 600;
+  }
+
+  .mt-assignee {
+    appearance: none;
+    flex: 0 0 auto;
+    align-self: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 1px solid #cbd5e1;
+    background: #fff;
+    color: #475569;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    padding: 0;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 4px;
+  }
+  .mt-assignee.mt-assignee--unassigned {
+    color: #94a3b8;
+    border-style: dashed;
+    font-weight: 400;
+    font-size: 14px;
+  }
+  .mt-assignee:active { transform: scale(0.94); }
+
   .mt-star {
     appearance: none;
     background: none;
@@ -5447,6 +5514,14 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
 }
 .ms-list-item:last-child { border-bottom: none; }
 .ms-list-item .ms-list-icon { color: #0f5f88; flex: 0 0 auto; }
+.ms-list-item--current { background: #eff6ff; }
+.ms-list-item .ms-assignee-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 auto;
+}
+.ms-list-tick { color: #2563eb; font-size: 18px; flex: 0 0 auto; }
 .ms-list-divider {
   height: 1px;
   background: #e2e8f0;

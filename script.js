@@ -1288,7 +1288,8 @@ async function loadCompactTasks(caseId, caseTitle, ul, moreBtn) {
     for (const it of visible) {
       const li = document.createElement('li');
       const statusCls = it.status === 'in progress' ? 's-inprogress' : (it.status === 'complete' ? 's-complete' : 's-open');
-      li.className = 'case-task ' + statusCls + (it.important ? ' task-important' : '');
+      const isMine = !!username && it.assignee === username;
+      li.className = 'case-task ' + statusCls + (it.important ? ' task-important' : '') + (isMine ? ' task-mine' : '');
       // Navigate to case tasks focused on this task when clicking the row
       li.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1312,7 +1313,7 @@ async function loadCompactTasks(caseId, caseTitle, ul, moreBtn) {
           it.status = next;
           statusBtn.textContent = icon(next);
           statusBtn.setAttribute('aria-label', `Task status: ${next}`);
-          li.className = 'case-task ' + (next === 'in progress' ? 's-inprogress' : (next === 'complete' ? 's-complete' : 's-open')) + (it.important ? ' task-important' : '');
+          li.className = 'case-task ' + (next === 'in progress' ? 's-inprogress' : (next === 'complete' ? 's-complete' : 's-open')) + (it.important ? ' task-important' : '') + (isMine ? ' task-mine' : '');
           if (next === 'complete') {
             // Log completion with task text snapshot
             try {
@@ -3580,7 +3581,8 @@ function buildCompactTaskRow(caseId, it, opts = {}) {
   const li = document.createElement('li');
   const statusCls = it.status === 'in progress' ? 's-inprogress' : (it.status === 'complete' ? 's-complete' : 's-open');
   const important = !!data.important;
-  li.className = 'case-task ' + statusCls + (pendingAcceptance ? ' task-pending-acceptance' : '') + (important ? ' task-important' : '');
+  const isMine = !!username && data.assignee === username;
+  li.className = 'case-task ' + statusCls + (pendingAcceptance ? ' task-pending-acceptance' : '') + (important ? ' task-important' : '') + (isMine ? ' task-mine' : '');
   // Status toggle
   const statusBtn = document.createElement('button'); statusBtn.type='button'; statusBtn.className='status-btn';
   const icon = (s) => s === 'complete' ? '☑' : (s === 'in progress' ? '◐' : '☐');
@@ -3593,7 +3595,7 @@ function buildCompactTaskRow(caseId, it, opts = {}) {
     if (statusBtn.disabled) return;
     const order = ['open','in progress','complete'];
     const next = order[(order.indexOf(it.status)+1)%order.length];
-    try { const { cipher, iv } = await encryptText(next); await updateDoc(doc(db,'cases',caseId,'tasks',it.id), buildTaskStatusPatch(next, cipher, iv)); it.status=next; statusBtn.textContent=icon(next); statusBtn.setAttribute('aria-label',`Task status: ${next}`); li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')) + (pendingAcceptance ? ' task-pending-acceptance' : '') + (data.important ? ' task-important' : ''); if (next==='complete') { try { const tEnc = await encryptText(it.text || ''); await logUpdate({ type: 'task_completed', caseId, caseTitle: (opts && opts.caseTitle) || 'Case', taskId: it.id, taskTextCipher: tEnc.cipher, taskTextIv: tEnc.iv }); } catch {} } } catch(err){ console.error('Failed to update status',err); showToast('Failed to update status'); }
+    try { const { cipher, iv } = await encryptText(next); await updateDoc(doc(db,'cases',caseId,'tasks',it.id), buildTaskStatusPatch(next, cipher, iv)); it.status=next; statusBtn.textContent=icon(next); statusBtn.setAttribute('aria-label',`Task status: ${next}`); li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')) + (pendingAcceptance ? ' task-pending-acceptance' : '') + (data.important ? ' task-important' : '') + (isMine ? ' task-mine' : ''); if (next==='complete') { try { const tEnc = await encryptText(it.text || ''); await logUpdate({ type: 'task_completed', caseId, caseTitle: (opts && opts.caseTitle) || 'Case', taskId: it.id, taskTextCipher: tEnc.cipher, taskTextIv: tEnc.iv }); } catch {} } } catch(err){ console.error('Failed to update status',err); showToast('Failed to update status'); }
   });
   const star = buildStarButton(important, async () => {
     const next = await toggleTaskImportant(caseId, it.id, !!data.important);
@@ -5414,7 +5416,8 @@ function buildTaskListItem(item, opts = {}) {
   const li = document.createElement('li');
   const statusCls = status === 'in progress' ? 's-inprogress' : (status === 'complete' ? 's-complete' : 's-open');
   const important = !!(data && data.important);
-  li.className = 'case-task ' + statusCls + (pendingAcceptance ? ' task-pending-acceptance' : '') + (important ? ' task-important' : '');
+  const isMine = !!username && data && data.assignee === username;
+  li.className = 'case-task ' + statusCls + (pendingAcceptance ? ' task-pending-acceptance' : '') + (important ? ' task-important' : '') + (isMine ? ' task-mine' : '');
   li.id = 'task-' + taskId;
   // Status button
   const statusBtn = document.createElement('button');
@@ -5435,7 +5438,7 @@ function buildTaskListItem(item, opts = {}) {
       await updateDoc(doc(db, 'cases', caseId, 'tasks', taskId), buildTaskStatusPatch(next, cipher, iv));
       statusBtn.textContent = icon(next);
       statusBtn.setAttribute('aria-label', `Task status: ${next}`);
-      li.className = 'case-task ' + (next === 'in progress' ? 's-inprogress' : (next === 'complete' ? 's-complete' : 's-open')) + (pendingAcceptance ? ' task-pending-acceptance' : '') + (data && data.important ? ' task-important' : '');
+      li.className = 'case-task ' + (next === 'in progress' ? 's-inprogress' : (next === 'complete' ? 's-complete' : 's-open')) + (pendingAcceptance ? ' task-pending-acceptance' : '') + (data && data.important ? ' task-important' : '') + (isMine ? ' task-mine' : '');
       if (next === 'complete') {
         try {
           const tEnc = await encryptText(titleSpan.textContent || '');
@@ -6895,7 +6898,8 @@ function renderUserTasks() {
     const statusCls = it.status === 'in progress' ? 's-inprogress' : (it.status === 'complete' ? 's-complete' : 's-open');
     const stale = it.status !== 'complete' && isFromPreviousDay(it);
     const important = !!it.important;
-    li.className = 'case-task ' + statusCls + (pending ? ' task-pending-acceptance' : '') + (important ? ' task-important' : '');
+    const isMine = !!username && it.assignee === username;
+    li.className = 'case-task ' + statusCls + (pending ? ' task-pending-acceptance' : '') + (important ? ' task-important' : '') + (isMine ? ' task-mine' : '');
 
     const statusBtn = document.createElement('button');
     statusBtn.type = 'button';
@@ -6916,7 +6920,7 @@ function renderUserTasks() {
         it.status=next;
         statusBtn.textContent=icon(next);
         statusBtn.setAttribute('aria-label',`Task status: ${next}`);
-        li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')) + (pending ? ' task-pending-acceptance' : '') + (it.important ? ' task-important' : '');
+        li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')) + (pending ? ' task-pending-acceptance' : '') + (it.important ? ' task-important' : '') + (isMine ? ' task-mine' : '');
         if (next==='complete') {
           try {
             const tEnc = await encryptText(it.text || '');
@@ -7639,6 +7643,7 @@ function buildMobileRow(caseId, it, opts = {}) {
   if (it.priority === 'high') row.classList.add('mt-pri-high');
   if (opts.pendingForMe) row.classList.add('mt-pending');
   if (it.important) row.classList.add('mt-important');
+  if (!!username && it.assignee === username) row.classList.add('mt-mine');
   const isStale = it.status !== 'complete' && isFromPreviousDay(it);
 
   // Swipe action layer
@@ -7717,6 +7722,28 @@ function buildMobileRow(caseId, it, opts = {}) {
     body.appendChild(metaEl);
   }
   content.appendChild(body);
+
+  // Assignee avatar — tap to reassign
+  const assigneeBtn = document.createElement('button');
+  assigneeBtn.type = 'button';
+  assigneeBtn.className = 'mt-assignee';
+  const setAvatar = () => {
+    const initials = it.assignee ? it.assignee.split(/\s+/).map(s => s[0]).join('').slice(0, 2).toUpperCase() : '＋';
+    assigneeBtn.textContent = initials;
+    const col = colorForName(it.assignee || '');
+    assigneeBtn.style.background = col.bg;
+    assigneeBtn.style.color = col.color;
+    assigneeBtn.style.borderColor = col.border;
+    assigneeBtn.classList.toggle('mt-assignee--unassigned', !it.assignee);
+    assigneeBtn.setAttribute('aria-label', it.assignee ? `Assigned to ${it.assignee}. Tap to reassign.` : 'Unassigned. Tap to assign.');
+    assigneeBtn.title = assigneeBtn.getAttribute('aria-label');
+  };
+  setAvatar();
+  assigneeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openAssigneeSheet({ caseId, it, title });
+  });
+  content.appendChild(assigneeBtn);
 
   // Star (important) button — top-right of the row
   const star = document.createElement('button');
@@ -7956,6 +7983,7 @@ function openTaskActionSheet(ctx, row) {
   } else {
     addItem('Reopen', () => toggleComplete(ctx.caseId, ctx.it, row, ctx.title));
   }
+  addItem(ctx.it.assignee ? `Reassign (currently ${ctx.it.assignee})` : 'Assign…', () => openAssigneeSheet(ctx));
   addItem('Open patient', () => { try { openCase(ctx.caseId, ctx.title, 'user', 'tasks'); } catch {} });
   addItem('Delete task', async () => {
     if (!confirm('Delete this task?')) return;
@@ -8025,6 +8053,62 @@ function updateFilterPillBadge() {
 }
 
 /* Bottom sheet helper */
+function openAssigneeSheet(ctx) {
+  const { caseId, it, title } = ctx;
+  const sheet = buildBottomSheet();
+  const h = document.createElement('h3');
+  h.textContent = 'Assign task';
+  sheet.body.appendChild(h);
+  const list = document.createElement('ul');
+  list.className = 'ms-list';
+
+  const currentAssignee = it.assignee || null;
+  const addOpt = (label, value, isCurrent) => {
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'ms-list-item' + (isCurrent ? ' ms-list-item--current' : '');
+    const left = document.createElement('span');
+    left.className = 'ms-assignee-row';
+    const av = document.createElement('span');
+    av.className = 'mini-avatar';
+    const initials = value ? value.split(/\s+/).map(s => s[0]).join('').slice(0, 2).toUpperCase() : '–';
+    av.textContent = initials;
+    const col = colorForName(value || '');
+    av.style.background = col.bg;
+    av.style.color = col.color;
+    av.style.border = `1px solid ${col.border}`;
+    left.appendChild(av);
+    const nm = document.createElement('span');
+    nm.textContent = label;
+    left.appendChild(nm);
+    btn.appendChild(left);
+    if (isCurrent) {
+      const tick = document.createElement('span');
+      tick.className = 'ms-list-tick';
+      tick.textContent = '✓';
+      btn.appendChild(tick);
+    }
+    btn.addEventListener('click', async () => {
+      sheet.close();
+      if ((value || null) === currentAssignee) return;
+      try {
+        await updateTaskAssignment(caseId, it.taskId, value, { caseTitle: title, taskText: it.text });
+        showToast(value ? `Assigned to ${value}` : 'Unassigned');
+      } catch (err) {
+        console.error('Failed to reassign', err);
+        showToast('Failed to update assignee');
+      }
+    });
+    li.appendChild(btn);
+    list.appendChild(li);
+  };
+
+  addOpt('Unassigned', null, currentAssignee === null);
+  for (const u of usersCache) addOpt(u.username, u.username, currentAssignee === u.username);
+  sheet.body.appendChild(list);
+}
+
 function buildBottomSheet() {
   const root = document.getElementById('mobile-sheet-root') || document.body;
   const scrim = document.createElement('div');
