@@ -327,6 +327,19 @@ function buildStarButton(initialImportant, onToggle) {
   return btn;
 }
 
+function relativeDayLabel(ts) {
+  const ms = tsToMillis(ts);
+  if (!ms) return '';
+  const startToday = startOfTodayMs();
+  if (ms >= startToday) return ''; // not stale
+  const days = Math.floor((startToday - ms) / 86400000) + 1;
+  if (days <= 1) return 'yesterday';
+  if (days < 7) return `${days}d`;
+  if (days < 28) return `${Math.floor(days / 7)}w`;
+  if (days < 365) return `${Math.floor(days / 30)}mo`;
+  return `${Math.floor(days / 365)}y`;
+}
+
 function isFromPreviousDay(item) {
   if (!item) return false;
   const ms = tsToMillis(item.createdAt);
@@ -6882,8 +6895,7 @@ function renderUserTasks() {
     const statusCls = it.status === 'in progress' ? 's-inprogress' : (it.status === 'complete' ? 's-complete' : 's-open');
     const stale = it.status !== 'complete' && isFromPreviousDay(it);
     const important = !!it.important;
-    li.className = 'case-task ' + statusCls + (pending ? ' task-pending-acceptance' : '') + (stale ? ' task-stale' : '') + (important ? ' task-important' : '');
-    if (stale) li.title = 'Carried over from a previous day';
+    li.className = 'case-task ' + statusCls + (pending ? ' task-pending-acceptance' : '') + (important ? ' task-important' : '');
 
     const statusBtn = document.createElement('button');
     statusBtn.type = 'button';
@@ -6904,7 +6916,7 @@ function renderUserTasks() {
         it.status=next;
         statusBtn.textContent=icon(next);
         statusBtn.setAttribute('aria-label',`Task status: ${next}`);
-        li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')) + (pending ? ' task-pending-acceptance' : '') + (stale ? ' task-stale' : '') + (it.important ? ' task-important' : '');
+        li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')) + (pending ? ' task-pending-acceptance' : '') + (it.important ? ' task-important' : '');
         if (next==='complete') {
           try {
             const tEnc = await encryptText(it.text || '');
@@ -6960,6 +6972,14 @@ function renderUserTasks() {
       placeCaretAtEnd(ed);
     });
     li.appendChild(titleSpan);
+
+    if (stale) {
+      const ageEl = document.createElement('span');
+      ageEl.className = 'task-stale-age';
+      ageEl.textContent = relativeDayLabel(it.createdAt);
+      ageEl.title = 'Carried over from a previous day';
+      li.appendChild(ageEl);
+    }
 
     const assignmentLabel = taskAssignmentStatusLabel(it);
     if (assignmentLabel) {
@@ -7619,10 +7639,7 @@ function buildMobileRow(caseId, it, opts = {}) {
   if (it.priority === 'high') row.classList.add('mt-pri-high');
   if (opts.pendingForMe) row.classList.add('mt-pending');
   if (it.important) row.classList.add('mt-important');
-  if (it.status !== 'complete' && isFromPreviousDay(it)) {
-    row.classList.add('mt-stale');
-    row.title = 'Carried over from a previous day';
-  }
+  const isStale = it.status !== 'complete' && isFromPreviousDay(it);
 
   // Swipe action layer
   const actionLayer = document.createElement('div');
@@ -7665,6 +7682,13 @@ function buildMobileRow(caseId, it, opts = {}) {
   const textEl = document.createElement('span');
   textEl.className = 'mt-text';
   textEl.textContent = it.text || '';
+  if (isStale) {
+    const ageEl = document.createElement('span');
+    ageEl.className = 'mt-stale-age';
+    ageEl.textContent = relativeDayLabel(it.createdAt);
+    ageEl.title = 'Carried over from a previous day';
+    textEl.appendChild(ageEl);
+  }
   body.appendChild(textEl);
   const showPatient = !opts.hidePatient;
   const showMeta = showPatient || opts.unassigned;

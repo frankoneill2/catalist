@@ -3039,26 +3039,16 @@ kbd {
   opacity: 0.78;
 }
 
-.case-task.task-stale {
-  border-left: 3px solid #f59e0b;
-  padding-left: 6px;
-  background: linear-gradient(90deg, rgba(245, 158, 11, 0.06), transparent 60%);
+.task-stale-age {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  font-weight: 500;
+  margin-left: 6px;
+  white-space: nowrap;
 }
-
-.case-task.task-stale .task-text::before {
-  content: 'carried over';
-  display: inline-block;
-  font-size: 0.65rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #b45309;
-  background: #fef3c7;
-  border: 1px solid #fde68a;
-  border-radius: 999px;
-  padding: 1px 6px;
-  margin-right: 6px;
-  vertical-align: middle;
-  font-weight: 600;
+.task-stale-age::before {
+  content: '· ';
+  color: #cbd5e1;
 }
 
 .star-btn {
@@ -5020,17 +5010,16 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
     color: #94a3b8;
     font-weight: 600;
   }
-  .mt-row.mt-stale {
-    box-shadow: inset 3px 0 0 #f59e0b;
-  }
-  .mt-row.mt-stale .mt-text::before {
-    content: 'carried over · ';
-    color: #b45309;
-    font-weight: 600;
+  .mt-stale-age {
     font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    margin-right: 2px;
+    color: #94a3b8;
+    font-weight: 500;
+    margin-left: 4px;
+    white-space: nowrap;
+  }
+  .mt-stale-age::before {
+    content: '· ';
+    color: #cbd5e1;
   }
   .mt-row.mt-important {
     background: #fef3c7;
