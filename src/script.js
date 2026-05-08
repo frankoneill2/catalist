@@ -1,31 +1,52 @@
 // script.js (ES module)
 
-// --- Firebase: import from the CDN (no npm needed)
-import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js';
+// --- Firebase: import from the npm package so we share the same app instance
+// as the new auth code in src/auth/. Both halves rely on the bundler
+// deduplicating these imports; the actual initializeApp() call lives in
+// src/auth/firebase.ts (imported here to ensure it runs first).
+import './auth/firebase';
+import './auth/index';
+import './auth/groupContext';
+import { app, auth, db } from './auth/firebase';
 import {
-  getFirestore, collection, addDoc, onSnapshot,
+  collection, addDoc, onSnapshot,
   deleteDoc, updateDoc, doc, query, orderBy, serverTimestamp, getDocs, setDoc, collectionGroup, where, getDoc, limit
-} from 'https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js';
-import { getAuth, signInAnonymously } from 'https://www.gstatic.com/firebasejs/11.0.0/firebase-auth.js';
+} from 'firebase/firestore';
+import { icon as cbIcon, iconString as cbIconString, setIcon as cbSetIcon } from './icons.js';
 
-// --- Firebase config
-const firebaseConfig = {
-  apiKey: "AIzaSyBo5a6Uxk1vJwS8WqFnccjSnNOOXreOhcg",
-  authDomain: "catalist-1.firebaseapp.com",
-  projectId: "catalist-1",
-  storageBucket: "catalist-1.firebasestorage.app",
-  messagingSenderId: "843924921323",
-  appId: "1:843924921323:web:0e7a847f8cd70db55f57ae",
-  measurementId: "G-6NZEC4ED4C",
-};
-
-// --- Init Firebase
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const auth = getAuth(app);
+// --- Phase 2: cases live under groups/{groupId}/cases now.
+//
+// The currently-selected group id is held in src/auth/groupContext.ts and
+// surfaced on window.__group. Every Firestore call that used to start at
+// the top-level `cases/` collection now passes through casesRoot() so the
+// path is `groups/{groupId}/cases/...`.
+//
+// This helper exists *here* so we don't have to change 77 individual
+// `doc(db, ...casesRoot(), ...)` / `collection(db, ...casesRoot(), ...)` call sites by
+// hand — they get rewritten mechanically to use `...casesRoot()` instead
+// of the literal `'cases'`.
+function casesRoot() {
+  const gid = (window.__group && window.__group.currentId()) || null;
+  if (!gid) {
+    // The bootstrap waits for `auth:ready` (which itself waits until the
+    // auth gate has selected a group), so this should be unreachable in
+    // practice. Throw loudly so anything that races into a Firestore call
+    // before the gate is open is surfaced as an error rather than as a
+    // wrongly-rooted Firestore path.
+    throw new Error('No group selected — Firestore call attempted before auth:ready');
+  }
+  return ['groups', gid, 'cases'];
+}
 
 // --- State and DOM refs
-let key, username;
+//
+// `key` is retained as a no-op slot during the Phase 4 transition (the
+// crypto helpers below are passthroughs and ignore it). `username` is the
+// signed-in user's display name, plumbed through every legacy write next to
+// `authorUid`, the new stable identity reference. UI render code prefers
+// `authorUid` (looked up against the users collection) and falls back to
+// `username` for any pre-Phase-4 records.
+let key, username, authorUid;
 let caseListSection, caseListEl, caseForm, caseInput, caseLocationSel;
 let caseDetailEl, caseTitleEl, backBtn;
 let taskForm, taskInput, taskListEl;
@@ -73,6 +94,19 @@ let unsubUsers = null;
 let unsubLocations = null;
 let usersCache = [];
 let locationsCache = [];
+
+// First-time hint: pulse the first unassigned assign-chip a user sees, once per device.
+const ASSIGN_HINT_KEY = 'wardround.assignHintSeen';
+let _assignHintPulseClaimed = false; // only one chip per render session may pulse
+const shouldShowAssignHint = () => {
+  if (_assignHintPulseClaimed) return false;
+  try { return !localStorage.getItem(ASSIGN_HINT_KEY); } catch { return false; }
+};
+const markAssignHintCandidate = () => { _assignHintPulseClaimed = true; };
+const markAssignHintSeen = () => {
+  _assignHintPulseClaimed = true;
+  try { localStorage.setItem(ASSIGN_HINT_KEY, '1'); } catch {}
+};
 let unsubUserTasks = [];
 let pendingTableSnap = null; // defer table rerender while editing
 let tableRebuildPending = false;
@@ -242,12 +276,15 @@ function buildTaskCreationPayload({ textCipher, textIv, statusCipher, statusIv, 
     statusIv,
     createdAt: serverTimestamp(),
     username: username || null,
+    authorUid: authorUid || null,
     assignee: nextAssignee,
     priority: priority || null,
     assignmentState: isPending ? TASK_ASSIGNMENT.PENDING : TASK_ASSIGNMENT.OPEN,
     assignedBy: isPending ? (username || null) : null,
+    assignedByUid: isPending ? (authorUid || null) : null,
     assignedAt: isPending ? serverTimestamp() : null,
     acceptedBy: null,
+    acceptedByUid: null,
     acceptedAt: null,
   };
 }
@@ -297,8 +334,64 @@ function stableSortStarredFirst(items) {
 
 async function toggleTaskImportant(caseId, taskId, currentValue) {
   const next = !currentValue;
-  await updateDoc(doc(db, 'cases', caseId, 'tasks', taskId), { important: next });
+  await updateDoc(doc(db, ...casesRoot(), caseId, 'tasks', taskId), { important: next });
   return next;
+}
+
+// Status (open/in progress/complete) — Carbon icon name + helper
+function statusIconName(status) {
+  if (status === 'complete') return 'checkbox--checked';
+  if (status === 'in progress') return 'checkbox--indeterminate';
+  return 'checkbox';
+}
+function setStatusIcon(el, status, size = 18) {
+  cbSetIcon(el, statusIconName(status), { size });
+}
+// User-facing status labels. Internal values stay as 'open' / 'in progress' / 'complete';
+// only translate at the rendering layer.
+function statusLabel(status) {
+  if (status === 'complete') return 'Complete';
+  if (status === 'in progress') return 'To follow';
+  return 'To do';
+}
+function statusGroupKey(status) {
+  if (status === 'complete') return 'complete';
+  if (status === 'in progress') return 'in progress';
+  return 'open';
+}
+const STATUS_GROUP_ORDER = ['open', 'in progress', 'complete'];
+
+/**
+ * Group `items` by status (To do / To follow / Complete) and render with thin
+ * subgroup headers between groups. Headers only appear when more than one
+ * group has items — a patient with only "To do" tasks shows no header.
+ */
+function renderTasksWithStatusGroups(parent, items, headerTag, renderRow) {
+  if (!items || !items.length) return;
+  const buckets = { open: [], 'in progress': [], complete: [] };
+  for (const it of items) buckets[statusGroupKey(it.status)].push(it);
+  const presentGroups = STATUS_GROUP_ORDER.filter((k) => buckets[k].length > 0);
+  const showHeaders = presentGroups.length > 1;
+  for (const k of presentGroups) {
+    if (showHeaders) {
+      const hdr = document.createElement(headerTag);
+      hdr.className = 'status-group-header';
+      hdr.dataset.status = k;
+      const label = document.createElement('span');
+      label.className = 'status-group-label';
+      label.textContent = statusLabel(k);
+      const count = document.createElement('span');
+      count.className = 'status-group-count';
+      count.textContent = String(buckets[k].length);
+      hdr.appendChild(label);
+      hdr.appendChild(count);
+      parent.appendChild(hdr);
+    }
+    for (const it of buckets[k]) renderRow(it);
+  }
+}
+function setStarIcon(el, important, size = 18) {
+  cbSetIcon(el, important ? 'star--filled' : 'star', { size });
 }
 
 function buildStarButton(initialImportant, onToggle) {
@@ -307,7 +400,7 @@ function buildStarButton(initialImportant, onToggle) {
   btn.className = 'star-btn' + (initialImportant ? ' is-important' : '');
   btn.setAttribute('aria-label', initialImportant ? 'Unmark as important' : 'Mark as important');
   btn.title = initialImportant ? 'Unmark as important' : 'Mark as important';
-  btn.textContent = initialImportant ? '★' : '☆';
+  setStarIcon(btn, !!initialImportant);
   let busy = false;
   btn.addEventListener('click', async (e) => {
     e.stopPropagation();
@@ -316,7 +409,7 @@ function buildStarButton(initialImportant, onToggle) {
     try {
       const next = await onToggle();
       btn.classList.toggle('is-important', !!next);
-      btn.textContent = next ? '★' : '☆';
+      setStarIcon(btn, !!next);
       btn.setAttribute('aria-label', next ? 'Unmark as important' : 'Mark as important');
       btn.title = next ? 'Unmark as important' : 'Mark as important';
     } catch (err) {
@@ -354,8 +447,10 @@ function buildTaskAssignmentPatch(nextAssignee) {
       assignee: null,
       assignmentState: TASK_ASSIGNMENT.OPEN,
       assignedBy: null,
+      assignedByUid: null,
       assignedAt: null,
       acceptedBy: null,
+      acceptedByUid: null,
       acceptedAt: null,
     };
   }
@@ -363,8 +458,10 @@ function buildTaskAssignmentPatch(nextAssignee) {
     assignee,
     assignmentState: TASK_ASSIGNMENT.PENDING,
     assignedBy: username || null,
+    assignedByUid: authorUid || null,
     assignedAt: serverTimestamp(),
     acceptedBy: null,
+    acceptedByUid: null,
     acceptedAt: null,
   };
 }
@@ -372,7 +469,7 @@ function buildTaskAssignmentPatch(nextAssignee) {
 async function updateTaskAssignment(caseId, taskId, nextAssignee, opts = {}) {
   const { caseTitle = null, taskText = null } = opts || {};
   const patch = buildTaskAssignmentPatch(nextAssignee);
-  await updateDoc(doc(db, 'cases', caseId, 'tasks', taskId), patch);
+  await updateDoc(doc(db, ...casesRoot(), caseId, 'tasks', taskId), patch);
   if (nextAssignee) {
     try {
       const payload = { type: 'task_assigned', caseId, taskId, caseTitle: caseTitle || undefined, assignee: nextAssignee };
@@ -400,9 +497,10 @@ async function updateTaskAssignment(caseId, taskId, nextAssignee, opts = {}) {
 
 async function acceptTaskAssignment(caseId, taskId, opts = {}) {
   const { caseTitle = null, taskText = null } = opts || {};
-  await updateDoc(doc(db, 'cases', caseId, 'tasks', taskId), {
+  await updateDoc(doc(db, ...casesRoot(), caseId, 'tasks', taskId), {
     assignmentState: TASK_ASSIGNMENT.ACCEPTED,
     acceptedBy: username || null,
+    acceptedByUid: authorUid || null,
     acceptedAt: serverTimestamp(),
   });
   try {
@@ -418,12 +516,14 @@ async function acceptTaskAssignment(caseId, taskId, opts = {}) {
 
 async function declineTaskAssignment(caseId, taskId, opts = {}) {
   const { caseTitle = null, taskText = null } = opts || {};
-  await updateDoc(doc(db, 'cases', caseId, 'tasks', taskId), {
+  await updateDoc(doc(db, ...casesRoot(), caseId, 'tasks', taskId), {
     assignee: null,
     assignmentState: TASK_ASSIGNMENT.OPEN,
     assignedBy: null,
+    assignedByUid: null,
     assignedAt: null,
     acceptedBy: null,
+    acceptedByUid: null,
     acceptedAt: null,
   });
   try {
@@ -623,7 +723,7 @@ function openShortcutsModal() {
   const list = document.createElement('div');
   list.className = 'shortcuts-grid';
   list.innerHTML = [
-    '<div><kbd>Shift</kbd><span>+</span><kbd>N</kbd></div><p>Create a new case</p>',
+    '<div><kbd>Shift</kbd><span>+</span><kbd>N</kbd></div><p>Create a new patient</p>',
     '<div><kbd>Shift</kbd><span>+</span><kbd>W</kbd></div><p>Open ward notes print flow</p>',
     '<div><kbd>?</kbd></div><p>Open this shortcuts panel</p>',
     '<div><kbd>Esc</kbd></div><p>Close active modal/panel</p>',
@@ -732,7 +832,7 @@ function setTableFiltersHidden(hidden) {
 async function openNewCaseModal() {
   const overlay = document.createElement('div'); overlay.className='modal-overlay';
   const modal = document.createElement('div'); modal.className='modal'; overlay.appendChild(modal);
-  const title = document.createElement('h3'); title.textContent='New Case'; modal.appendChild(title);
+  const title = document.createElement('h3'); title.textContent='New patient'; modal.appendChild(title);
   const form = document.createElement('div'); form.className='stack'; modal.appendChild(form);
   const nameWrap = document.createElement('label'); nameWrap.textContent='Title'; const nameInput = document.createElement('input'); nameInput.placeholder='Enter case title'; nameInput.setAttribute('aria-label','Case title'); nameWrap.appendChild(nameInput); form.appendChild(nameWrap);
   // Tags: Location, Room, Consultant
@@ -761,7 +861,8 @@ async function openNewCaseModal() {
       const e = await encryptText(t);
       const ct = { location: locSel.value||null, consultant: consSel.value||null };
       const loc = locSel.value||null; const room = roomSel.value||null; if (loc && room) ct.room = room; else ct.room = null;
-      await addDoc(collection(db, 'cases'), { titleCipher: e.cipher, titleIv: e.iv, createdAt: serverTimestamp(), caseTags: ct });
+      const created = await addDoc(collection(db, ...casesRoot()), { titleCipher: e.cipher, titleIv: e.iv, createdAt: serverTimestamp(), caseTags: ct, authorUid: authorUid || null });
+      try { window.__audit?.log({ action: 'case.create', caseId: created.id }); } catch {}
       close();
       showToast('Case created');
     } catch (err) {
@@ -782,43 +883,132 @@ function colorForName(name) {
   return { bg, border, color };
 }
 
-// --- Crypto helpers
-async function deriveKey(passphrase) {
-  const enc = new TextEncoder();
-  const salt = enc.encode('shared-salt');
-  const baseKey = await crypto.subtle.importKey('raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveKey']);
-  return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
-    baseKey,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt']
-  );
+// --- User display-name lookup (Phase 4)
+//
+// Writes record `authorUid` (and `username` for backward compat). Reads
+// resolve `authorUid` to a display name through the users collection. We
+// cache the lookups in-memory; `usernameForRender(data)` is the central
+// helper for any render path that used to read `data.username` directly.
+const userDisplayCache = new Map(); // uid → displayName
+let userCacheSeed = false;
+
+function seedUserDisplayCache(snapDocs) {
+  for (const d of snapDocs) {
+    const data = d.data ? d.data() : d;
+    const uid = String((data && (data.uid || d.id)) || '').trim();
+    const dn = String((data && (data.displayName || data.username)) || '').trim();
+    if (uid && dn) userDisplayCache.set(uid, dn);
+  }
+  userCacheSeed = true;
 }
 
-function bufToB64(buf) { return btoa(String.fromCharCode(...new Uint8Array(buf))); }
-function b64ToBuf(b64) { return Uint8Array.from(atob(b64), c => c.charCodeAt(0)); }
+async function resolveDisplayName(uid) {
+  if (!uid) return '';
+  const cached = userDisplayCache.get(uid);
+  if (cached) return cached;
+  try {
+    const snap = await getDoc(doc(db, 'users', uid));
+    if (snap.exists()) {
+      const data = snap.data() || {};
+      const dn = String(data.displayName || data.username || '').trim();
+      if (dn) userDisplayCache.set(uid, dn);
+      return dn;
+    }
+  } catch { /* ignore */ }
+  return '';
+}
+
+// Resolve "who wrote this row" for render purposes. Prefers the stable
+// authorUid lookup; falls back to the legacy plaintext `username` (or
+// `author` for ward notes) for records written before Phase 4.
+function usernameForRender(data) {
+  if (!data) return '';
+  if (data.authorUid) {
+    const cached = userDisplayCache.get(String(data.authorUid));
+    if (cached) return cached;
+    // Fire-and-forget warm the cache; render will see it on the next pass.
+    resolveDisplayName(String(data.authorUid));
+  }
+  return String(data.username || data.author || '').trim();
+}
+
+// --- Crypto helpers (Phase 5: envelope encryption with per-group DEK)
+//
+// Field-level encryption now uses an AES-GCM-256 Data Encryption Key (DEK)
+// held per-group (managed by `src/auth/envelope.ts` and exposed on
+// `window.__envelope`). Each write under an active group is encrypted with
+// that group's DEK; the resulting envelope blob is stored in the existing
+// `*Cipher` field with `iv: [1]` as the version discriminator.
+//
+// The three on-disk shapes a reader can encounter:
+//   - `iv: []`           → plaintext (Phase 3/4 leftover)
+//   - `iv: [1]`          → envelope blob (decrypt via window.__envelope)
+//   - `iv: <12 bytes>`   → legacy AES-GCM under the retired shared passphrase
+//                          (should not appear after the Phase 3 migration; if
+//                          it does, the value is rendered as the placeholder)
+//
+// Why preserve the field shape:
+//   - Existing reader code throughout the file passes `(cipher, iv)` to
+//     decryptText; introducing a new field name would mean touching every
+//     site. Keeping the shape lets the dispatch happen in this one helper.
+//   - The envelope blob fits in a single string field; the iv-length-1 marker
+//     keeps the discriminator cheap to evaluate without parsing the cipher.
+//
+// Fallback behavior:
+//   - If the envelope isn't ready when a write happens (no active group, or
+//     the DEK couldn't be unwrapped), encryptText falls back to plaintext so
+//     the user's edit isn't lost. The intent is that Phase 7 / KMS hardening
+//     replaces this with a hard error once the bootstrap is reliable.
+//   - If the envelope isn't ready when a read happens against an envelope
+//     blob, decryptText returns a placeholder ("…") rather than throwing,
+//     so the UI degrades visibly without crashing.
+const ENCRYPTED_PLACEHOLDER = '…';
+
+function envelopeReady() {
+  return !!(window.__envelope && window.__envelope.isReady());
+}
 
 async function encryptText(text) {
-  const enc = new TextEncoder();
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(text));
-  return { cipher: bufToB64(cipher), iv: Array.from(iv) };
+  const s = text == null ? '' : String(text);
+  if (s && envelopeReady()) {
+    try {
+      const blob = await window.__envelope.encryptField(s);
+      return { cipher: blob, iv: [1] };
+    } catch (err) {
+      console.warn('[crypto] envelope.encryptField failed; falling back to plaintext write', err);
+    }
+  }
+  return { cipher: s, iv: [] };
 }
 
 async function decryptText(cipher, iv) {
-  const dec = new TextDecoder();
-  const plain = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: new Uint8Array(iv) },
-    key,
-    b64ToBuf(cipher)
-  );
-  return dec.decode(plain);
+  if (cipher == null) return '';
+  // Envelope blob (Phase 5 onward).
+  if (Array.isArray(iv) && iv.length === 1 && iv[0] === 1) {
+    if (!envelopeReady()) return ENCRYPTED_PLACEHOLDER;
+    try {
+      const plain = await window.__envelope.decryptField(String(cipher));
+      return plain == null ? ENCRYPTED_PLACEHOLDER : plain;
+    } catch {
+      return ENCRYPTED_PLACEHOLDER;
+    }
+  }
+  // Plaintext (Phase 3/4 shape).
+  if (Array.isArray(iv) && iv.length === 0) {
+    return String(cipher);
+  }
+  // Legacy 12-byte iv (pre-Phase-3 leftovers). The shared-passphrase machinery
+  // is gone, so we can't decrypt these inline. Surface the placeholder.
+  if (Array.isArray(iv) && iv.length === 12) {
+    return ENCRYPTED_PLACEHOLDER;
+  }
+  // Anything else: treat as plaintext to be tolerant of legacy field shapes.
+  return String(cipher);
 }
 
 async function safeDecryptText(cipher, iv) {
-  if (!cipher || !Array.isArray(iv) || iv.length !== 12) return null;
-  try { return await decryptText(cipher, iv); } catch { return null; }
+  if (cipher == null) return null;
+  return await decryptText(cipher, iv);
 }
 
 // --- UI helpers
@@ -919,46 +1109,14 @@ function showMainTab(which) {
 }
 
 
-// User select modal using live users list
-function showUserSelectModal() {
-  return new Promise(async (resolve) => {
-    const overlay = document.createElement('div'); overlay.className = 'modal-overlay';
-    const modal = document.createElement('div'); modal.className = 'modal'; overlay.appendChild(modal);
-    const title = document.createElement('h3'); title.textContent = 'Select your user'; modal.appendChild(title);
-    const row = document.createElement('div'); row.className = 'row'; modal.appendChild(row);
-    const select = document.createElement('select'); select.style.height = '48px'; select.style.borderRadius = '12px'; select.style.border = '1px solid #e5e7eb'; select.style.padding = '0 12px'; row.appendChild(select);
-    const actions = document.createElement('div'); actions.className = 'actions'; modal.appendChild(actions);
-    const cancel = document.createElement('button'); cancel.className = 'btn'; cancel.textContent = 'Cancel'; actions.appendChild(cancel);
-    const ok = document.createElement('button'); ok.className = 'btn primary'; ok.textContent = 'Continue'; actions.appendChild(ok);
-    document.body.appendChild(overlay);
-    let unsub = null;
-    const fill = (names) => {
-      const prev = select.value;
-      select.innerHTML = '';
-      for (const n of names) { const opt=document.createElement('option'); opt.value=n; opt.textContent=n; select.appendChild(opt);} 
-      if (prev && names.includes(prev)) select.value = prev;
-    };
-    try {
-      const qUsers = query(collection(db, 'users'), orderBy('username'));
-      unsub = onSnapshot(qUsers, (snap) => {
-        const names = snap.docs.map(d => (d.data().username || '').trim()).filter(Boolean);
-        fill(names);
-      });
-    } catch (e) {
-      const snap = await getDocs(query(collection(db, 'users'), orderBy('username')));
-      fill(snap.docs.map(d => (d.data().username || '').trim()).filter(Boolean));
-    }
-    const cleanup = () => { if (unsub) unsub(); overlay.remove(); };
-    cancel.addEventListener('click', () => { cleanup(); resolve(''); });
-    ok.addEventListener('click', () => { const val = select.value || ''; cleanup(); resolve(val); });
-    select.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); ok.click(); }});
-    select.focus();
-  });
-}
+// (Phase 4) The legacy showUserSelectModal — a startup prompt asking the
+// user to pick their name from a dropdown — has been removed. Identity now
+// comes from the signed-in Firebase Auth user, plumbed through to the
+// `username` and `authorUid` module variables at bootstrap.
 
 // --- Firestore listeners
 function startRealtimeCases() {
-  const q = query(collection(db, 'cases'), orderBy('createdAt', 'desc'));
+  const q = query(collection(db, ...casesRoot()), orderBy('createdAt', 'desc'));
   onSnapshot(q, async snap => {
     caseListEl.innerHTML = '';
     // Build list and sort by location
@@ -1027,7 +1185,7 @@ function startRealtimeCases() {
           ev.stopPropagation();
           const newVal = sel.value || null;
           try {
-            await updateDoc(doc(db, 'cases', docSnap.id), { location: newVal });
+            await updateDoc(doc(db, ...casesRoot(), docSnap.id), { location: newVal });
             renderChip(newVal);
           } catch (err) {
             console.error('Failed to update location', err);
@@ -1047,7 +1205,7 @@ function startRealtimeCases() {
       tasksToggle.type = 'button';
       tasksToggle.className = 'chev-btn';
       tasksToggle.setAttribute('aria-label', 'Hide tasks');
-      tasksToggle.textContent = '▾';
+      cbSetIcon(tasksToggle, 'chevron--down', { size: 14 });
       actions.appendChild(tasksToggle);
 
       // Overflow menu (⋯) for edit/delete
@@ -1070,7 +1228,7 @@ function startRealtimeCases() {
         const newTitle = (prompt('Edit case title', current) || '').trim();
         if (!newTitle) return;
         const { cipher, iv } = await encryptText(newTitle);
-        await updateDoc(doc(db, 'cases', docSnap.id), { titleCipher: cipher, titleIv: iv });
+        await updateDoc(doc(db, ...casesRoot(), docSnap.id), { titleCipher: cipher, titleIv: iv });
         if (currentCaseId === docSnap.id) caseTitleEl.textContent = newTitle;
         showToast('Case title updated');
       });
@@ -1118,13 +1276,13 @@ function startRealtimeCases() {
       // Toggle behavior
       let tasksHidden = collapseAll;
       tasksWrap.hidden = tasksHidden;
-      tasksToggle.textContent = tasksHidden ? '▸' : '▾';
+      cbSetIcon(tasksToggle, tasksHidden ? 'chevron--right' : 'chevron--down', { size: 14 });
       tasksToggle.setAttribute('aria-label', tasksHidden ? 'Show tasks' : 'Hide tasks');
       tasksToggle.addEventListener('click', (e) => {
         e.stopPropagation();
         tasksHidden = !tasksHidden;
         tasksWrap.hidden = tasksHidden;
-        tasksToggle.textContent = tasksHidden ? '▸' : '▾';
+        cbSetIcon(tasksToggle, tasksHidden ? 'chevron--right' : 'chevron--down', { size: 14 });
         tasksToggle.setAttribute('aria-label', tasksHidden ? 'Show tasks' : 'Hide tasks');
       });
 
@@ -1239,8 +1397,8 @@ function caseMatchesTagFilters(caseTags) {
 async function loadCompactTasks(caseId, caseTitle, ul, moreBtn) {
   ul.innerHTML = '';
   try {
-    const snap = await getDocs(collection(db, 'cases', caseId, 'tasks'));
-    const items = [];
+    const snap = await getDocs(collection(db, ...casesRoot(), caseId, 'tasks'));
+    let items = [];
     for (const d of snap.docs) {
       const dat = d.data();
       try {
@@ -1285,7 +1443,7 @@ async function loadCompactTasks(caseId, caseTitle, ul, moreBtn) {
       moreBtn.hidden = true;
     }
 
-    for (const it of visible) {
+    renderTasksWithStatusGroups(ul, visible, 'li', (it) => {
       const li = document.createElement('li');
       const statusCls = it.status === 'in progress' ? 's-inprogress' : (it.status === 'complete' ? 's-complete' : 's-open');
       const isMine = !!username && it.assignee === username;
@@ -1299,8 +1457,7 @@ async function loadCompactTasks(caseId, caseTitle, ul, moreBtn) {
       const statusBtn = document.createElement('button');
       statusBtn.type = 'button';
       statusBtn.className = 'status-btn';
-      const icon = (s) => s === 'complete' ? '☑' : (s === 'in progress' ? '◐' : '☐');
-      statusBtn.textContent = icon(it.status);
+      setStatusIcon(statusBtn, it.status);
       statusBtn.setAttribute('aria-label', `Task status: ${it.status}`);
       statusBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -1309,9 +1466,9 @@ async function loadCompactTasks(caseId, caseTitle, ul, moreBtn) {
         const next = order[(idx + 1) % order.length];
         try {
           const { cipher, iv } = await encryptText(next);
-          await updateDoc(doc(db, 'cases', caseId, 'tasks', it.id), buildTaskStatusPatch(next, cipher, iv));
+          await updateDoc(doc(db, ...casesRoot(), caseId, 'tasks', it.id), buildTaskStatusPatch(next, cipher, iv));
           it.status = next;
-          statusBtn.textContent = icon(next);
+          setStatusIcon(statusBtn, next);
           statusBtn.setAttribute('aria-label', `Task status: ${next}`);
           li.className = 'case-task ' + (next === 'in progress' ? 's-inprogress' : (next === 'complete' ? 's-complete' : 's-open')) + (it.important ? ' task-important' : '') + (isMine ? ' task-mine' : '');
           if (next === 'complete') {
@@ -1345,30 +1502,45 @@ async function loadCompactTasks(caseId, caseTitle, ul, moreBtn) {
         pri.textContent = it.priority;
         li.appendChild(pri);
       }
-      // Assignee badge (always rendered), with hover tooltip and popup picker on click
-      const av = document.createElement('span');
-      av.className = 'mini-avatar';
-      const initials = it.assignee ? it.assignee.split(/\s+/).map(s=>s[0]).join('').slice(0,2).toUpperCase() : '';
-      av.textContent = initials || '';
+      // Assignee chip — bigger tap target on mobile, opens bottom sheet; desktop keeps popup picker.
+      const av = document.createElement('button');
+      av.type = 'button';
+      av.className = 'cp-assign';
+      if (!it.assignee) av.classList.add('cp-assign--unassigned');
+      const avInner = document.createElement('span');
+      avInner.className = 'cp-assign-avatar';
+      const initials = it.assignee ? it.assignee.split(/\s+/).map(s=>s[0]).join('').slice(0,2).toUpperCase() : '+';
+      avInner.textContent = initials;
       const col = colorForName(it.assignee || '');
-      av.style.background = col.bg;
-      av.style.color = col.color;
-      av.style.border = `1px solid ${col.border}`;
-      av.setAttribute('aria-label', it.assignee ? `Assigned to ${it.assignee}` : 'Unassigned');
-      // Tooltip for full name on hover (rendered at body level to avoid clipping)
+      if (it.assignee) {
+        avInner.style.background = col.bg;
+        avInner.style.color = col.color;
+        avInner.style.border = `1px solid ${col.border}`;
+      }
+      av.appendChild(avInner);
+      const avLabel = document.createElement('span');
+      avLabel.className = 'cp-assign-label';
+      avLabel.textContent = 'Assign';
+      av.appendChild(avLabel);
+      av.setAttribute('aria-label', it.assignee ? `Assigned to ${it.assignee}. Tap to reassign.` : 'Unassigned. Tap to assign.');
+      // First-time pulse hint on the first unassigned chip a user sees (per device).
+      if (!it.assignee && shouldShowAssignHint()) {
+        markAssignHintCandidate();
+        av.classList.add('cp-pulse');
+      }
+      // Tooltip for full name on hover (desktop only)
       let tipEl = null;
       const removeTip = () => { if (tipEl) { tipEl.remove(); tipEl = null; } };
       av.addEventListener('mouseenter', () => {
-        if (!it.assignee) return; // skip tooltip when unassigned
+        if (!it.assignee) return;
+        if (typeof isMobileUserView === 'function' && isMobileUserView()) return;
         tipEl = document.createElement('div');
         tipEl.className = 'assignee-tip';
         tipEl.textContent = it.assignee;
         tipEl.style.position = 'fixed';
         tipEl.style.zIndex = '2147483647';
         document.body.appendChild(tipEl);
-        // Position above the avatar
         const r = av.getBoundingClientRect();
-        // After layout, adjust top to account for tooltip height
         requestAnimationFrame(() => {
           const h = tipEl.offsetHeight || 24;
           tipEl.style.left = `${Math.round(r.left + r.width / 2)}px`;
@@ -1379,11 +1551,21 @@ async function loadCompactTasks(caseId, caseTitle, ul, moreBtn) {
       av.addEventListener('mouseleave', removeTip);
       window.addEventListener('scroll', removeTip, { passive: true });
       window.addEventListener('resize', removeTip, { passive: true });
-      
-      // Popup picker
+
       av.addEventListener('click', (e) => {
         e.stopPropagation();
-        // Close existing if open
+        markAssignHintSeen();
+        av.classList.remove('cp-pulse');
+        if (typeof isMobileUserView === 'function' && isMobileUserView()) {
+          openAssigneeSheet({
+            caseId,
+            it: { ...it, taskId: it.id },
+            title: caseTitle,
+            onChanged: () => loadCompactTasks(caseId, caseTitle, ul, moreBtn),
+          });
+          return;
+        }
+        // Desktop popup picker
         const existing = li.querySelector('.assignee-panel');
         if (existing) { existing.remove(); return; }
         const panel = document.createElement('div');
@@ -1412,7 +1594,6 @@ async function loadCompactTasks(caseId, caseTitle, ul, moreBtn) {
         addOpt('Unassigned', null);
         for (const u of usersCache) addOpt(u.username, u.username);
         document.body.appendChild(panel);
-        // Position near the avatar (below, aligned to right if space)
         const r = av.getBoundingClientRect();
         requestAnimationFrame(() => {
           const w = panel.offsetWidth || 180;
@@ -1421,7 +1602,6 @@ async function loadCompactTasks(caseId, caseTitle, ul, moreBtn) {
           panel.style.left = `${Math.round(left)}px`;
           panel.style.top = `${Math.round(top)}px`;
         });
-        // outside click to close
         const onDocClick = (evt) => {
           if (!panel || panel.contains(evt.target) || evt.target === av) return;
           panel.remove();
@@ -1437,7 +1617,7 @@ async function loadCompactTasks(caseId, caseTitle, ul, moreBtn) {
       li.appendChild(cm);
       loadLastComment(caseId, it.id, cm);
       ul.appendChild(li);
-    }
+    });
   } catch (err) {
     console.error('Failed to load compact tasks for case', caseId, err);
   }
@@ -1446,11 +1626,11 @@ async function loadCompactTasks(caseId, caseTitle, ul, moreBtn) {
 async function loadLastComment(caseId, taskId, container) {
   container.textContent = '';
   try {
-    const snap = await getDocs(query(collection(db, 'cases', caseId, 'tasks', taskId, 'comments'), orderBy('createdAt', 'desc'), limit(1)));
+    const snap = await getDocs(query(collection(db, ...casesRoot(), caseId, 'tasks', taskId, 'comments'), orderBy('createdAt', 'desc'), limit(1)));
     if (snap.empty) { container.hidden = hideAllComments; return; }
     const d = snap.docs[0].data();
     const text = await decryptText(d.cipher, d.iv);
-    const author = d.username || '';
+    const author = usernameForRender(d);
     const line = document.createElement('div'); line.className = 'c-line';
     if (author) {
       const a = document.createElement('span'); a.className = 'c-author'; a.textContent = author + ':'; line.appendChild(a);
@@ -1495,7 +1675,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function startRealtimeTasks(caseId) {
-  const q = query(collection(db, 'cases', caseId, 'tasks'), orderBy('createdAt', 'desc'));
+  const q = query(collection(db, ...casesRoot(), caseId, 'tasks'), orderBy('createdAt', 'desc'));
   if (unsubTasks) unsubTasks();
   // Persist in-session order: set on first load; not reshuffled on status changes
   let taskOrder = null;
@@ -1564,18 +1744,17 @@ function startRealtimeTasks(caseId) {
         const statusBtn = document.createElement('button');
         statusBtn.type = 'button';
         statusBtn.className = 'icon-btn task-status-btn';
-        const statusIcon = (s) => s === 'complete' ? '☑' : (s === 'in progress' ? '◐' : '☐');
         const statusLabel = (s) => `Task status: ${s}`;
-        statusBtn.textContent = statusIcon(status);
+        setStatusIcon(statusBtn, status);
         statusBtn.setAttribute('aria-label', statusLabel(status));
         statusBtn.addEventListener('click', async () => {
           const order = ['open', 'in progress', 'complete'];
           const idx = order.indexOf(li.dataset.status || 'open');
           const next = order[(idx + 1) % order.length];
           const { cipher, iv } = await encryptText(next);
-          await updateDoc(doc(db, 'cases', caseId, 'tasks', docSnap.id), buildTaskStatusPatch(next, cipher, iv));
+          await updateDoc(doc(db, ...casesRoot(), caseId, 'tasks', docSnap.id), buildTaskStatusPatch(next, cipher, iv));
           li.dataset.status = next;
-          statusBtn.textContent = statusIcon(next);
+          setStatusIcon(statusBtn, next);
           statusBtn.setAttribute('aria-label', statusLabel(next));
           if (next === 'complete') {
             try {
@@ -1644,7 +1823,7 @@ function startRealtimeTasks(caseId) {
           const next = (prompt('Edit task', current) || '').trim();
           if (!next || next === current) return;
           const { cipher: textCipher, iv: textIv } = await encryptText(next);
-          await updateDoc(doc(db, 'cases', caseId, 'tasks', docSnap.id), { textCipher, textIv });
+          await updateDoc(doc(db, ...casesRoot(), caseId, 'tasks', docSnap.id), { textCipher, textIv });
           titleSpan.textContent = next;
           showToast('Task updated');
         });
@@ -1675,7 +1854,7 @@ function startRealtimeTasks(caseId) {
 
         addItem('Delete', async () => {
           if (!confirm('Delete this task?')) return;
-          await deleteDoc(doc(db, 'cases', caseId, 'tasks', docSnap.id));
+          await deleteDoc(doc(db, ...casesRoot(), caseId, 'tasks', docSnap.id));
         }, { danger: true, autoClose: true });
 
         actionsWrap.appendChild(panel);
@@ -1719,7 +1898,7 @@ function startRealtimeTasks(caseId) {
         const commentBtn = document.createElement('button');
         commentBtn.className = 'icon-btn add-comment-btn';
         commentBtn.type = 'submit';
-        commentBtn.textContent = '➕';
+        cbSetIcon(commentBtn, 'add', { size: 16, label: 'Add comment' });
         commentBtn.setAttribute('aria-label', 'Add comment');
         commentForm.appendChild(commentBtn);
         commentForm.addEventListener('submit', async e => {
@@ -1747,8 +1926,8 @@ function startRealtimeTasks(caseId) {
 
             try {
               const { cipher, iv } = await encryptText(text);
-              await addDoc(collection(db, 'cases', caseId, 'tasks', docSnap.id, 'comments'), {
-                cipher, iv, username, createdAt: serverTimestamp(),
+              await addDoc(collection(db, ...casesRoot(), caseId, 'tasks', docSnap.id, 'comments'), {
+                cipher, iv, username, authorUid: authorUid || null, createdAt: serverTimestamp(),
               });
             // Log update: comment added
             try {
@@ -1804,7 +1983,7 @@ function startRealtimeTasks(caseId) {
 }
 
 function startRealtimeComments(caseId, taskId, listEl, onCount) {
-  const q = query(collection(db, 'cases', caseId, 'tasks', taskId, 'comments'), orderBy('createdAt', 'asc'));
+  const q = query(collection(db, ...casesRoot(), caseId, 'tasks', taskId, 'comments'), orderBy('createdAt', 'asc'));
   onSnapshot(q, async snap => {
     if (onCount) onCount(snap.size);
     listEl.innerHTML = '';
@@ -1829,7 +2008,7 @@ function startRealtimeComments(caseId, taskId, listEl, onCount) {
           const next = (prompt('Edit comment', current) || '').trim();
           if (!next) return;
           const { cipher, iv } = await encryptText(next);
-          await updateDoc(doc(db, 'cases', caseId, 'tasks', taskId, 'comments', s.id), { cipher, iv });
+          await updateDoc(doc(db, ...casesRoot(), caseId, 'tasks', taskId, 'comments', s.id), { cipher, iv });
           showToast('Comment updated');
         });
         actions.appendChild(editBtn);
@@ -1840,7 +2019,7 @@ function startRealtimeComments(caseId, taskId, listEl, onCount) {
         delBtn.setAttribute('aria-label', 'Delete comment');
         delBtn.addEventListener('click', async () => {
           if (!confirm('Delete this comment?')) return;
-          await deleteDoc(doc(db, 'cases', caseId, 'tasks', taskId, 'comments', s.id));
+          await deleteDoc(doc(db, ...casesRoot(), caseId, 'tasks', taskId, 'comments', s.id));
           showToast('Comment deleted');
         });
         actions.appendChild(delBtn);
@@ -1855,7 +2034,7 @@ function startRealtimeComments(caseId, taskId, listEl, onCount) {
 }
 
 function startRealtimeNotes(caseId) {
-  const q = query(collection(db, 'cases', caseId, 'notes'), orderBy('createdAt', 'desc'));
+  const q = query(collection(db, ...casesRoot(), caseId, 'notes'), orderBy('createdAt', 'desc'));
   if (unsubNotes) unsubNotes();
   unsubNotes = onSnapshot(q, async snap => {
     notesListEl.innerHTML = '';
@@ -1868,7 +2047,7 @@ function startRealtimeNotes(caseId) {
         const del = document.createElement('button');
         del.textContent = 'Delete';
         del.addEventListener('click', async () => {
-          await deleteDoc(doc(db, 'cases', caseId, 'notes', docSnap.id));
+          await deleteDoc(doc(db, ...casesRoot(), caseId, 'notes', docSnap.id));
         });
         li.appendChild(del);
         notesListEl.appendChild(li);
@@ -1882,7 +2061,7 @@ function startRealtimeNotes(caseId) {
 // --- Updates feed helpers ---
 async function logUpdate(payload = {}) {
   try {
-    const base = { type: payload.type, caseId: payload.caseId || currentCaseId || '', username, createdAt: serverTimestamp() };
+    const base = { type: payload.type, caseId: payload.caseId || currentCaseId || '', username, authorUid: authorUid || null, createdAt: serverTimestamp() };
     // Case title snapshot
     let caseTitleText = payload.caseTitle || (typeof caseTitleEl !== 'undefined' && caseTitleEl && caseTitleEl.textContent ? caseTitleEl.textContent : 'Case');
     try { caseTitleText = (caseTitleText || '').trim(); } catch {}
@@ -1924,12 +2103,29 @@ function dayLabel(ts) {
   } catch { return ''; }
 }
 
+function updateIconNameFor(type) {
+  switch (type) {
+    case 'task_added': return 'add';
+    case 'task_completed': return 'checkbox--checked';
+    case 'task_assigned': return 'send--alt';
+    case 'task_assignment_accepted': return 'checkmark--filled';
+    case 'task_assignment_declined': return 'undo';
+    case 'task_reopened': return 'reset';
+    case 'comment_added': return 'chat';
+    case 'note_added': return 'document';
+    default: return null;
+  }
+}
+
 function buildUpdateDom(item) {
   const li = document.createElement('li'); li.className='update-item';
-  const icon = document.createElement('div'); icon.className='update-icon'; icon.textContent = item.icon || '•';
+  const icon = document.createElement('div'); icon.className='update-icon';
+  const iconName = updateIconNameFor(item.type);
+  if (iconName) icon.appendChild(cbIcon(iconName, { size: 16 }));
+  else icon.textContent = '•';
   const content = document.createElement('div'); content.className='update-content';
   const line = document.createElement('div'); line.className='update-line';
-  const who = document.createElement('span'); who.className='who'; who.textContent=item.username||'Someone';
+  const who = document.createElement('span'); who.className='who'; who.textContent = usernameForRender(item) || 'Someone';
   const a = document.createElement('a'); a.href='#'; a.className='link'; a.style.textDecoration='none'; a.style.color='inherit';
   // Build message with inline-emphasized task name
   const caseChip = document.createElement('span'); caseChip.className='chip'; caseChip.textContent=item.caseTitle||'Case';
@@ -2013,7 +2209,7 @@ function renderUpdatesList() {
       updatesListEl.appendChild(buildUpdateDom(group[0]));
     } else {
       const outer = document.createElement('li'); outer.className='update-item';
-      const icon = document.createElement('div'); icon.className='update-icon'; icon.textContent='📁';
+      const icon = document.createElement('div'); icon.className='update-icon'; icon.appendChild(cbIcon('document', { size: 16 }));
       const content = document.createElement('div'); content.className='update-content';
       const header = document.createElement('div'); header.className='update-line';
       const caseChip = document.createElement('span'); caseChip.className='chip'; caseChip.textContent = group[0].caseTitle || 'Case'; header.appendChild(caseChip);
@@ -2086,7 +2282,7 @@ function startRealtimeUpdates() {
       updatesCache.clear();
       for (const d of snap.docs) {
         const data = d.data();
-        const it = { id: d.id, type: data.type, username: data.username||'', assignee: data.assignee || '', caseId: data.caseId||'', taskId: data.taskId||'', createdAt: data.createdAt||null, createdAtMs: data.createdAt?.toMillis ? data.createdAt.toMillis() : null };
+        const it = { id: d.id, type: data.type, username: data.username||'', authorUid: data.authorUid||'', assignee: data.assignee || '', caseId: data.caseId||'', taskId: data.taskId||'', createdAt: data.createdAt||null, createdAtMs: data.createdAt?.toMillis ? data.createdAt.toMillis() : null };
         try { if (data.caseTitleCipher && data.caseTitleIv) it.caseTitle = await decryptText(data.caseTitleCipher, data.caseTitleIv); } catch {}
         if (['task_added','task_completed','task_assigned','task_assignment_accepted','task_assignment_declined','task_reopened'].includes(it.type)) {
           try { if (data.taskTextCipher && data.taskTextIv) it.taskText = await decryptText(data.taskTextCipher, data.taskTextIv); } catch {}
@@ -2097,15 +2293,6 @@ function startRealtimeUpdates() {
           try { if (data.noteTitleCipher && data.noteTitleIv) it.noteTitle = await decryptText(data.noteTitleCipher, data.noteTitleIv); } catch {}
           try { if (data.noteTextCipher && data.noteTextIv) it.note = await decryptText(data.noteTextCipher, data.noteTextIv); } catch {}
         }
-        if (it.type==='task_added') it.icon = '➕';
-        else if (it.type==='task_completed') it.icon = '☑';
-        else if (it.type==='task_assigned') it.icon = '📨';
-        else if (it.type==='task_assignment_accepted') it.icon = '✅';
-        else if (it.type==='task_assignment_declined') it.icon = '↩';
-        else if (it.type==='task_reopened') it.icon = '🔓';
-        else if (it.type==='comment_added') it.icon = '💬';
-        else if (it.type==='note_added') it.icon = '📝';
-        else it.icon = '•';
         updatesItems.push(it); updatesCache.set(d.id, it);
       }
       updatesLastDoc = snap.docs[snap.docs.length-1] || null;
@@ -2130,7 +2317,7 @@ async function loadMoreUpdates() {
     const more = [];
     for (const d of snap.docs) {
       const data = d.data();
-      const it = { id: d.id, type: data.type, username: data.username||'', assignee: data.assignee || '', caseId: data.caseId||'', taskId: data.taskId||'', createdAt: data.createdAt||null, createdAtMs: data.createdAt?.toMillis ? data.createdAt.toMillis() : null };
+      const it = { id: d.id, type: data.type, username: data.username||'', authorUid: data.authorUid||'', assignee: data.assignee || '', caseId: data.caseId||'', taskId: data.taskId||'', createdAt: data.createdAt||null, createdAtMs: data.createdAt?.toMillis ? data.createdAt.toMillis() : null };
       try { if (data.caseTitleCipher && data.caseTitleIv) it.caseTitle = await decryptText(data.caseTitleCipher, data.caseTitleIv); } catch {}
       if (['task_added','task_completed','task_assigned','task_assignment_accepted','task_assignment_declined','task_reopened'].includes(it.type)) {
         try { if (data.taskTextCipher && data.taskTextIv) it.taskText = await decryptText(data.taskTextCipher, data.taskTextIv); } catch {}
@@ -2141,15 +2328,6 @@ async function loadMoreUpdates() {
         try { if (data.noteTitleCipher && data.noteTitleIv) it.noteTitle = await decryptText(data.noteTitleCipher, data.noteTitleIv); } catch {}
         try { if (data.noteTextCipher && data.noteTextIv) it.note = await decryptText(data.noteTextCipher, data.noteTextIv); } catch {}
       }
-      if (it.type==='task_added') it.icon = '➕';
-      else if (it.type==='task_completed') it.icon = '☑';
-      else if (it.type==='task_assigned') it.icon = '📨';
-      else if (it.type==='task_assignment_accepted') it.icon = '✅';
-      else if (it.type==='task_assignment_declined') it.icon = '↩';
-      else if (it.type==='task_reopened') it.icon = '🔓';
-      else if (it.type==='comment_added') it.icon = '💬';
-      else if (it.type==='note_added') it.icon = '📝';
-      else it.icon = '•';
       more.push(it); updatesCache.set(d.id, it);
     }
     updatesLastDoc = snap.docs[snap.docs.length-1] || null;
@@ -2173,10 +2351,10 @@ async function saveCaseColumn(caseId, letter, value) {
   if (!caseId) return;
   try {
     if (!text) {
-      await updateDoc(doc(db, 'cases', caseId), { [c]: null, [iv]: null });
+      await updateDoc(doc(db, ...casesRoot(), caseId), { [c]: null, [iv]: null });
     } else {
       const e = await encryptText(text);
-      await updateDoc(doc(db, 'cases', caseId), { [c]: e.cipher, [iv]: e.iv });
+      await updateDoc(doc(db, ...casesRoot(), caseId), { [c]: e.cipher, [iv]: e.iv });
     }
   } catch (err) {
     console.error('Failed to save column', letter, err);
@@ -2190,10 +2368,10 @@ async function saveCaseColumnBody(caseId, letter, value) {
   if (!caseId) return;
   try {
     if (!text) {
-      await updateDoc(doc(db, 'cases', caseId), { [c]: null, [iv]: null });
+      await updateDoc(doc(db, ...casesRoot(), caseId), { [c]: null, [iv]: null });
     } else {
       const e = await encryptText(text);
-      await updateDoc(doc(db, 'cases', caseId), { [c]: e.cipher, [iv]: e.iv });
+      await updateDoc(doc(db, ...casesRoot(), caseId), { [c]: e.cipher, [iv]: e.iv });
     }
   } catch (err) {
     console.error('Failed to save body column', letter, err);
@@ -2242,7 +2420,7 @@ async function saveItems(caseId, letter, items) {
   const legacy = first ? await encryptText(first) : null;
   const p = { [field]: payload };
   if (legacy) { const { c, iv } = fieldNames(letter); p[c] = legacy.cipher; p[iv] = legacy.iv; } else { const { c, iv } = fieldNames(letter); p[c] = null; p[iv] = null; }
-  await updateDoc(doc(db, 'cases', caseId), p);
+  await updateDoc(doc(db, ...casesRoot(), caseId), p);
 }
 
 function buildTableSkeleton(opts = {}) {
@@ -2340,7 +2518,7 @@ function attachTableKeyboardNavigation(table) {
 }
 
 function startRealtimeTable() {
-  const q = query(collection(db, 'cases'), orderBy('createdAt', 'desc'));
+  const q = query(collection(db, ...casesRoot()), orderBy('createdAt', 'desc'));
 
   // Renderer that can be invoked from listener and on-demand
   renderTableFromDocs = async (docsInput) => {
@@ -2456,16 +2634,19 @@ function startRealtimeTable() {
       nameTitle.appendChild(btn);
       nameRow.appendChild(nameTitle);
 
-      const newNoteBtn = document.createElement('button');
-      newNoteBtn.type = 'button';
-      newNoteBtn.className = 'name-action-btn';
-      newNoteBtn.textContent = 'New note';
-      newNoteBtn.title = 'Create a new ward note';
-      newNoteBtn.addEventListener('click', async (e) => { e.stopPropagation();
-        currentCaseId = d.id; caseTitleEl.textContent = title;
-        openWardNoteComposerV2();
-      });
-      nameActions.appendChild(newNoteBtn);
+      // HIDDEN-FEATURE: ward-notes — remove `if (false)` wrapper to reinstate
+      if (false) {
+        const newNoteBtn = document.createElement('button');
+        newNoteBtn.type = 'button';
+        newNoteBtn.className = 'name-action-btn';
+        newNoteBtn.textContent = 'New note';
+        newNoteBtn.title = 'Create a new ward note';
+        newNoteBtn.addEventListener('click', async (e) => { e.stopPropagation();
+          currentCaseId = d.id; caseTitleEl.textContent = title;
+          openWardNoteComposerV2();
+        });
+        nameActions.appendChild(newNoteBtn);
+      }
 
       const beginRename = () => {
         if (btn.parentNode !== nameTitle) return;
@@ -2484,7 +2665,7 @@ function startRealtimeTable() {
           if (save && next && next !== title) {
             try {
               const enc = await encryptText(next);
-              await updateDoc(doc(db, 'cases', d.id), { titleCipher: enc.cipher, titleIv: enc.iv });
+              await updateDoc(doc(db, ...casesRoot(), d.id), { titleCipher: enc.cipher, titleIv: enc.iv });
               title = next;
               btn.textContent = next;
               if (currentCaseId === d.id && caseTitleEl) caseTitleEl.textContent = next;
@@ -2536,7 +2717,7 @@ function startRealtimeTable() {
         pendingDischargeCaseIds.add(d.id);
         if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs);
         try {
-          await updateDoc(doc(db, 'cases', d.id), { dischargedAt: serverTimestamp(), dischargedBy: username || null });
+          await updateDoc(doc(db, ...casesRoot(), d.id), { dischargedAt: serverTimestamp(), dischargedBy: username || null, dischargedByUid: authorUid || null });
           showToast('Discharge queued. It moves after refresh or navigation away.');
         } catch (err) {
           pendingDischargeCaseIds.delete(d.id);
@@ -2547,7 +2728,7 @@ function startRealtimeTable() {
       };
       const reopenCase = async () => {
         try {
-          await updateDoc(doc(db, 'cases', d.id), { dischargedAt: null, dischargedBy: null });
+          await updateDoc(doc(db, ...casesRoot(), d.id), { dischargedAt: null, dischargedBy: null, dischargedByUid: null });
           pendingDischargeCaseIds.delete(d.id);
           showToast('Case moved back to active list');
         } catch (err) {
@@ -2660,9 +2841,9 @@ function startRealtimeTable() {
         try {
           if (next) {
             const enc = await encryptText(next);
-            await updateDoc(doc(db, 'cases', d.id), { summaryCipher: enc.cipher, summaryIv: enc.iv });
+            await updateDoc(doc(db, ...casesRoot(), d.id), { summaryCipher: enc.cipher, summaryIv: enc.iv });
           } else {
-            await updateDoc(doc(db, 'cases', d.id), { summaryCipher: null, summaryIv: null });
+            await updateDoc(doc(db, ...casesRoot(), d.id), { summaryCipher: null, summaryIv: null });
           }
           summaryText = next;
         } catch (err) {
@@ -2751,7 +2932,7 @@ function startRealtimeTable() {
               const { cipher: textCipher, iv: textIv } = await encryptText(t);
               const { cipher: statusCipher, iv: statusIv } = await encryptText('open');
               const payload = buildTaskCreationPayload({ textCipher, textIv, statusCipher, statusIv, assignee: null, priority: null });
-              const ref = await addDoc(collection(db, 'cases', d.id, 'tasks'), payload);
+              const ref = await addDoc(collection(db, ...casesRoot(), d.id, 'tasks'), payload);
               try { await logUpdate({ type: 'task_added', caseId: d.id, caseTitle: title, taskId: ref.id, taskTextCipher: textCipher, taskTextIv: textIv }); } catch {}
               inp.value = '';
             });
@@ -2890,7 +3071,7 @@ function startRealtimeTable() {
               const info = document.createElement('button');
               info.type = 'button';
               info.className = 'line-info-btn';
-              info.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" width="18" height="18"><path d="M3.5 6.5L8 11l4.5-4.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+              info.innerHTML = cbIconString('chevron--down', { size: 16 });
               info.setAttribute('aria-haspopup', 'dialog');
               info.setAttribute('aria-expanded', 'false');
               const refreshInfoState = () => {
@@ -2992,7 +3173,7 @@ function startRealtimeTable() {
                 closeBtn.type = 'button';
                 closeBtn.className = 'cell-body-close';
                 closeBtn.setAttribute('aria-label', 'Close');
-                closeBtn.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" width="12" height="12"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+                closeBtn.innerHTML = cbIconString('close', { size: 14 });
                 closeBtn.addEventListener('click', (e) => { e.stopPropagation(); cleanup(); });
                 header.appendChild(closeBtn);
                 panel.appendChild(header);
@@ -3123,7 +3304,7 @@ function startRealtimeTable() {
                 ev.stopPropagation();
                 try {
                   const update = {}; update[colorField] = null;
-                  await updateDoc(doc(db, 'cases', d.id), update);
+                  await updateDoc(doc(db, ...casesRoot(), d.id), update);
                   td.style.background = '';
                 } catch (err) { console.error('Failed to clear color', err); showToast('Failed to update color'); }
                 panel.remove();
@@ -3139,7 +3320,7 @@ function startRealtimeTable() {
                   ev.stopPropagation();
                   try {
                     const update = {}; update[colorField] = col;
-                    await updateDoc(doc(db, 'cases', d.id), update);
+                    await updateDoc(doc(db, ...casesRoot(), d.id), update);
                     td.style.background = col; // optimistic
                   } catch (err) { console.error('Failed to set color', err); showToast('Failed to update color'); }
                   panel.remove();
@@ -3173,7 +3354,7 @@ function startRealtimeTable() {
         cellToggle.type = 'button';
         cellToggle.className = 'cell-toggle';
         cellToggle.setAttribute('aria-expanded', 'false');
-        cellToggle.innerHTML = `<span class="cell-toggle-label">${sectionLabels[letter]}</span><svg class="cell-toggle-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false" width="24" height="24"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+        cellToggle.innerHTML = `<span class="cell-toggle-label">${sectionLabels[letter]}</span>${cbIconString('chevron--down', { size: 16, className: 'cell-toggle-chevron' })}`;
         cellToggle.addEventListener('click', (e) => {
           e.stopPropagation();
           const next = !td.classList.contains('is-open');
@@ -3204,7 +3385,7 @@ function startRealtimeTable() {
             toggle.type = 'button';
             toggle.className = 'ward-group-toggle';
             toggle.setAttribute('aria-expanded', 'true');
-            toggle.innerHTML = `<span class="ward-group-label"></span><svg class="ward-group-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false" width="22" height="22"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+            toggle.innerHTML = `<span class="ward-group-label"></span>${cbIconString('chevron--down', { size: 16, className: 'ward-group-chevron' })}`;
             toggle.querySelector('.ward-group-label').textContent = resolveWardLabel(wardId);
             toggle.addEventListener('click', () => {
               const expanded = toggle.getAttribute('aria-expanded') === 'true';
@@ -3252,7 +3433,7 @@ function startRealtimeTable() {
 
     // Footer new case button at bottom of table
     const footer = document.createElement('div'); footer.className='new-case-footer';
-    const addBtn = document.createElement('button'); addBtn.type='button'; addBtn.className='btn primary'; addBtn.textContent='➕ New Case'; addBtn.addEventListener('click', openNewCaseModal);
+    const addBtn = document.createElement('button'); addBtn.type='button'; addBtn.className='btn primary'; addBtn.innerHTML = `${cbIconString('add', { size: 16 })}<span>New patient</span>`; addBtn.addEventListener('click', openNewCaseModal);
     footer.appendChild(addBtn);
     tableRoot.appendChild(footer);
 
@@ -3370,7 +3551,7 @@ function setupTableFilterUI() {
     const addChip = (type, id, name) => {
       const chip = document.createElement('span'); chip.className='filter-chip';
       const t = document.createElement('span'); t.textContent = name; chip.appendChild(t);
-      const x = document.createElement('span'); x.className='x'; x.textContent='✕'; x.setAttribute('role','button'); x.setAttribute('tabindex','0');
+      const x = document.createElement('span'); x.className='x'; x.appendChild(cbIcon('close', { size: 12, label: 'Remove' })); x.setAttribute('role','button'); x.setAttribute('tabindex','0');
       const remove = () => { const set=activeTagFilters[type]; set.delete(id); saveTagFilterState(); updateFilterPills(); if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs); };
       x.addEventListener('click', remove); x.addEventListener('keydown', (e)=>{ if (e.key==='Enter' || e.key===' ') { e.preventDefault(); remove(); } });
       chip.appendChild(x);
@@ -3507,7 +3688,7 @@ function setupTableFilterUI() {
     const actions = document.createElement('div'); actions.className='actions';
     const clear=document.createElement('button'); clear.className='btn'; clear.textContent='Clear'; clear.addEventListener('click',()=>{ activeTagFilters.location.clear(); activeTagFilters.room.clear(); activeTagFilters.consultant.clear(); });
     const apply=document.createElement('button'); apply.className='btn primary'; apply.textContent='Apply'; apply.addEventListener('click',()=>{ saveTagFilterState(); updateFilterPills(); if (lastCasesDocs && renderTableFromDocs) renderTableFromDocs(lastCasesDocs); overlay.remove(); });
-    const create=document.createElement('button'); create.className='btn primary'; create.textContent='New Case'; create.addEventListener('click',()=>{ overlay.remove(); openNewCaseModal(); });
+    const create=document.createElement('button'); create.className='btn primary'; create.textContent='New patient'; create.addEventListener('click',()=>{ overlay.remove(); openNewCaseModal(); });
     actions.appendChild(clear); actions.appendChild(apply); actions.appendChild(create); sheet.appendChild(actions);
     overlay.addEventListener('click',(e)=>{ if (e.target===overlay) overlay.remove(); });
     document.body.appendChild(overlay);
@@ -3517,7 +3698,7 @@ function setupTableFilterUI() {
 
 // Attach realtime compact tasks list to a UL
 function attachTasksListRealtime(caseId, ul, opts = {}) {
-  const q = query(collection(db, 'cases', caseId, 'tasks'), orderBy('createdAt', 'desc'));
+  const q = query(collection(db, ...casesRoot(), caseId, 'tasks'), orderBy('createdAt', 'desc'));
   let taskOrder = null;
   let taskRebuildPending = false;
   let pendingItems = null;
@@ -3585,8 +3766,7 @@ function buildCompactTaskRow(caseId, it, opts = {}) {
   li.className = 'case-task ' + statusCls + (pendingAcceptance ? ' task-pending-acceptance' : '') + (important ? ' task-important' : '') + (isMine ? ' task-mine' : '');
   // Status toggle
   const statusBtn = document.createElement('button'); statusBtn.type='button'; statusBtn.className='status-btn';
-  const icon = (s) => s === 'complete' ? '☑' : (s === 'in progress' ? '◐' : '☐');
-  statusBtn.textContent = icon(it.status);
+  setStatusIcon(statusBtn, it.status);
   statusBtn.setAttribute('aria-label', `Task status: ${it.status}`);
   statusBtn.disabled = readOnly || pendingAcceptance;
   if (statusBtn.disabled) statusBtn.title = pendingAcceptance ? 'Awaiting acceptance' : 'Read-only';
@@ -3595,7 +3775,7 @@ function buildCompactTaskRow(caseId, it, opts = {}) {
     if (statusBtn.disabled) return;
     const order = ['open','in progress','complete'];
     const next = order[(order.indexOf(it.status)+1)%order.length];
-    try { const { cipher, iv } = await encryptText(next); await updateDoc(doc(db,'cases',caseId,'tasks',it.id), buildTaskStatusPatch(next, cipher, iv)); it.status=next; statusBtn.textContent=icon(next); statusBtn.setAttribute('aria-label',`Task status: ${next}`); li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')) + (pendingAcceptance ? ' task-pending-acceptance' : '') + (data.important ? ' task-important' : '') + (isMine ? ' task-mine' : ''); if (next==='complete') { try { const tEnc = await encryptText(it.text || ''); await logUpdate({ type: 'task_completed', caseId, caseTitle: (opts && opts.caseTitle) || 'Case', taskId: it.id, taskTextCipher: tEnc.cipher, taskTextIv: tEnc.iv }); } catch {} } } catch(err){ console.error('Failed to update status',err); showToast('Failed to update status'); }
+    try { const { cipher, iv } = await encryptText(next); await updateDoc(doc(db,...casesRoot(),caseId,'tasks',it.id), buildTaskStatusPatch(next, cipher, iv)); it.status=next; setStatusIcon(statusBtn, next); statusBtn.setAttribute('aria-label',`Task status: ${next}`); li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')) + (pendingAcceptance ? ' task-pending-acceptance' : '') + (data.important ? ' task-important' : '') + (isMine ? ' task-mine' : ''); if (next==='complete') { try { const tEnc = await encryptText(it.text || ''); await logUpdate({ type: 'task_completed', caseId, caseTitle: (opts && opts.caseTitle) || 'Case', taskId: it.id, taskTextCipher: tEnc.cipher, taskTextIv: tEnc.iv }); } catch {} } } catch(err){ console.error('Failed to update status',err); showToast('Failed to update status'); }
   });
   const star = buildStarButton(important, async () => {
     const next = await toggleTaskImportant(caseId, it.id, !!data.important);
@@ -3621,7 +3801,7 @@ function buildCompactTaskRow(caseId, it, opts = {}) {
       if (v === last) { cancel(); return; }
       try {
         const { cipher: textCipher, iv: textIv } = await encryptText(v);
-        await updateDoc(doc(db, 'cases', caseId, 'tasks', it.id), { textCipher, textIv });
+        await updateDoc(doc(db, ...casesRoot(), caseId, 'tasks', it.id), { textCipher, textIv });
         last = v; it.text = v; text.textContent = v;
         cleanup();
       } catch (err) { console.error('Failed to update task text', err); showToast('Failed to update task'); cleanup(); }
@@ -3747,7 +3927,7 @@ function buildCompactTaskRow(caseId, it, opts = {}) {
   // Delete button
   const del = document.createElement('button'); del.type='button'; del.className='icon-btn delete-btn'; del.textContent='🗑'; del.title='Delete task';
   del.hidden = readOnly;
-  del.addEventListener('click', async (e) => { e.stopPropagation(); if (!confirm('Delete this task?')) return; try { await deleteDoc(doc(db, 'cases', caseId, 'tasks', it.id)); } catch (err) { console.error('Failed to delete task', err); showToast('Failed to delete task'); } });
+  del.addEventListener('click', async (e) => { e.stopPropagation(); if (!confirm('Delete this task?')) return; try { await deleteDoc(doc(db, ...casesRoot(), caseId, 'tasks', it.id)); } catch (err) { console.error('Failed to delete task', err); showToast('Failed to delete task'); } });
   if (assignmentChipActionable && assignmentChip) {
     assignmentChip.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -3796,7 +3976,7 @@ function openTagPanelForCase(caseId, anchorTd) {
 
   // Prefill current values
   (async () => {
-    const ref = doc(db,'cases',caseId); const snap = await getDoc(ref);
+    const ref = doc(db,...casesRoot(),caseId); const snap = await getDoc(ref);
     const ct = (snap.exists() && snap.data().caseTags) || {};
     if (ct.location) locSel.value = ct.location; else locSel.value = '';
     await refreshRooms(); if (ct.room) roomSel.value = ct.room; else roomSel.value='';
@@ -3830,7 +4010,7 @@ function openTagPanelForCase(caseId, anchorTd) {
       const loc = locSel.value || null; const room = roomSel.value || null; const cons = consSel.value || null;
       const ct = { location: loc, consultant: cons };
       if (loc && room) ct.room = room; else ct.room = null;
-      await updateDoc(doc(db,'cases',caseId), { caseTags: ct });
+      await updateDoc(doc(db,...casesRoot(),caseId), { caseTags: ct });
       cleanupPanel();
     } catch (err) { console.error('Failed to update tags', err); showToast('Failed to update tags'); }
   });
@@ -3873,7 +4053,7 @@ function bindNotesFields() {
 
 function startRealtimeCaseFields(caseId) {
   if (unsubCaseDoc) { unsubCaseDoc(); unsubCaseDoc = null; }
-  const ref = doc(db, 'cases', caseId);
+  const ref = doc(db, ...casesRoot(), caseId);
   unsubCaseDoc = onSnapshot(ref, async (snap) => {
     if (!snap.exists()) return;
     const data = snap.data();
@@ -4213,7 +4393,7 @@ function startRealtimeWardNotes() {
   if (!currentCaseId) return;
   const list = wardNotesListEl;
   if (!list) return;
-  const ref = collection(db, 'cases', currentCaseId, 'wardNotes');
+  const ref = collection(db, ...casesRoot(), currentCaseId, 'wardNotes');
   const qn = query(ref, orderBy('createdAt', 'desc'));
   if (unsubWardNotes) { try { unsubWardNotes(); } catch {} }
   unsubWardNotes = onSnapshot(qn, async (snap) => {
@@ -4374,7 +4554,7 @@ async function fetchWardNotesRange(start, end) {
   const caseTitles = new Map();
   await Promise.all(Array.from(caseIds).map(async (caseId) => {
     try {
-      const snap = await getDoc(doc(db, 'cases', caseId));
+      const snap = await getDoc(doc(db, ...casesRoot(), caseId));
       if (snap.exists()) {
         const data = snap.data();
         let title = '';
@@ -4731,7 +4911,7 @@ function appendWithSpacing(existing, added) {
 async function saveCaseOtherBody(caseId, addedText) {
   if (!caseId) return;
   try {
-    const ref = doc(db, 'cases', caseId);
+    const ref = doc(db, ...casesRoot(), caseId);
     const snap = await getDoc(ref);
     let current = '';
     if (snap.exists()) {
@@ -4836,7 +5016,7 @@ async function openWardNoteComposer() {
   let modalTasks = [];
   let modalTasksUnsub = null;
   try {
-    const snap = await getDoc(doc(db,'cases', currentCaseId));
+    const snap = await getDoc(doc(db,...casesRoot(), currentCaseId));
     const data = snap.data() || {};
     dxItems = await decryptItems(data, 'A');
     issueItems = (await decryptItems(data, 'E')).slice(0,8);
@@ -4884,14 +5064,13 @@ async function openWardNoteComposer() {
   // Tasks realtime list for modal
   let newTaskIds = [];
   let newTaskTitles = [];
-  const qTasks = query(collection(db,'cases',currentCaseId,'tasks'), orderBy('createdAt','desc'));
-  const statusIcon = (s) => s === 'complete' ? '☑' : (s === 'in progress' ? '◐' : '☐');
+  const qTasks = query(collection(db,...casesRoot(),currentCaseId,'tasks'), orderBy('createdAt','desc'));
   function renderModalTasks() {
     modalTaskList.innerHTML = '';
     for (const t of modalTasks) {
       const li = document.createElement('li'); li.className = 'modal-task' + (newTaskIds.includes(t.id) ? ' modal-task--new' : '');
       li.style.display='grid'; li.style.gridTemplateColumns='auto 1fr'; li.style.alignItems='center'; li.style.gap='6px';
-      const sb = document.createElement('button'); sb.type='button'; sb.className='status-btn'; sb.textContent = statusIcon(t.status);
+      const sb = document.createElement('button'); sb.type='button'; sb.className='status-btn'; setStatusIcon(sb, t.status);
       sb.setAttribute('aria-label',`Task status: ${t.status}`);
       sb.addEventListener('click', async (e)=>{
         e.preventDefault();
@@ -4899,7 +5078,7 @@ async function openWardNoteComposer() {
         const next = order[(order.indexOf(t.status)+1)%order.length];
         try {
           const { cipher, iv } = await encryptText(next);
-          await updateDoc(doc(db,'cases',currentCaseId,'tasks',t.id), buildTaskStatusPatch(next, cipher, iv));
+          await updateDoc(doc(db,...casesRoot(),currentCaseId,'tasks',t.id), buildTaskStatusPatch(next, cipher, iv));
         } catch {}
       });
       const span = document.createElement('span'); span.textContent = t.text || '';
@@ -4930,7 +5109,7 @@ async function openWardNoteComposer() {
       const { cipher: textCipher, iv: textIv } = await encryptText(v);
       const { cipher: statusCipher, iv: statusIv } = await encryptText('open');
       const payload = buildTaskCreationPayload({ textCipher, textIv, statusCipher, statusIv, assignee: null, priority: null });
-      const ref = await addDoc(collection(db,'cases',currentCaseId,'tasks'), payload);
+      const ref = await addDoc(collection(db,...casesRoot(),currentCaseId,'tasks'), payload);
       newTaskIds.push(ref.id); newTaskTitles.push(v);
       miniInput.value='';
     } catch {}
@@ -5003,7 +5182,7 @@ async function openWardNoteComposer() {
       const compiled = parts.join('\n\n');
 
       // 6) Save ward note doc (immutable)
-      const wnRef = collection(db,'cases',currentCaseId,'wardNotes');
+      const wnRef = collection(db,...casesRoot(),currentCaseId,'wardNotes');
       const eHead = await encryptText(heading);
       const eComp = await encryptText(compiled);
       const eDx = await encryptText(dxLine);
@@ -5024,6 +5203,7 @@ async function openWardNoteComposer() {
         includedTaskIds,
         newTaskIds,
         author: username || null,
+        authorUid: authorUid || null,
         createdAt: serverTimestamp(),
       });
 
@@ -5138,7 +5318,7 @@ async function openWardNoteComposerV2() {
   let dxItems = [];
   let issueItems = [];
   try {
-    const snap = await getDoc(doc(db, 'cases', currentCaseId));
+    const snap = await getDoc(doc(db, ...casesRoot(), currentCaseId));
     const data = snap.data() || {};
     dxItems = await decryptItems(data, 'A');
     issueItems = (await decryptItems(data, 'E')).slice(0, 8);
@@ -5232,7 +5412,7 @@ async function openWardNoteComposerV2() {
     newTasks.splice(idx, 1);
     renderTaskList();
     if (t.docId) {
-      try { await deleteDoc(doc(db, 'cases', currentCaseId, 'tasks', t.docId)); } catch (err) { console.error('Failed to remove task', err); }
+      try { await deleteDoc(doc(db, ...casesRoot(), currentCaseId, 'tasks', t.docId)); } catch (err) { console.error('Failed to remove task', err); }
     }
   };
 
@@ -5248,7 +5428,7 @@ async function openWardNoteComposerV2() {
       const { cipher: textCipher, iv: textIv } = await encryptText(v);
       const { cipher: statusCipher, iv: statusIv } = await encryptText('open');
       const payload = buildTaskCreationPayload({ textCipher, textIv, statusCipher, statusIv, assignee: null, priority: null });
-      const ref = await addDoc(collection(db, 'cases', currentCaseId, 'tasks'), payload);
+      const ref = await addDoc(collection(db, ...casesRoot(), currentCaseId, 'tasks'), payload);
       pending.docId = ref.id;
     } catch (err) {
       console.error('Failed to save task', err);
@@ -5315,7 +5495,7 @@ async function openWardNoteComposerV2() {
       const eIssues = await encryptText(JSON.stringify(issueTitlesList));
       const eTaskTitles = await encryptText(JSON.stringify(savedTaskTitles));
 
-      await addDoc(collection(db, 'cases', currentCaseId, 'wardNotes'), {
+      const wn = await addDoc(collection(db, ...casesRoot(), currentCaseId, 'wardNotes'), {
         headingCipher: eHead.cipher, headingIv: eHead.iv,
         compiledCipher: eComp.cipher, compiledIv: eComp.iv,
         diagnosesLineCipher: eDx.cipher, diagnosesLineIv: eDx.iv,
@@ -5324,8 +5504,17 @@ async function openWardNoteComposerV2() {
         taskTitlesCipher: eTaskTitles.cipher, taskTitlesIv: eTaskTitles.iv,
         newTaskIds: savedTaskDocIds,
         author: username || null,
+        authorUid: authorUid || null,
         createdAt: serverTimestamp(),
       });
+      try {
+        window.__audit?.log({
+          action: 'wardNote.create',
+          caseId: currentCaseId,
+          wardNoteId: wn.id,
+          detail: { issueCount: issueTitlesList.length, newTaskCount: savedTaskDocIds.length },
+        });
+      } catch {}
 
       showToast('Ward note saved');
       close();
@@ -5423,8 +5612,7 @@ function buildTaskListItem(item, opts = {}) {
   const statusBtn = document.createElement('button');
   statusBtn.type = 'button';
   statusBtn.className = 'status-btn';
-  const icon = (s) => s === 'complete' ? '☑' : (s === 'in progress' ? '◐' : '☐');
-  statusBtn.textContent = icon(status);
+  setStatusIcon(statusBtn, status);
   statusBtn.setAttribute('aria-label', `Task status: ${status}`);
   statusBtn.disabled = pendingAcceptance;
   if (pendingAcceptance) statusBtn.title = 'Awaiting acceptance';
@@ -5435,8 +5623,8 @@ function buildTaskListItem(item, opts = {}) {
     const next = order[(order.indexOf(statusBtn.getAttribute('aria-label')?.split(': ')[1] || status) + 1) % order.length];
     try {
       const { cipher, iv } = await encryptText(next);
-      await updateDoc(doc(db, 'cases', caseId, 'tasks', taskId), buildTaskStatusPatch(next, cipher, iv));
-      statusBtn.textContent = icon(next);
+      await updateDoc(doc(db, ...casesRoot(), caseId, 'tasks', taskId), buildTaskStatusPatch(next, cipher, iv));
+      setStatusIcon(statusBtn, next);
       statusBtn.setAttribute('aria-label', `Task status: ${next}`);
       li.className = 'case-task ' + (next === 'in progress' ? 's-inprogress' : (next === 'complete' ? 's-complete' : 's-open')) + (pendingAcceptance ? ' task-pending-acceptance' : '') + (data && data.important ? ' task-important' : '') + (isMine ? ' task-mine' : '');
       if (next === 'complete') {
@@ -5470,7 +5658,7 @@ function buildTaskListItem(item, opts = {}) {
       if (v === last) { endEdit(); return; }
       try {
         const { cipher: textCipher, iv: textIv } = await encryptText(v);
-        await updateDoc(doc(db, 'cases', caseId, 'tasks', taskId), { textCipher, textIv });
+        await updateDoc(doc(db, ...casesRoot(), caseId, 'tasks', taskId), { textCipher, textIv });
         last = v; titleSpan.textContent = v;
       } catch (err) { console.error('Failed to update task', err); showToast('Failed to update task'); }
       endEdit();
@@ -5556,7 +5744,7 @@ function buildTaskListItem(item, opts = {}) {
   delBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
     if (!confirm('Delete this task?')) return;
-    try { await deleteDoc(doc(db, 'cases', caseId, 'tasks', taskId)); } catch (err) { console.error('Failed to delete task', err); showToast('Failed to delete task'); }
+    try { await deleteDoc(doc(db, ...casesRoot(), caseId, 'tasks', taskId)); } catch (err) { console.error('Failed to delete task', err); showToast('Failed to delete task'); }
   });
   li.appendChild(delBtn);
   // Priority chip
@@ -5618,15 +5806,15 @@ function buildTaskListItem(item, opts = {}) {
   const countEl = document.createElement('span'); countEl.className='badge comment-count';
   li.appendChild(toggle); li.appendChild(countEl);
   const commentSection = document.createElement('div'); commentSection.className='comment-section'; commentSection.hidden= !(opts && opts.openComments); const commentsList=document.createElement('ul'); commentsList.className='comments'; commentSection.appendChild(commentsList);
-  const commentForm=document.createElement('form'); commentForm.className='comment-form'; const commentInput=document.createElement('input'); commentInput.placeholder='Add comment'; commentForm.appendChild(commentInput); const commentBtn=document.createElement('button'); commentBtn.className='icon-btn add-comment-btn'; commentBtn.type='submit'; commentBtn.textContent='➕'; commentBtn.setAttribute('aria-label','Add comment'); commentForm.appendChild(commentBtn); commentSection.appendChild(commentForm);
-  let commentsLoaded=false; let commentCount=0; const updateToggle=()=>{ countEl.textContent = commentCount>0? String(commentCount):''; toggle.setAttribute('aria-label', commentSection.hidden?'Show comments':'Hide comments'); toggle.textContent = commentSection.hidden ? '💬' : '✖'; };
+  const commentForm=document.createElement('form'); commentForm.className='comment-form'; const commentInput=document.createElement('input'); commentInput.placeholder='Add comment'; commentForm.appendChild(commentInput); const commentBtn=document.createElement('button'); commentBtn.className='icon-btn add-comment-btn'; commentBtn.type='submit'; cbSetIcon(commentBtn, 'add', { size: 16, label: 'Add comment' }); commentBtn.setAttribute('aria-label','Add comment'); commentForm.appendChild(commentBtn); commentSection.appendChild(commentForm);
+  let commentsLoaded=false; let commentCount=0; const updateToggle=()=>{ countEl.textContent = commentCount>0? String(commentCount):''; toggle.setAttribute('aria-label', commentSection.hidden?'Show comments':'Hide comments'); cbSetIcon(toggle, commentSection.hidden ? 'chat' : 'close', { size: 14 }); };
   updateToggle();
   if (!commentSection.hidden && !commentsLoaded) {
     startRealtimeComments(caseId, taskId, commentsList, (n)=>{ commentCount=n; updateToggle(); });
     commentsLoaded = true;
   }
   toggle.addEventListener('click', ()=>{ const h=commentSection.hidden; commentSection.hidden=!h; updateToggle(); if(h && !commentsLoaded){ startRealtimeComments(caseId, taskId, commentsList, (n)=>{ commentCount=n; updateToggle(); }); commentsLoaded=true; } });
-  commentForm.addEventListener('submit', async (e)=>{ e.preventDefault(); const t=commentInput.value.trim(); if(!t) return; const tempLi=document.createElement('li'); tempLi.className='optimistic'; const span=document.createElement('span'); span.textContent = username ? `${username}: ${t}` : t; tempLi.appendChild(span); commentsList.appendChild(tempLi); commentInput.value=''; commentSection.hidden=false; updateToggle(); try{ const {cipher, iv}= await encryptText(t); await addDoc(collection(db,'cases',caseId,'tasks',taskId,'comments'),{cipher,iv,username,createdAt:serverTimestamp()}); try { await logUpdate({ type: 'comment_added', caseId, caseTitle: (caseTitleEl && caseTitleEl.textContent) || 'Case', taskId, commentCipher: cipher, commentIv: iv }); } catch {} if(!commentsLoaded){ startRealtimeComments(caseId,taskId,commentsList,(n)=>{ commentCount=n; updateToggle();}); commentsLoaded=true; } } catch(err){ tempLi.classList.add('failed'); showToast('Failed to add comment'); } });
+  commentForm.addEventListener('submit', async (e)=>{ e.preventDefault(); const t=commentInput.value.trim(); if(!t) return; const tempLi=document.createElement('li'); tempLi.className='optimistic'; const span=document.createElement('span'); span.textContent = username ? `${username}: ${t}` : t; tempLi.appendChild(span); commentsList.appendChild(tempLi); commentInput.value=''; commentSection.hidden=false; updateToggle(); try{ const {cipher, iv}= await encryptText(t); await addDoc(collection(db,...casesRoot(),caseId,'tasks',taskId,'comments'),{cipher,iv,username,authorUid: authorUid || null,createdAt:serverTimestamp()}); try { await logUpdate({ type: 'comment_added', caseId, caseTitle: (caseTitleEl && caseTitleEl.textContent) || 'Case', taskId, commentCipher: cipher, commentIv: iv }); } catch {} if(!commentsLoaded){ startRealtimeComments(caseId,taskId,commentsList,(n)=>{ commentCount=n; updateToggle();}); commentsLoaded=true; } } catch(err){ tempLi.classList.add('failed'); showToast('Failed to add comment'); } });
   li.appendChild(commentSection);
   return li;
 }
@@ -5638,11 +5826,12 @@ function bindCaseForm() {
     if (!title) return;
     const { cipher, iv } = await encryptText(title);
     const location = caseLocationSel ? (caseLocationSel.value || null) : null;
-    await addDoc(collection(db, 'cases'), {
+    await addDoc(collection(db, ...casesRoot()), {
       titleCipher: cipher,
       titleIv: iv,
       createdAt: serverTimestamp(),
       username,
+      authorUid: authorUid || null,
       location,
     });
     caseInput.value = '';
@@ -5670,7 +5859,7 @@ function bindTaskForm() {
     const assignee = assigneeSel ? (assigneeSel.value || null) : null;
     const priority = priSel ? (priSel.value || null) : null;
     const payload = buildTaskCreationPayload({ textCipher, textIv, statusCipher, statusIv, assignee, priority });
-    const ref = await addDoc(collection(db, 'cases', currentCaseId, 'tasks'), payload);
+    const ref = await addDoc(collection(db, ...casesRoot(), currentCaseId, 'tasks'), payload);
     // Log update: task added
     try {
       await logUpdate({
@@ -5726,8 +5915,8 @@ function bindNoteForm() {
     const text = noteInput.value.trim();
     if (!text) return;
     const { cipher, iv } = await encryptText(text);
-    await addDoc(collection(db, 'cases', currentCaseId, 'notes'), {
-      cipher, iv, username, createdAt: serverTimestamp(),
+    await addDoc(collection(db, ...casesRoot(), currentCaseId, 'notes'), {
+      cipher, iv, username, authorUid: authorUid || null, createdAt: serverTimestamp(),
     });
     try { await logUpdate({ type: 'note_added', caseId: currentCaseId, caseTitle: (caseTitleEl && caseTitleEl.textContent) || 'Case', noteTextCipher: cipher, noteTextIv: iv }); } catch {}
     noteInput.value = '';
@@ -5735,7 +5924,111 @@ function bindNoteForm() {
 }
 
 // --- Init on load
-window.addEventListener('DOMContentLoaded', async () => {
+//
+// We wait for three things before bootstrapping:
+//   1. DOMContentLoaded
+//   2. `auth:ready` from the auth gate (full sign-in + PIN unlocked)
+//   3. A current group id from window.__group (set by ensureDefaultGroup
+//      during the gate's ready transition)
+//
+// The auth gate dispatches `auth:ready` only after it has called
+// ensureDefaultGroup and setCurrentGroupId, so in practice the group id is
+// available the moment `auth:ready` fires. The extra check guards against
+// any future ordering change — `casesRoot()` throws if the id is missing,
+// which would otherwise cascade into a hard-to-diagnose Firestore path
+// error.
+function whenAuthAndDomReady(cb) {
+  let domReady = document.readyState === 'interactive' || document.readyState === 'complete';
+  let authedUser = null;
+  let fired = false;
+  const tryRun = () => {
+    if (fired) return;
+    if (!domReady || !authedUser) return;
+    const haveGroup = !!(window.__group && window.__group.currentId());
+    if (!haveGroup) return;
+    fired = true;
+    cb(authedUser);
+  };
+  if (!domReady) {
+    document.addEventListener('DOMContentLoaded', () => { domReady = true; tryRun(); }, { once: true });
+  }
+  document.addEventListener('auth:ready', (e) => {
+    authedUser = (e && e.detail) || {};
+    tryRun();
+  }, { once: true });
+  // If `auth:ready` fires before the group is selected (race), watch for
+  // the next group:changed event.
+  document.addEventListener('group:changed', () => { tryRun(); });
+}
+
+// After the app has fully booted with one group, switching to a different
+// group resets the UI by reloading. Doing it inline would require
+// tearing down dozens of subscriptions, drained caches, half-open modals,
+// and re-running the table/cases/updates pipelines — which is brittle.
+// A reload is what Notion, Linear, and Slack do for workspace switches; it
+// gives us a clean slate at zero engineering cost. The ~300ms reload cost
+// is acceptable for an action a user takes a handful of times per shift.
+let bootedGroupId = null;
+document.addEventListener('group:changed', (e) => {
+  const next = (e && e.detail && e.detail.groupId) || null;
+  if (!bootedGroupId) return;
+  if (!next || next === bootedGroupId) return;
+  // Reset any per-case scroll / drawer state so the new workspace lands
+  // on its own list view rather than a stale case detail.
+  try { sessionStorage.removeItem('catalist.openCaseId'); } catch {}
+  // Mark the upcoming reload as intentional so the AuthGate skips its
+  // PIN-on-fresh-load prompt — without this the user gets challenged for
+  // PIN every workspace switch, which is brutal mid-shift.
+  try { window.__session?.markIntentionalReload(); } catch {}
+  window.location.reload();
+});
+
+// Live-bind the active workspace banner to the current group's name. The
+// banner sits above the table tab so the user always knows which workspace
+// any new patient they create will be saved into. We listen on the group
+// doc directly rather than polling so renames reflect instantly. Switches
+// always go through window.location.reload() (see the group:changed
+// handler above), so we only need to set this up once at boot.
+let unsubActiveWorkspaceDoc = null;
+function bindActiveWorkspaceBanner(groupId) {
+  const banner = document.getElementById('active-workspace-banner');
+  const nameEl = document.getElementById('active-workspace-name');
+  if (!banner || !nameEl) return;
+  if (unsubActiveWorkspaceDoc) {
+    try { unsubActiveWorkspaceDoc(); } catch {}
+    unsubActiveWorkspaceDoc = null;
+  }
+  if (!groupId) {
+    banner.hidden = true;
+    nameEl.textContent = '--';
+    return;
+  }
+  banner.hidden = false;
+  nameEl.textContent = '…';
+  try {
+    unsubActiveWorkspaceDoc = onSnapshot(
+      doc(db, 'groups', groupId),
+      (snap) => {
+        const data = snap.exists() ? snap.data() : null;
+        const name = (data && typeof data.name === 'string' && data.name.trim())
+          ? data.name.trim()
+          : 'Unnamed workspace';
+        nameEl.textContent = name;
+      },
+      (err) => {
+        console.error('[workspace-banner] snapshot error', err);
+        nameEl.textContent = 'Workspace';
+      }
+    );
+  } catch (err) {
+    console.error('[workspace-banner] failed to bind', err);
+  }
+}
+
+whenAuthAndDomReady(async (authedUser) => {
+  try { window.__sentry?.setUser(authedUser?.uid || null); } catch {}
+  bootedGroupId = (window.__group && window.__group.currentId()) || null;
+  bindActiveWorkspaceBanner(bootedGroupId);
   caseListEl = document.getElementById('case-list');
   caseListSection = document.getElementById('case-list-section');
   caseForm = document.getElementById('case-form');
@@ -5808,8 +6101,9 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Case header overflow menu (⋯) with Delete
   const actionsWrap = document.getElementById('case-header-actions');
   if (actionsWrap && !document.getElementById('case-overflow-btn')) {
+    // HIDDEN-FEATURE: ward-notes — remove `&& false` to reinstate
     // New Ward Note quick action
-    if (!document.getElementById('new-ward-note-header')) {
+    if (!document.getElementById('new-ward-note-header') && false) {
       const nn = document.createElement('button');
       nn.id = 'new-ward-note-header';
       nn.className = 'btn';
@@ -6071,19 +6365,20 @@ window.addEventListener('DOMContentLoaded', async () => {
     renderUserTasks();
   });
 
-  try {
-    await signInAnonymously(auth);
-  } catch (err) {
-    console.error('Failed to sign in anonymously', err);
+  // Auth is already complete by the time we get here — see whenAuthAndDomReady.
+  // Sentry user is set above. Phase 4: the shared passphrase prompt and the
+  // user-pick dropdown are gone. Identity comes from the signed-in Firebase
+  // Auth user; encryption is no longer derived from a passphrase (Phase 5
+  // adds envelope encryption under a KMS-managed key instead).
+  const _authUser = (typeof window !== 'undefined' && window.__auth && window.__auth.currentUser) ? window.__auth.currentUser() : null;
+  if (!_authUser) {
+    console.error('[script] auth user missing at bootstrap; aborting');
     return;
   }
-  // First, passphrase
-  const pass = prompt('Enter shared passphrase');
-  if (!pass) return;
-  key = await deriveKey(pass);
-  // Then pick a user from dropdown modal fed by live users list
-  username = await showUserSelectModal();
-  if (!username) return;
+  authorUid = _authUser.uid;
+  username = (_authUser.displayName || _authUser.email || '').trim() || 'Unknown';
+  // `key` is no longer set; encryptText/decryptText are passthroughs in Phase 4.
+  key = null;
   updateSessionUserBadge(username);
   setWorkspaceActionState(true);
   startRealtimeDashboardTasks();
@@ -6151,20 +6446,27 @@ function showToast(message) {
   setTimeout(() => { el.remove(); }, 3300);
 }
 
-// Deep delete a case and nested content
+// Deep delete a case and nested content. Phase 7 will move this to a Cloud
+// Function so the cascading delete + audit is enforced server-side; for now
+// the audit event below is written best-effort from the client.
 async function deleteCaseDeep(caseId) {
+  let taskCount = 0;
+  let noteCount = 0;
   // Delete tasks and their comments
-  const tasks = await getDocs(collection(db, 'cases', caseId, 'tasks'));
+  const tasks = await getDocs(collection(db, ...casesRoot(), caseId, 'tasks'));
+  taskCount = tasks.docs.length;
   for (const t of tasks.docs) {
-    const comments = await getDocs(collection(db, 'cases', caseId, 'tasks', t.id, 'comments'));
-    await Promise.all(comments.docs.map((c) => deleteDoc(doc(db, 'cases', caseId, 'tasks', t.id, 'comments', c.id))));
-    await deleteDoc(doc(db, 'cases', caseId, 'tasks', t.id));
+    const comments = await getDocs(collection(db, ...casesRoot(), caseId, 'tasks', t.id, 'comments'));
+    await Promise.all(comments.docs.map((c) => deleteDoc(doc(db, ...casesRoot(), caseId, 'tasks', t.id, 'comments', c.id))));
+    await deleteDoc(doc(db, ...casesRoot(), caseId, 'tasks', t.id));
   }
   // Delete notes
-  const notes = await getDocs(collection(db, 'cases', caseId, 'notes'));
-  await Promise.all(notes.docs.map((n) => deleteDoc(doc(db, 'cases', caseId, 'notes', n.id))));
+  const notes = await getDocs(collection(db, ...casesRoot(), caseId, 'notes'));
+  noteCount = notes.docs.length;
+  await Promise.all(notes.docs.map((n) => deleteDoc(doc(db, ...casesRoot(), caseId, 'notes', n.id))));
   // Delete case doc
-  await deleteDoc(doc(db, 'cases', caseId));
+  await deleteDoc(doc(db, ...casesRoot(), caseId));
+  try { window.__audit?.log({ action: 'case.delete', caseId, detail: { taskCount, noteCount } }); } catch {}
 }
 
 // --- Presence: users list
@@ -6176,7 +6478,11 @@ function startRealtimeUsers() {
   const locList = document.getElementById('location-list');
   const addLocBtn = document.getElementById('add-location-btn');
   const manageTagsBtn = document.getElementById('manage-tags-btn');
-  if (!list || !addBtn || !menu || !btn || !locList || !addLocBtn) return;
+  // The Users and Locations sections were removed from the Settings dropdown
+  // (group membership lives behind the workspace pill; locations live in the
+  // tag manager). DOM mutations below guard for the missing list elements so
+  // the in-memory caches (used by composer assignee + case creation) still fill.
+  if (!menu || !btn) return;
 
   // Toggle dropdown
   const setOpen = (open) => {
@@ -6191,13 +6497,12 @@ function startRealtimeUsers() {
     if (!menu.hidden && !menu.contains(e.target) && e.target !== btn) setOpen(false);
   });
 
-  // Add user
-  addBtn.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    const name = (prompt('Add user name') || '').trim();
-    if (!name) return;
-    await addDoc(collection(db, 'users'), { username: name, createdAt: serverTimestamp() });
-  });
+  // Add user — historical "create a free-text user record" affordance.
+  // Under the invite-only auth model the workspace's user list is derived
+  // from the group's memberUids (real Firebase Auth accounts), so this
+  // button has no useful effect and is hidden. Kept in the DOM in case a
+  // future migration wants to reuse it for a directory feature.
+  if (addBtn) addBtn.style.display = 'none';
 
   if (manageTagsBtn) {
     manageTagsBtn.addEventListener('click', (e) => {
@@ -6207,70 +6512,138 @@ function startRealtimeUsers() {
     });
   }
 
-  const q = query(collection(db, 'users'), orderBy('username'));
+  // Auth-related menu entries (Security & sessions + Sign out). Injected
+  // here so we don't have to change the HTML for the Phase 1 rollout.
+  if (!document.getElementById('account-menu-section')) {
+    const section = document.createElement('div');
+    section.id = 'account-menu-section';
+    const hr = document.createElement('hr');
+    hr.style.cssText = 'border:none;border-top:1px solid #e5e7eb;margin:6px 0;';
+    const header = document.createElement('div');
+    header.className = 'users-menu-header';
+    const headerSpan = document.createElement('span');
+    const u = (window.__auth && window.__auth.currentUser && window.__auth.currentUser());
+    headerSpan.textContent = (u && (u.displayName || u.email)) ? `Account — ${u.displayName || u.email}` : 'Account';
+    header.appendChild(headerSpan);
+    section.appendChild(hr);
+    section.appendChild(header);
+
+    const securityBtn = document.createElement('button');
+    securityBtn.className = 'icon-btn small';
+    securityBtn.style.cssText = 'display:block;width:100%;text-align:left;padding:8px 12px;';
+    securityBtn.textContent = 'Security & sessions';
+    securityBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setOpen(false);
+      try { window.__auth?.showSecurityPanel(); } catch (err) { console.error(err); }
+    });
+    section.appendChild(securityBtn);
+
+    const signOutBtn = document.createElement('button');
+    signOutBtn.className = 'icon-btn small';
+    signOutBtn.style.cssText = 'display:block;width:100%;text-align:left;padding:8px 12px;color:#a23535;';
+    signOutBtn.textContent = 'Sign out';
+    signOutBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      setOpen(false);
+      if (!confirm('Sign out of Catalist on this device?')) return;
+      try { await window.__auth?.signOut(); } catch (err) { console.error(err); }
+      // The auth gate observes the sign-out and re-shows the sign-in screen.
+      // We also force-hide the app shell so the gate isn't competing with stale UI.
+      document.body.classList.remove('auth-ready');
+      setTimeout(() => window.location.reload(), 100);
+    });
+    section.appendChild(signOutBtn);
+    menu.appendChild(section);
+  }
+
+  // Workspace user list — only members of the *current* group, not every
+  // user in the database. Earlier this listener watched the global /users
+  // collection, which leaked names across workspaces (a clinician on Ward A
+  // could see every clinician on Ward B in their assignee dropdown). The
+  // source of truth for "who is in this workspace" is the parent group
+  // doc's memberUids array; we resolve each uid to a display name via
+  // /users/{uid} (open to any signed-in user) and rebuild the menu when
+  // membership changes.
+  const currentGid = (window.__group && window.__group.currentId()) || null;
   if (unsubUsers) { unsubUsers(); unsubUsers = null; }
-  unsubUsers = onSnapshot(q, snap => {
-    list.innerHTML = '';
+  if (!currentGid) {
+    // No active workspace yet — nothing to render.
+    if (list) list.innerHTML = '';
     usersCache = [];
-    for (const d of snap.docs) {
-      const data = d.data();
-      const name = data.username || 'Unknown';
-      usersCache.push({ id: d.id, username: name });
-
-      const li = document.createElement('li');
-      const nameBtn = document.createElement('button');
-      nameBtn.className = 'name icon-btn';
-      nameBtn.textContent = name;
-      nameBtn.addEventListener('click', () => {
-        setOpen(false);
-        // Switch current user context and open their tasks
-        username = name;
-        openUser(name);
-      });
-
-      const edit = document.createElement('button');
-      edit.className = 'icon-btn';
-      edit.textContent = '✏️';
-      edit.setAttribute('aria-label', `Edit ${name}`);
-      edit.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const next = (prompt('Edit user name', name) || '').trim();
-        if (!next || next === name) return;
-        await updateDoc(doc(db, 'users', d.id), { username: next });
-      });
-
-      const del = document.createElement('button');
-      del.className = 'icon-btn delete-btn';
-      del.textContent = '🗑';
-      del.setAttribute('aria-label', `Delete ${name}`);
-      del.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        if (!confirm(`Delete user '${name}'?`)) return;
-        await deleteDoc(doc(db, 'users', d.id));
-      });
-
-      li.appendChild(nameBtn);
-      li.appendChild(edit);
-      li.appendChild(del);
-      list.appendChild(li);
-    }
-    updateDashboardStats({ users: usersCache.length });
-    // Update composer assignee select with latest users
+    updateDashboardStats({ users: 0 });
     populateComposerAssignees();
-    // Inform My Tasks toolbar about users for the assignee selector
-    try { const names = usersCache.map(u => u.username); document.dispatchEvent(new CustomEvent('userToolbar:users', { detail: { users: names } })); } catch {}
-  });
+  } else {
+    let lastMemberUids = [];
+    const renderMembers = async (memberUids) => {
+      // Resolve display names for any uids we don't already have cached.
+      const missing = memberUids.filter((u) => u && !userDisplayCache.has(u));
+      if (missing.length > 0) {
+        await Promise.all(missing.map(async (uid) => {
+          try {
+            const s = await getDoc(doc(db, 'users', uid));
+            if (s.exists()) {
+              const dn = String((s.data().displayName || s.data().username || '')).trim();
+              if (dn) userDisplayCache.set(uid, dn);
+            }
+          } catch { /* ignore — fall back to uid */ }
+        }));
+      }
+
+      const rows = memberUids
+        .map((uid) => ({ id: uid, username: userDisplayCache.get(uid) || '(unknown user)' }))
+        .sort((a, b) => a.username.localeCompare(b.username));
+
+      usersCache = rows.slice();
+      if (list) {
+        list.innerHTML = '';
+        for (const r of rows) {
+          const li = document.createElement('li');
+          const nameBtn = document.createElement('button');
+          nameBtn.className = 'name icon-btn';
+          nameBtn.textContent = r.username;
+          nameBtn.addEventListener('click', () => {
+            setOpen(false);
+            openUser(r.username);
+          });
+          li.appendChild(nameBtn);
+          list.appendChild(li);
+        }
+      }
+      updateDashboardStats({ users: usersCache.length });
+      populateComposerAssignees();
+      try {
+        const names = usersCache.map(u => u.username);
+        document.dispatchEvent(new CustomEvent('userToolbar:users', { detail: { users: names } }));
+      } catch {}
+    };
+
+    unsubUsers = onSnapshot(doc(db, 'groups', currentGid), (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data() || {};
+      const memberUids = Array.isArray(data.memberUids) ? data.memberUids.slice() : [];
+      // Avoid the async re-render if the membership shape hasn't changed
+      // (group renames/wrappedDek bookkeeping fire snapshots too).
+      const sameLength = memberUids.length === lastMemberUids.length;
+      const sameSet = sameLength && memberUids.every((u) => lastMemberUids.includes(u));
+      if (sameSet) return;
+      lastMemberUids = memberUids;
+      void renderMembers(memberUids);
+    }, (err) => console.error('[users] membership listener error', err));
+  }
 
   // Locations realtime
   const qLoc = query(collection(db, 'locations'), orderBy('name'));
   if (unsubLocations) { unsubLocations(); unsubLocations = null; }
   unsubLocations = onSnapshot(qLoc, (snap) => {
-    locList.innerHTML = '';
+    if (locList) locList.innerHTML = '';
     locationsCache = [];
     for (const d of snap.docs) {
       const data = d.data();
       const name = (data.name || '').trim() || 'Unnamed';
       locationsCache.push({ id: d.id, name });
+
+      if (!locList) continue;
 
       const li = document.createElement('li');
       const nameBtn = document.createElement('button');
@@ -6433,11 +6806,18 @@ function startRealtimeUsers() {
     }
   }
 
-  // Add location → open Tags manager (unified tags system)
-  addLocBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    openTagsManager();
-  });
+  // Add location → open Tags manager (unified tags system).
+  // The button only exists if the host page kept the legacy locations
+  // section in the Settings dropdown. It was removed for the invite-only
+  // rollout, so guard the wiring — without this, startRealtimeUsers
+  // crashes mid-bootstrap and the rest of the app (case creation,
+  // listeners) never wires up.
+  if (addLocBtn) {
+    addLocBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openTagsManager();
+    });
+  }
 }
 
 function populateCaseLocationSelect() {
@@ -6547,17 +6927,11 @@ function openUser(name) {
   if (caseListSection) caseListSection.style.display = 'none';
   caseDetailEl.hidden = true;
   userDetailEl.hidden = false;
-  // Bind change user link
+  // Phase 4: the "change user" affordance was the legacy identity-picker.
+  // Identity is now fixed to the signed-in auth user (and surfaced through
+  // the security panel). Hide the link if the page still renders it.
   const changeBtn = document.getElementById('change-user-link');
-  if (changeBtn) {
-    changeBtn.addEventListener('click', async () => {
-      const next = await showUserSelectModal();
-      if (next && next !== username) {
-        username = next;
-        openUser(next);
-      }
-    }, { once: true });
-  }
+  if (changeBtn) changeBtn.hidden = true;
   // Restore last-used filters (multi-status, priority, sort) for this user
   const saved = userFilterByName.get(name);
   if (saved && typeof saved === 'object') {
@@ -6746,7 +7120,7 @@ async function startRealtimeUserTasks(name) {
       for (const cid of neededCaseIds) {
         if (!userCaseTitles.has(cid) || !userCaseMeta.has(cid)) {
           titleFetches.push(
-            getDoc(doc(db, 'cases', cid)).then(async (cd) => {
+            getDoc(doc(db, ...casesRoot(), cid)).then(async (cd) => {
               if (cd.exists()) {
                 const cdat = cd.data();
                 const title = await safeDecryptText(cdat.titleCipher, cdat.titleIv);
@@ -6802,7 +7176,7 @@ async function startRealtimeUserTasks(name) {
 
   // Subscribe to all cases so patients without active tasks still appear.
   // Skip discharged cases and empty/untitled "beds" (matches the patient table).
-  const casesUnsub = onSnapshot(collection(db, 'cases'), async (snap) => {
+  const casesUnsub = onSnapshot(collection(db, ...casesRoot()), async (snap) => {
     const next = new Map();
     const decryptJobs = [];
     for (const d of snap.docs) {
@@ -6904,8 +7278,7 @@ function renderUserTasks() {
     const statusBtn = document.createElement('button');
     statusBtn.type = 'button';
     statusBtn.className = 'status-btn';
-    const icon = (s)=> s==='complete'?'☑':(s==='in progress'?'◐':'☐');
-    statusBtn.textContent = icon(it.status);
+    setStatusIcon(statusBtn, it.status);
     statusBtn.setAttribute('aria-label', `Task status: ${it.status}`);
     statusBtn.disabled = pending;
     if (pending) statusBtn.title = 'Awaiting acceptance';
@@ -6916,9 +7289,9 @@ function renderUserTasks() {
       const next=order[(order.indexOf(it.status)+1)%order.length];
       try{
         const {cipher, iv}= await encryptText(next);
-        await updateDoc(doc(db,'cases',caseId,'tasks',it.taskId), buildTaskStatusPatch(next, cipher, iv));
+        await updateDoc(doc(db,...casesRoot(),caseId,'tasks',it.taskId), buildTaskStatusPatch(next, cipher, iv));
         it.status=next;
-        statusBtn.textContent=icon(next);
+        setStatusIcon(statusBtn, next);
         statusBtn.setAttribute('aria-label',`Task status: ${next}`);
         li.className='case-task '+(next==='in progress'?'s-inprogress':(next==='complete'?'s-complete':'s-open')) + (pending ? ' task-pending-acceptance' : '') + (it.important ? ' task-important' : '') + (isMine ? ' task-mine' : '');
         if (next==='complete') {
@@ -6961,7 +7334,7 @@ function renderUserTasks() {
         if (v===last) { endEdit(); return; }
         try{
           const {cipher:textCipher, iv:textIv}= await encryptText(v);
-          await updateDoc(doc(db,'cases',caseId,'tasks',it.taskId),{ textCipher, textIv });
+          await updateDoc(doc(db,...casesRoot(),caseId,'tasks',it.taskId),{ textCipher, textIv });
           last=v;
           titleSpan.textContent=v;
         } catch(err){ console.error('Failed to update task',err); showToast('Failed to update task'); }
@@ -7087,7 +7460,7 @@ function renderUserTasks() {
     del.addEventListener('click', async (e) => {
       e.stopPropagation();
       if (!confirm('Delete this task?')) return;
-      try { await deleteDoc(doc(db, 'cases', caseId, 'tasks', it.taskId)); }
+      try { await deleteDoc(doc(db, ...casesRoot(), caseId, 'tasks', it.taskId)); }
       catch (err) { console.error('Failed to delete task', err); showToast('Failed to delete task'); }
     });
     li.appendChild(del);
@@ -7115,7 +7488,7 @@ function renderUserTasks() {
     const commentBtn=document.createElement('button');
     commentBtn.className='icon-btn add-comment-btn';
     commentBtn.type='submit';
-    commentBtn.textContent='➕';
+    cbSetIcon(commentBtn, 'add', { size: 16, label: 'Add comment' });
     commentBtn.setAttribute('aria-label','Add comment');
     commentForm.appendChild(commentBtn);
     commentSection.appendChild(commentForm);
@@ -7124,7 +7497,7 @@ function renderUserTasks() {
     const updateToggle=()=>{ countEl.textContent= commentCount>0? String(commentCount):''; toggle.textContent= commentSection.hidden? '💬':'✖'; toggle.setAttribute('aria-label', commentSection.hidden? 'Show comments':'Hide comments'); };
     updateToggle();
     toggle.addEventListener('click', ()=>{ const h=commentSection.hidden; commentSection.hidden=!h; updateToggle(); if(h && !commentsLoaded){ startRealtimeComments(caseId, it.taskId, commentsList, (n)=>{ commentCount=n; updateToggle(); }); commentsLoaded=true; } });
-    commentForm.addEventListener('submit', async (e)=>{ e.preventDefault(); const t=commentInput.value.trim(); if(!t) return; const tempLi=document.createElement('li'); tempLi.className='optimistic'; const span=document.createElement('span'); span.textContent= username? `${username}: ${t}` : t; tempLi.appendChild(span); commentsList.appendChild(tempLi); commentInput.value=''; commentSection.hidden=false; updateToggle(); try{ const {cipher, iv}= await encryptText(t); await addDoc(collection(db,'cases',caseId,'tasks',it.taskId,'comments'), {cipher,iv,username,createdAt:serverTimestamp()}); try { await logUpdate({ type: 'comment_added', caseId, caseTitle: title, taskId: it.taskId, commentCipher: cipher, commentIv: iv }); } catch {} if(!commentsLoaded){ startRealtimeComments(caseId, it.taskId, commentsList, (n)=>{ commentCount=n; updateToggle(); }); commentsLoaded=true; } } catch(err){ tempLi.classList.add('failed'); showToast('Failed to add comment'); } });
+    commentForm.addEventListener('submit', async (e)=>{ e.preventDefault(); const t=commentInput.value.trim(); if(!t) return; const tempLi=document.createElement('li'); tempLi.className='optimistic'; const span=document.createElement('span'); span.textContent= username? `${username}: ${t}` : t; tempLi.appendChild(span); commentsList.appendChild(tempLi); commentInput.value=''; commentSection.hidden=false; updateToggle(); try{ const {cipher, iv}= await encryptText(t); await addDoc(collection(db,...casesRoot(),caseId,'tasks',it.taskId,'comments'), {cipher,iv,username,authorUid: authorUid || null,createdAt:serverTimestamp()}); try { await logUpdate({ type: 'comment_added', caseId, caseTitle: title, taskId: it.taskId, commentCipher: cipher, commentIv: iv }); } catch {} if(!commentsLoaded){ startRealtimeComments(caseId, it.taskId, commentsList, (n)=>{ commentCount=n; updateToggle(); }); commentsLoaded=true; } } catch(err){ tempLi.classList.add('failed'); showToast('Failed to add comment'); } });
     li.appendChild(commentSection);
     return li;
   };
@@ -7248,7 +7621,7 @@ function renderUserTasks() {
     badge.textContent = String(total);
     const chev = document.createElement('span');
     chev.className = 'completed-old-chev';
-    chev.textContent = '▸';
+    chev.appendChild(cbIcon('chevron--right', { size: 14 }));
     right.appendChild(badge);
     right.appendChild(chev);
     head.appendChild(h);
@@ -7271,7 +7644,7 @@ function renderUserTasks() {
       const next = !expanded;
       head.setAttribute('aria-expanded', String(next));
       body.hidden = !next;
-      chev.textContent = next ? '▾' : '▸';
+      cbSetIcon(chev, next ? 'chevron--down' : 'chevron--right', { size: 14 });
     });
 
     userTaskListEl.appendChild(wrap);
@@ -7387,7 +7760,7 @@ function showUndoToast(message, onUndo) {
 
 async function mtSetTaskStatus(caseId, taskId, nextStatus, opts = {}) {
   const { cipher, iv } = await encryptText(nextStatus);
-  await updateDoc(doc(db, 'cases', caseId, 'tasks', taskId), buildTaskStatusPatch(nextStatus, cipher, iv));
+  await updateDoc(doc(db, ...casesRoot(), caseId, 'tasks', taskId), buildTaskStatusPatch(nextStatus, cipher, iv));
   if (nextStatus === 'complete' && opts.caseTitle && opts.text) {
     try {
       const tEnc = await encryptText(opts.text || '');
@@ -7498,9 +7871,9 @@ function renderUserTasksMobile() {
       const sec = buildMobilePatientSection(caseId, title, bed, ward, items.length);
       if (!items.length) sec.classList.add('mt-section--patient-empty');
       const body = sec.querySelector('.mt-section-body');
-      for (const it of sortItemsForCase(items)) {
+      renderTasksWithStatusGroups(body, sortItemsForCase(items), 'div', (it) => {
         body.appendChild(buildMobileRow(caseId, it, { hidePatient: true }));
-      }
+      });
       if (!items.length) {
         const empty = document.createElement('div');
         empty.className = 'mt-patient-no-tasks';
@@ -7526,7 +7899,7 @@ function renderUserTasksMobile() {
     head.tabIndex = 0;
     const chev = document.createElement('span');
     chev.className = 'mt-section-chev';
-    chev.textContent = '▸';
+    chev.appendChild(cbIcon('chevron--right', { size: 14 }));
     head.appendChild(chev);
     for (const cid of sortCaseIds(Array.from(completedOldByCase.keys()))) {
       const items = completedOldByCase.get(cid) || [];
@@ -7560,7 +7933,7 @@ function renderUserTasksMobile() {
       const next = !expanded;
       head.setAttribute('aria-expanded', String(next));
       body.hidden = !next;
-      chev.textContent = next ? '▾' : '▸';
+      cbSetIcon(chev, next ? 'chevron--down' : 'chevron--right', { size: 14 });
     };
     head.addEventListener('click', toggle);
     head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
@@ -7651,7 +8024,7 @@ function buildMobileRow(caseId, it, opts = {}) {
   actionLayer.className = 'mt-row-actions';
   const actionBtn = document.createElement('button');
   actionBtn.type = 'button';
-  actionBtn.innerHTML = '<span>◐</span><span>In progress</span>';
+  actionBtn.innerHTML = `${cbIconString('checkbox--indeterminate', { size: 16 })}<span>In progress</span>`;
   actionBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     toggleInProgress(caseId, it, row, title);
@@ -7672,7 +8045,7 @@ function buildMobileRow(caseId, it, opts = {}) {
   check.type = 'button';
   check.className = 'mt-check';
   check.setAttribute('aria-label', it.status === 'complete' ? 'Mark not done' : 'Mark done');
-  check.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+  check.innerHTML = cbIconString('checkmark', { size: 18 });
   if (opts.pendingForMe) check.disabled = true;
   check.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -7750,7 +8123,7 @@ function buildMobileRow(caseId, it, opts = {}) {
   star.type = 'button';
   star.className = 'mt-star' + (it.important ? ' is-important' : '');
   star.setAttribute('aria-label', it.important ? 'Unmark as important' : 'Mark as important');
-  star.textContent = it.important ? '★' : '☆';
+  setStarIcon(star, !!it.important, 16);
   star.addEventListener('click', async (e) => {
     e.stopPropagation();
     try {
@@ -7758,7 +8131,7 @@ function buildMobileRow(caseId, it, opts = {}) {
       it.important = next;
       row.classList.toggle('mt-important', next);
       star.classList.toggle('is-important', next);
-      star.textContent = next ? '★' : '☆';
+      setStarIcon(star, !!next, 16);
       star.setAttribute('aria-label', next ? 'Unmark as important' : 'Mark as important');
     } catch (err) { console.error(err); showToast('Failed to update'); }
   });
@@ -7771,11 +8144,11 @@ function buildMobileRow(caseId, it, opts = {}) {
     del.className = 'mt-del';
     del.setAttribute('aria-label', 'Delete task');
     del.title = 'Delete task';
-    del.textContent = '✕';
+    cbSetIcon(del, 'close', { size: 14 });
     del.addEventListener('click', async (e) => {
       e.stopPropagation();
       if (!confirm('Delete this task?')) return;
-      try { await deleteDoc(doc(db, 'cases', caseId, 'tasks', it.taskId)); }
+      try { await deleteDoc(doc(db, ...casesRoot(), caseId, 'tasks', it.taskId)); }
       catch (err) { console.error('Failed to delete task', err); showToast('Failed to delete task'); }
     });
     content.appendChild(del);
@@ -7987,7 +8360,7 @@ function openTaskActionSheet(ctx, row) {
   addItem('Open patient', () => { try { openCase(ctx.caseId, ctx.title, 'user', 'tasks'); } catch {} });
   addItem('Delete task', async () => {
     if (!confirm('Delete this task?')) return;
-    try { await deleteDoc(doc(db, 'cases', ctx.caseId, 'tasks', ctx.it.taskId)); }
+    try { await deleteDoc(doc(db, ...casesRoot(), ctx.caseId, 'tasks', ctx.it.taskId)); }
     catch (err) { console.error(err); showToast('Failed to delete task'); }
   });
   sheet.body.appendChild(list);
@@ -8054,7 +8427,8 @@ function updateFilterPillBadge() {
 
 /* Bottom sheet helper */
 function openAssigneeSheet(ctx) {
-  const { caseId, it, title } = ctx;
+  const { caseId, it, title, onChanged } = ctx;
+  const taskId = it.taskId || it.id;
   const sheet = buildBottomSheet();
   const h = document.createElement('h3');
   h.textContent = 'Assign task';
@@ -8086,15 +8460,18 @@ function openAssigneeSheet(ctx) {
     if (isCurrent) {
       const tick = document.createElement('span');
       tick.className = 'ms-list-tick';
-      tick.textContent = '✓';
+      tick.appendChild(cbIcon('checkmark', { size: 16 }));
       btn.appendChild(tick);
     }
     btn.addEventListener('click', async () => {
       sheet.close();
       if ((value || null) === currentAssignee) return;
       try {
-        await updateTaskAssignment(caseId, it.taskId, value, { caseTitle: title, taskText: it.text });
+        await updateTaskAssignment(caseId, taskId, value, { caseTitle: title, taskText: it.text });
         showToast(value ? `Assigned to ${value}` : 'Unassigned');
+        if (typeof onChanged === 'function') {
+          try { onChanged(value); } catch (e) { console.error(e); }
+        }
       } catch (err) {
         console.error('Failed to reassign', err);
         showToast('Failed to update assignee');
@@ -8189,8 +8566,8 @@ function openFilterSheet() {
 
   // Status
   mkChips('Status', [
-    { label: 'Open', value: 'open' },
-    { label: 'In progress', value: 'in progress' },
+    { label: 'To do', value: 'open' },
+    { label: 'To follow', value: 'in progress' },
     { label: 'Complete', value: 'complete' },
   ], currentUserStatusSet, true, (v, on) => {
     if (on) currentUserStatusSet.add(v); else currentUserStatusSet.delete(v);
@@ -8277,14 +8654,17 @@ function openOverflowSheet() {
     return '';
   })();
 
-  if (currentTab !== 'my') addItem('My Tasks', () => showMainTab('my'));
-  if (currentTab !== 'table') addItem('Table view', () => showMainTab('table'));
+  if (currentTab !== 'my') addItem('Task list', () => showMainTab('my'));
+  if (currentTab !== 'table') addItem('Patients', () => showMainTab('table'));
   if (currentTab !== 'updates') addItem('Updates', () => showMainTab('updates'));
-  addDivider();
-  addItem('Ward notes', () => {
-    const btn = document.getElementById('quick-ward-notes-btn');
-    if (btn) btn.click();
-  });
+  // HIDDEN-FEATURE: ward-notes — remove `if (false)` wrapper to reinstate
+  if (false) {
+    addDivider();
+    addItem('Ward notes', () => {
+      const btn = document.getElementById('quick-ward-notes-btn');
+      if (btn) btn.click();
+    });
+  }
 
   sheet.body.appendChild(list);
 }
@@ -8325,6 +8705,156 @@ function initMobileTopbar() {
   const nextBtn = document.getElementById('mobile-topbar-next');
   if (prevBtn) prevBtn.addEventListener('click', () => cycleTab(-1));
   if (nextBtn) nextBtn.addEventListener('click', () => cycleTab(1));
+
+  // Horizontal swipe to cycle main tabs (Patients ↔ Task list ↔ Updates)
+  // Finger-follows during the drag, then slides the new panel in on commit.
+  (function wireTabSwipe() {
+    const COMMIT_MIN_X = 60;
+    const COMMIT_MAX_MS = 600;
+    const INTENT_PX = 10;
+    const HORIZONTAL_RATIO = 1.2;
+    const VERTICAL_BAIL_RATIO = 0.9;
+    const FOLLOW_DAMP = 0.85;
+
+    let startX = 0, startY = 0, startT = 0;
+    let tracking = false, captured = false, animating = false;
+    let panelEl = null;
+
+    const visiblePanel = () => {
+      if (tableSection && !tableSection.hidden) return tableSection;
+      if (userDetailEl && !userDetailEl.hidden) return userDetailEl;
+      if (updatesSection && !updatesSection.hidden) return updatesSection;
+      return null;
+    };
+    const isInteractive = (el) => {
+      if (!el || !el.closest) return false;
+      return !!el.closest(
+        'input, textarea, select, button, a, [contenteditable="true"], ' +
+        '.modal-overlay, .ms-sheet, .users-menu, .ward-notes-list, ' +
+        '#case-detail:not([hidden])'
+      );
+    };
+    const onMainTab = () => {
+      if (caseDetailEl && !caseDetailEl.hidden) return false;
+      const overlay = document.querySelector('.modal-overlay');
+      if (overlay) return false;
+      return true;
+    };
+    const setTransform = (el, x, transition) => {
+      if (!el) return;
+      el.style.transition = transition || 'none';
+      el.style.transform = x ? `translate3d(${x}px,0,0)` : '';
+      el.style.willChange = x ? 'transform' : '';
+    };
+    const clearTransform = (el) => {
+      if (!el) return;
+      el.style.transition = '';
+      el.style.transform = '';
+      el.style.willChange = '';
+      el.style.opacity = '';
+    };
+    const finishCommit = (oldEl, dir) => {
+      try { cycleTab(dir); } catch {}
+      const fresh = visiblePanel();
+      clearTransform(oldEl);
+      if (!fresh) { animating = false; return; }
+      const w = window.innerWidth || 375;
+      const fromX = dir > 0 ? Math.round(w * 0.35) : -Math.round(w * 0.35);
+      fresh.style.transition = 'none';
+      fresh.style.transform = `translate3d(${fromX}px,0,0)`;
+      fresh.style.opacity = '0.0';
+      fresh.style.willChange = 'transform, opacity';
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          fresh.style.transition = 'transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 220ms ease-out';
+          fresh.style.transform = '';
+          fresh.style.opacity = '';
+        });
+      });
+      window.setTimeout(() => { clearTransform(fresh); animating = false; }, 320);
+    };
+
+    document.addEventListener('touchstart', (e) => {
+      if (animating) { tracking = false; return; }
+      if (!isMobileUserView()) { tracking = false; return; }
+      if (!onMainTab()) { tracking = false; return; }
+      const t = e.touches && e.touches[0];
+      if (!t) return;
+      if (isInteractive(e.target)) { tracking = false; return; }
+      startX = t.clientX;
+      startY = t.clientY;
+      startT = Date.now();
+      panelEl = visiblePanel();
+      tracking = !!panelEl;
+      captured = false;
+    }, { passive: true });
+
+    document.addEventListener('touchmove', (e) => {
+      if (!tracking || !panelEl) return;
+      const t = e.touches && e.touches[0];
+      if (!t) return;
+      const dx = t.clientX - startX;
+      const dy = t.clientY - startY;
+      if (!captured) {
+        if (Math.abs(dy) > INTENT_PX && Math.abs(dy) >= Math.abs(dx) * VERTICAL_BAIL_RATIO) {
+          tracking = false;
+          return;
+        }
+        if (Math.abs(dx) > INTENT_PX && Math.abs(dx) >= Math.abs(dy) * HORIZONTAL_RATIO) {
+          captured = true;
+        } else {
+          return;
+        }
+      }
+      setTransform(panelEl, dx * FOLLOW_DAMP, 'none');
+    }, { passive: true });
+
+    document.addEventListener('touchend', (e) => {
+      if (!tracking) return;
+      const wasCaptured = captured;
+      tracking = false;
+      captured = false;
+      const t = (e.changedTouches && e.changedTouches[0]) || null;
+      const oldEl = panelEl;
+      panelEl = null;
+      if (!t || !oldEl) { clearTransform(oldEl); return; }
+      const dx = t.clientX - startX;
+      const dy = t.clientY - startY;
+      const dt = Date.now() - startT;
+      const commit = wasCaptured
+        && dt < COMMIT_MAX_MS
+        && Math.abs(dx) >= COMMIT_MIN_X
+        && Math.abs(dx) >= Math.abs(dy) * HORIZONTAL_RATIO
+        && onMainTab();
+      if (commit) {
+        animating = true;
+        const dir = dx < 0 ? 1 : -1;
+        const w = window.innerWidth || 375;
+        const exitX = dir > 0 ? -Math.round(w * 0.30) : Math.round(w * 0.30);
+        oldEl.style.transition = 'transform 160ms cubic-bezier(0.4, 0, 0.6, 1), opacity 160ms ease-out';
+        oldEl.style.transform = `translate3d(${exitX}px,0,0)`;
+        oldEl.style.opacity = '0';
+        oldEl.style.willChange = 'transform, opacity';
+        window.setTimeout(() => finishCommit(oldEl, dir), 165);
+      } else if (wasCaptured) {
+        oldEl.style.transition = 'transform 220ms cubic-bezier(0.2, 0.9, 0.3, 1)';
+        oldEl.style.transform = '';
+        window.setTimeout(() => clearTransform(oldEl), 240);
+      } else {
+        clearTransform(oldEl);
+      }
+    }, { passive: true });
+
+    document.addEventListener('touchcancel', () => {
+      if (panelEl && captured) {
+        const el = panelEl;
+        el.style.transition = 'transform 200ms cubic-bezier(0.2, 0.9, 0.3, 1)';
+        el.style.transform = '';
+        window.setTimeout(() => clearTransform(el), 220);
+      }
+      tracking = false; captured = false; panelEl = null;
+    }, { passive: true });
+  })();
   if (searchBtn) searchBtn.addEventListener('click', () => {
     if (searchBar) { searchBar.hidden = false; }
     if (searchInput) { searchInput.value = currentUserSearch || ''; searchInput.focus(); }
@@ -8421,6 +8951,12 @@ function dismissCoach(which) {
   coachActive = null;
 }
 function maybeRunCoachMarks() {
+  // Disabled — first-use coach marks were glitching on mobile. Leaving the
+  // implementation in place so it can be re-enabled later by removing this
+  // early return. To re-enable, also wipe localStorage keys 'cm.*.v1' on
+  // affected devices.
+  return;
+  // eslint-disable-next-line no-unreachable
   if (!isMobileUserView()) return;
   if (coachActive) return;
   // Wait a tick for layout

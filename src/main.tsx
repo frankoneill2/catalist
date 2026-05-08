@@ -1,7 +1,24 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
+import { initSentry } from './sentry';
 import { TaskToolbar } from './components/TaskToolbar';
+import './auth/firebase';
+import './auth/groupContext';
+import './auth/dataAudit';
+import { AuthGate } from './auth/AuthGate';
+import { AuthErrorBoundary } from './auth/components/ErrorBoundary';
+import { SecurityPanel } from './auth/components/SecurityPanel';
+import { GroupSwitcher } from './auth/components/GroupSwitcher';
+import { AcceptInviteModal } from './auth/components/AcceptInviteModal';
+import { readPendingInviteToken, rememberPendingInviteToken } from './auth/invites';
+import { auth } from './auth/firebase';
+import { registerOpenSecurityPanel } from './auth/index';
+import type { User } from 'firebase/auth';
+
+// Init error tracking as the very first thing so we capture errors from the
+// rest of bootstrapping (including script.js, which runs after this module).
+initSentry();
 
 type Status = 'open' | 'in progress' | 'complete';
 type Priority = 'all' | 'low' | 'medium' | 'high';
@@ -138,3 +155,100 @@ function mountUserToolbar() {
 }
 
 mountUserToolbar();
+
+// --- Auth gate ---
+//
+// The auth gate is a full-screen overlay that blocks the rest of the app until
+// the user is signed in (with email verified, MFA enrolled, and PIN unlocked
+// where applicable). On success it dispatches `auth:ready` so script.js can
+// proceed with its existing passphrase prompt.
+
+function mountAuthGate() {
+  const el = document.getElementById('auth-gate');
+  if (!el) {
+    console.warn('[auth] no #auth-gate mount point');
+    return;
+  }
+  const root = createRoot(el);
+
+  const Wrapper: React.FC = () => {
+    const [showPanel, setShowPanel] = useState(false);
+    const [user, setUser] = useState<User | null>(auth.currentUser);
+    const [appRevealed, setAppRevealed] = useState(false);
+    const [pendingInvite, setPendingInvite] = useState<string | null>(null);
+
+    useEffect(() => {
+      registerOpenSecurityPanel(() => setShowPanel(true));
+    }, []);
+
+    // Capture an invite token from the URL on first paint and stash it in
+    // sessionStorage. The auth gate may push the user through the sign-in /
+    // 2FA / PIN dance; the token survives that detour and gets surfaced as
+    // a modal once they reach the app.
+    useEffect(() => {
+      const token = readPendingInviteToken();
+      if (token) {
+        rememberPendingInviteToken(token);
+        setPendingInvite(token);
+      }
+    }, []);
+
+    // Once the auth gate finishes (appRevealed=true), the gate may have
+    // already auto-claimed the pending invite as part of its enterReady
+    // routing — in which case sessionStorage is now empty and we should
+    // drop the modal so it doesn't try to re-accept an already-used token.
+    useEffect(() => {
+      if (!appRevealed) return;
+      if (!readPendingInviteToken()) setPendingInvite(null);
+    }, [appRevealed]);
+
+    const onReady = useCallback((u: User) => {
+      setUser(u);
+      if (!appRevealed) {
+        setAppRevealed(true);
+        document.body.classList.add('auth-ready');
+        document.dispatchEvent(new CustomEvent('auth:ready', { detail: { uid: u.uid, displayName: u.displayName, email: u.email } }));
+      }
+    }, [appRevealed]);
+
+    return (
+      <AuthErrorBoundary>
+        <AuthGate onReady={onReady} />
+        {showPanel && user ? (
+          <SecurityPanel user={user} onClose={() => setShowPanel(false)} />
+        ) : null}
+        {appRevealed && user && pendingInvite ? (
+          <AcceptInviteModal
+            user={user}
+            token={pendingInvite}
+            onClose={() => setPendingInvite(null)}
+          />
+        ) : null}
+      </AuthErrorBoundary>
+    );
+  };
+
+  root.render(<Wrapper />);
+}
+
+mountAuthGate();
+
+// Group switcher mounts in the topbar slot. Stays empty until the user is
+// signed in; observes auth state directly so it picks up sign-in / sign-out
+// without main.tsx having to coordinate.
+function mountGroupSwitcher() {
+  const el = document.getElementById('group-switcher-root');
+  if (!el) return;
+  const root = createRoot(el);
+
+  const Wrapper: React.FC = () => {
+    const [user, setUser] = useState<User | null>(auth.currentUser);
+    useEffect(() => auth.onAuthStateChanged((u) => setUser(u)), []);
+    if (!user || user.isAnonymous) return null;
+    return <GroupSwitcher user={user} />;
+  };
+
+  root.render(<Wrapper />);
+}
+
+mountGroupSwitcher();
