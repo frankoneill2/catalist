@@ -1,36 +1,374 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Cases and nested content
-    match /cases/{caseId} {
-      allow read, write: if request.auth != null;
 
-      match /tasks/{taskId} {
-        allow read, write: if request.auth != null;
+    // --- Helpers ---
+    //
+    // `isSignedIn()` requires both a Firebase auth principal AND a verified
+    // email. This is the server-side enforcement of the rebuild plan's
+    // "2FA required from day one" claim — without this check, a freshly-
+    // registered account with an unverified email could bypass the React
+    // routing (which gates on `user.emailVerified`) by talking to Firestore
+    // directly via the SDK or REST. The `email_verified` claim is set on
+    // the ID token by Firebase the next time the user fetches a token after
+    // clicking the verification link; AuthGate forces a token refresh in
+    // EmailVerify so the user lands here with the up-to-date claim.
+    function isSignedIn() {
+      return request.auth != null
+        && request.auth.token.email_verified == true;
+    }
+    function isUser(uid) { return isSignedIn() && request.auth.uid == uid; }
 
-        match /comments/{commentId} {
-          allow read, write: if request.auth != null;
+    // The group's denormalized memberUids array is the authoritative
+    // membership list. Reading the group doc to evaluate this rule is a
+    // documented Firestore pattern: each rules evaluation that hits get()
+    // counts as a doc read, but the result is cached for the request, so
+    // a cases-list listener pays the cost once.
+    function isGroupMember(gid) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/groups/$(gid))
+        && request.auth.uid in get(/databases/$(database)/documents/groups/$(gid)).data.memberUids;
+    }
+    function isGroupAdmin(gid) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/groups/$(gid))
+        && request.auth.uid in get(/databases/$(database)/documents/groups/$(gid)).data.adminUids;
+    }
+    function isGroupOwner(gid) {
+      return isSignedIn()
+        && get(/databases/$(database)/documents/groups/$(gid)).data.ownerUid == request.auth.uid;
+    }
+    // True when the request body keeps the same admin/owner/membership
+    // shape — i.e. only "regular" fields like name or updatedAt are
+    // changing. We use it to allow members to do bookkeeping (e.g. update
+    // updatedAt on group rename via the admin path) without giving them
+    // privilege-escalation powers. Implicit context: `request.resource`
+    // and `resource` already refer to the matched group document.
+    function membershipUnchanged() {
+      return request.resource.data.memberUids == resource.data.memberUids
+        && request.resource.data.adminUids == resource.data.adminUids
+        && request.resource.data.ownerUid == resource.data.ownerUid;
+    }
+
+    // True when an admin update is "additive only": members may be added
+    // (invite/approve flow goes through this path) but no one is removed,
+    // adminUids stays exactly the same, and ownerUid is preserved. This is
+    // what lets non-owner admins approve join requests without giving them
+    // the power to kick anyone — kicking, demotion, and ownership transfer
+    // are all owner-only by virtue of falling outside this predicate.
+    function adminAdditiveOnly() {
+      return resource.data.memberUids.removeAll(request.resource.data.memberUids).size() == 0
+        && request.resource.data.adminUids == resource.data.adminUids
+        && request.resource.data.ownerUid == resource.data.ownerUid;
+    }
+
+    // True when the calling member is removing exactly themselves from
+    // memberUids (and from adminUids, if they were an admin). Lets a member
+    // leave a workspace without needing the owner to act, while making sure
+    // a self-leave can't be smuggled into an attack on someone else's
+    // membership. Owner-leave is intentionally not handled here: an owner
+    // who tries to leave a workspace with other members in it should hit
+    // the UI block in handleLeave first; if they bypass the UI, this
+    // predicate denies them and they fall through to the owner clause,
+    // which permits any membership change but still leaves the workspace
+    // ownerless — a known gap closed by the Phase 7 ownership-transfer flow.
+    function isSelfLeaving() {
+      return request.auth.uid in resource.data.memberUids
+        && resource.data.memberUids.removeAll(request.resource.data.memberUids) == [request.auth.uid]
+        && request.resource.data.memberUids.removeAll(resource.data.memberUids).size() == 0
+        && resource.data.adminUids.removeAll(request.resource.data.adminUids).hasOnly([request.auth.uid])
+        && request.resource.data.adminUids.removeAll(resource.data.adminUids).size() == 0
+        && request.resource.data.ownerUid == resource.data.ownerUid;
+    }
+
+    // The Phase 5 per-group Data Encryption Key (DEK) is wrapped with a KEK
+    // and stored on the group doc as `wrappedDek`. Once set it must never
+    // change without an explicit re-key flow (Phase 5+ rotation, not built
+    // yet) — otherwise a malicious member could swap in a DEK only they can
+    // decrypt and lock everyone else out of new writes. The seed write is
+    // allowed by anyone who can update the group (handled in the surrounding
+    // rule), but subsequent updates that touch wrappedDek are denied unless
+    // the field is genuinely unchanged.
+    function envelopeKeyImmutable() {
+      return !('wrappedDek' in resource.data)
+        || (
+          'wrappedDek' in request.resource.data
+          && request.resource.data.wrappedDek == resource.data.wrappedDek
+        );
+    }
+
+    // Validate that an in-flight join request references a real, unexpired
+    // invite that this user has just claimed. Used by the create rule on
+    // /groups/{gid}/joinRequests/{uid} below — the requester writes the
+    // invite token onto their request doc, and this function re-fetches
+    // the invite to verify the chain holds. The expiresAt check makes the
+    // documented 1-hour TTL load-bearing.
+    function isClaimedValidInvite(gid, token) {
+      let invite = get(/databases/$(database)/documents/invites/$(token)).data;
+      return token is string
+        && exists(/databases/$(database)/documents/invites/$(token))
+        && invite.groupId == gid
+        && invite.status == 'accepted'
+        && invite.acceptedByUid == request.auth.uid
+        && invite.expiresAt is timestamp
+        && invite.expiresAt > request.time;
+    }
+
+    // --- User profiles ---
+    //
+    // Each user owns their `users/{uid}` doc. Other signed-in users can
+    // read it (so the UI can resolve `authorUid` → `displayName` for
+    // tasks/comments/etc). Per-user subcollections (devices, authEvents)
+    // remain private to the owner.
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      // Owner manages their own profile. We let any signed-in user write
+      // narrow updates to *their own* groupIds field (set by addMember on
+      // the actor's behalf): the calling user is the *new* member, so
+      // they're updating their own profile, which is already covered by
+      // the owner rule. Everyone else is the same restriction.
+      allow create, update, delete: if isUser(userId);
+
+      match /devices/{deviceId} {
+        allow read, write: if isUser(userId);
+      }
+
+      match /authEvents/{eventId} {
+        allow read: if isUser(userId);
+        allow create: if isUser(userId);
+        allow update, delete: if false;
+      }
+    }
+
+    // --- Groups (workspaces) ---
+    match /groups/{groupId} {
+      // Members read; non-members can't even see the doc exists.
+      //
+      // Read membership straight off `resource.data` rather than via the
+      // get()-based isGroupMember() helper. Both `get` and `list` evaluate
+      // this rule against the matched document, so resource.data is the
+      // right source — and crucially, Firestore REFUSES to run a `list`
+      // query whose rule re-fetches the document being listed (the
+      // "rules are not filters" guarantee). The old get()-based rule
+      // therefore 403'd every `where('memberUids','array-contains',uid)`
+      // query, which is what left the workspace switcher stuck on 0
+      // groups even when the user was a member. A direct get() still
+      // worked, which is why single-doc reads were fine.
+      allow read: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+
+      // Anyone signed in can create a group, and they must be the owner
+      // of the group they're creating (no tricks where someone seeds a
+      // group with someone else as owner).
+      allow create: if isSignedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.auth.uid in request.resource.data.memberUids
+        && request.auth.uid in request.resource.data.adminUids;
+
+      // Updates split into four ladders, ordered most-privileged first:
+      //
+      //   1. Owner — full control of the membership shape (kick a member,
+      //      promote/demote an admin, transfer ownership), subject to the
+      //      envelope-key being immutable.
+      //   2. Admin (non-owner) — only "additive" changes to memberUids,
+      //      so admins can run the invite/approve flow but can NOT kick
+      //      anyone, change adminUids, or transfer ownership. Removal is
+      //      reserved to the owner so the UI's owner-only Remove button
+      //      (handleKick in GroupSwitcher.tsx) is enforced server-side and
+      //      can't be bypassed via the SDK.
+      //   3. Member self-leave — any member can remove themselves from
+      //      memberUids/adminUids without admin intervention, mirroring
+      //      handleLeave in the UI.
+      //   4. Member non-membership update — bookkeeping writes (rename,
+      //      wrappedDek seed) that don't touch the membership shape.
+      //
+      // The previous `isSelfAddingViaInvite` clause was removed when
+      // invite acceptance moved behind admin approval — gaining
+      // membership now goes via /joinRequests + addMember.
+      allow update: if (
+          (isGroupOwner(groupId) && envelopeKeyImmutable())
+          || (isGroupAdmin(groupId) && adminAdditiveOnly() && envelopeKeyImmutable())
+          || (isGroupMember(groupId) && isSelfLeaving() && envelopeKeyImmutable())
+          || (isGroupMember(groupId) && membershipUnchanged() && envelopeKeyImmutable())
+        );
+
+      // Only the owner can delete a group. The plan defers full delete
+      // semantics (cascading cleanup) to Phase 7 server-side enforcement.
+      allow delete: if isGroupOwner(groupId);
+
+      match /members/{memberUid} {
+        allow read: if isGroupMember(groupId);
+        // A member can write *their own* member-doc (for joinedAt
+        // bookkeeping); admins can write any member doc.
+        allow write: if isGroupAdmin(groupId) || isUser(memberUid);
+      }
+
+      // --- Cases and their subcollections ---
+      //
+      // Membership in the parent group is what gates everything below.
+      match /cases/{caseId} {
+        allow read, write: if isGroupMember(groupId);
+
+        match /tasks/{taskId} {
+          allow read, write: if isGroupMember(groupId);
+
+          match /comments/{commentId} {
+            allow read, write: if isGroupMember(groupId);
+          }
+        }
+
+        match /notes/{noteId} {
+          allow read, write: if isGroupMember(groupId);
+        }
+
+        match /wardNotes/{wardNoteId} {
+          allow read, write: if isGroupMember(groupId);
         }
       }
 
-      match /notes/{noteId} {
-        allow read, write: if request.auth != null;
+      // --- Data audit log (Phase 6) ---
+      //
+      // Append-only event stream of meaningful patient-data writes inside
+      // the group. Members can write events tagged with their own uid. Only
+      // admins of the group can read — clinicians see audit indirectly via
+      // an admin-curated UI, not by querying it themselves. Update / delete
+      // are flat-denied so the log is tamper-evident on the client side.
+      match /audit/{eventId} {
+        allow read: if isGroupAdmin(groupId);
+        allow create: if isGroupMember(groupId)
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.groupId == groupId;
+        allow update, delete: if false;
+      }
+
+      // --- Join requests (admin-approval invite flow) ---
+      //
+      // Holding pen between "user accepted an invite link" and "user is in
+      // memberUids". The requester writes a /joinRequests/{their-uid} doc
+      // referencing the invite token they just claimed. An admin reviews
+      // the request from the Manage workspaces UI and either approves
+      // (which adds the requester to memberUids via the regular admin
+      // update path above) or denies. Even if an invite link leaks to the
+      // wrong person, the leaker still has to clear the admin's review
+      // before they get any data access.
+      //
+      // - read: admins see every request in their group; requesters see
+      //   only their own (so they can listen for status changes from the
+      //   AwaitingApproval screen).
+      // - list: admins only — non-admins shouldn't be able to enumerate
+      //   pending requests (which would leak names of other people trying
+      //   to join the workspace).
+      // - create: the requester writes their own pending request, with a
+      //   valid claimed invite token attached. The reviewedByUid /
+      //   reviewedAt fields must be absent on create.
+      // - update: admin-only flip from pending → approved | denied,
+      //   stamping themselves as reviewer.
+      // - delete: admin (cleanup) or requester (withdrawal).
+      match /joinRequests/{requesterUid} {
+        allow get: if isGroupAdmin(groupId) || isUser(requesterUid);
+        allow list: if isGroupAdmin(groupId);
+        allow create: if isUser(requesterUid)
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.groupId == groupId
+          && request.resource.data.status == 'pending'
+          && request.resource.data.inviteToken is string
+          && isClaimedValidInvite(groupId, request.resource.data.inviteToken)
+          && !('reviewedByUid' in request.resource.data)
+          && !('reviewedAt' in request.resource.data);
+        allow update: if isGroupAdmin(groupId)
+          && resource.data.status == 'pending'
+          && (request.resource.data.status == 'approved'
+              || request.resource.data.status == 'denied')
+          && request.resource.data.uid == resource.data.uid
+          && request.resource.data.groupId == resource.data.groupId
+          && request.resource.data.reviewedByUid == request.auth.uid;
+        allow delete: if isGroupAdmin(groupId) || isUser(requesterUid);
       }
     }
 
-    // Users list (manual management)
-    match /users/{userId} {
-      allow read, write: if request.auth != null;
+    // --- Group invites ---
+    //
+    // /invites/{token} where the token is a 96-bit random string acting
+    // as a bearer credential — anyone who has it can read and accept it.
+    // Listing is denied to prevent enumeration; creates are limited to
+    // group admins; updates are limited to flipping pending → accepted
+    // by the accepter, or pending → revoked by an admin (modeled as a
+    // delete for simplicity).
+    match /invites/{token} {
+      // Anyone signed in can fetch an invite if they know the token.
+      // Listing is denied so the collection isn't enumerable.
+      allow get: if isSignedIn();
+      allow list: if false;
+
+      // Creates must include a server-meaningful `expiresAt` timestamp so
+      // the update / self-add rules above have something to enforce. The
+      // client sets it to (now + 1 hour) in invites.ts; the rule below
+      // makes sure no caller skips it.
+      allow create: if isSignedIn()
+        && request.resource.data.groupId is string
+        && request.resource.data.invitedByUid == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time
+        && isGroupAdmin(request.resource.data.groupId);
+
+      // Two narrow update paths:
+      //   1. The recipient flipping pending → accepted with their own uid,
+      //      while the invite is within its TTL window.
+      //   2. (None other; admins revoke via delete.)
+      // The expiresAt comparison against `request.time` is what makes the
+      // documented 1-hour invite TTL a real server-side control rather
+      // than a client-side hint — see the matching check in
+      // `isSelfAddingViaInvite` above.
+      allow update: if isSignedIn()
+        && resource.data.status == 'pending'
+        && resource.data.expiresAt is timestamp
+        && resource.data.expiresAt > request.time
+        && request.resource.data.status == 'accepted'
+        && request.resource.data.acceptedByUid == request.auth.uid
+        && request.resource.data.groupId == resource.data.groupId
+        && request.resource.data.invitedByUid == resource.data.invitedByUid
+        && request.resource.data.expiresAt == resource.data.expiresAt;
+
+      // Admins of the inviting group can revoke (delete) at any time.
+      allow delete: if isSignedIn() && isGroupAdmin(resource.data.groupId);
     }
 
-    // Locations (new)
+    // --- Legacy /cases (removed) ---
+    //
+    // The pre-Phase-3 top-level `/cases` collection used to be readable by
+    // any signed-in user as a 30-day rollback window. That window has
+    // closed: legacy data has been deleted from production (see
+    // scripts/delete-legacy-cases.mjs) and the migration UI is now
+    // vestigial. Removing the rule block means anything not explicitly
+    // matched is denied, so reads and writes to `/cases/*` now fail.
+    //
+    // If you ever stand up another deployment that needs migration, fork
+    // the rule from git history rather than re-introducing the open read.
+
+    // --- Workspace-shared resources kept open to all signed-in users ---
+    //
+    // These collections are not yet group-scoped; the Phase 5/6 work that
+    // moves locations/tags/updates under groups/{groupId}/... will tighten
+    // them. For now any signed-in user (i.e. anyone past the auth gate)
+    // can read and write — same restriction the legacy app had.
     match /locations/{locId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isSignedIn();
     }
 
-    // Catch-all: allow signed-in users everywhere (prevents misses)
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+    match /tags/{tagId} {
+      allow read, write: if isSignedIn();
+      match /subtags/{subtagId} {
+        allow read, write: if isSignedIn();
+      }
     }
+
+    match /updates/{updateId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // No catch-all: anything not explicitly matched above is denied. This
+    // is the deliberate Phase 4 tightening — the previous catch-all was a
+    // safety net while the model was in flux. Everything we still want
+    // accessible has an explicit rule above.
   }
 }
