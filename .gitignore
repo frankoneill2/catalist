@@ -1,2 +1,12 @@
 node_modules
 notes.json
+
+# Local env overrides (never commit). The non-.local versions are committed
+# because Firebase web config isn't secret.
+.env.local
+.env.*.local
+
+# Local-only OS / tooling cruft
+.DS_Store
+.firebase/
+.claude/

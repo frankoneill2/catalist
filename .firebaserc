@@ -1,6 +1,6 @@
 {
   "projects": {
-    "default": "catalist-1"
+    "default": "catalist-1",
+    "dev": "catalist-dev"
   }
 }
-
