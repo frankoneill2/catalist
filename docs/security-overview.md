@@ -14,10 +14,10 @@ GCP project configuration.
 |---|---|
 | Authorisation | Server-side via Firestore rules — three collections still un-scoped |
 | Dependencies | Lean; 3 advisories, none reachable from the browser |
-| Secrets | Dev rotated off the shared fallback; **prod still on it, and the key is public either way** |
+| Secrets | KEK moved into Cloud KMS — key never reaches the browser (client deploy + migration pending) |
 | Input handling | Strong server-side validation; one live XSS; encryption fails open |
 | Authentication | **Mandatory** email verification + TOTP MFA; invite-only workspaces |
-| Backup & recovery | Delete protection on; manual exports working; **managed backups blocked on billing** |
+| Backup & recovery | **Resolved** — PITR, daily + weekly managed backups, delete protection, manual exports |
 
 ## 1. Authorisation — server-side
 
@@ -72,13 +72,31 @@ dev bundle. *Production is still on the fallback* — rotation is staged but
 requires a coordinated deploy (see
 [backup-and-recovery.md](backup-and-recovery.md#key-rotation)).
 
-Rotating does **not** make the key secret. Any `VITE_` variable is inlined
-into the public bundle by Vite, so whatever seed is set is downloadable by
-anyone who opens the site. Rotation buys environment separation, removes a
-shared well-known default, and proves the rotation machinery works — it does
-not deliver confidentiality. Only moving the KEK behind Cloud KMS and an
-authenticated Cloud Function (Phase 7) does that, and that in turn needs
-billing enabled.
+**Resolved by moving to Cloud KMS (2026-09-20).** Rotating the seed was never
+going to fix this — any `VITE_` variable is inlined into the public bundle, so
+whatever value is set is downloadable. The fix was to remove the browser from
+the equation entirely.
+
+The KEK is now a Cloud KMS key (`europe/catalist/field-kek`) that never leaves
+Google. The client calls `unwrapGroupDek`, which verifies membership
+server-side and asks KMS to decrypt the group's wrapped key. KMS access is
+granted to the functions service account alone, scoped to that one key, and
+every unwrap is recorded in Cloud Audit Logs.
+
+What that buys: a database-only breach — stolen backup, rules bug,
+Firestore-side incident — now yields ciphertext and nothing usable. That is
+exactly the threat model `envelope.ts` claims, and it now holds. The key can
+also be disabled to revoke access to all content at once.
+
+What it does not buy: the *data* key still reaches the browser of an
+authenticated member, because the client decrypts. A compromised member
+session still exposes that group's patients. Closing that needs server-side
+decryption on every read, or true E2EE (Path B, deliberately not chosen).
+
+**Status:** KMS key, functions and IAM are live. The client that uses them is
+built but **not yet deployed**, and no group has been migrated — so production
+is still reading v1 wrapping under the public fallback until those two steps
+run. See [backup-and-recovery.md](backup-and-recovery.md#kms-migration-status-2026-09-20).
 
 Also unset: `VITE_SENTRY_DSN` (error tracking dormant) and
 `VITE_APP_CHECK_RECAPTCHA_KEY` (App Check not enforcing).
@@ -155,11 +173,19 @@ multi-region.
 
 ## Priorities
 
-1. Enable Firestore PITR, a daily backup schedule and delete protection —
-   then rehearse one restore into `catalist-dev`.
-2. Set a distinct high-entropy `VITE_FIELD_KEK_SEED` per environment.
-3. Group-scope `/updates`, `/locations`, `/tags` (the write side especially).
-4. Fix the assignee-name XSS; add a shared `escapeHtml()`.
-5. Set `VITE_SENTRY_DSN`.
-6. Deploy the Cloud Functions, or tighten delete rules to admins.
-7. Move the KEK to Cloud KMS (Phase 7).
+1. ~~Enable Firestore PITR, backup schedules and delete protection~~ **Done
+   2026-09-20.** PITR (7 days), daily (7d) and weekly (14w) backups, delete
+   protection on both projects, plus a manual export script.
+2. ~~Rotate `VITE_FIELD_KEK_SEED`~~ **Superseded** — moved to Cloud KMS
+   instead, which is the real fix rather than a different public string.
+3. **Finish the KMS cutover**: deploy the client, then run the migration.
+   Key, functions and IAM are already live.
+4. Group-scope `/updates`, `/locations`, `/tags` (the write side especially).
+   Needs a client change too — the deployed client writes to the top-level
+   paths, so tightening the rules alone would break it.
+5. Fix the assignee-name XSS; add a shared `escapeHtml()`.
+6. Set `VITE_SENTRY_DSN` — still blank, so production failures are invisible.
+7. Wire the client to `deleteCase` / `removeMember` now that they are
+   deployed, or tighten the delete rules to admins.
+8. Decide on the retained legacy `/cases` data (retention question).
+9. Enable App Check — still unset.

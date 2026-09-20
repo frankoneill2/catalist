@@ -5,39 +5,28 @@ why this matters.
 
 ## Where things stand
 
+Billing was enabled on `catalist-1` on 2026-09-20, which unblocked all of it.
+
 | Control | Prod (`catalist-1`) | Dev (`catalist-dev`) |
 |---|---|---|
 | Delete protection | **Enabled** | **Enabled** |
-| Point-in-time recovery | Blocked — needs billing | Not needed |
-| Scheduled backups | Blocked — needs billing | Not needed |
+| Point-in-time recovery | **Enabled** — 7-day window | Not enabled (free tier) |
+| Daily backups | **Enabled** — 7-day retention | — |
+| Weekly backups | **Enabled** — 14-week retention, Sundays | — |
 | Manual JSON export | `npm run backup:prod` | `npm run backup:dev` |
 
-### The billing blocker
-
-Firestore's managed backup features — point-in-time recovery and scheduled
-exports — require billing to be enabled on the project. `catalist-1` is
-currently on the free tier:
-
-```
-$ gcloud billing projects describe catalist-1
-billingEnabled: False
-```
-
-This is also why the Cloud Functions have never been deployed.
-
-**To unblock**, enable billing on `catalist-1` in the Google Cloud console,
-then run:
+Restore from a managed backup or a point in time:
 
 ```bash
-gcloud firestore databases update --database='(default)' --project=catalist-1 --enable-pitr
-gcloud firestore backups schedules create --database='(default)' --project=catalist-1 \
-  --recurrence=daily --retention=7d
-gcloud firestore backups schedules create --database='(default)' --project=catalist-1 \
-  --recurrence=weekly --retention=14w --day-of-week=SUN
+gcloud firestore backups list --project=catalist-1
+# restore into a NEW database, never over the live one
+gcloud firestore databases restore --source-backup=<backup> \
+  --destination-database=restore-test --project=catalist-1
 ```
 
-Firestore's free-tier quota is generous and the database is small (~1,100
-documents), so expect a very small monthly bill rather than a step change.
+`catalist-dev` is still on the free tier. It will need billing before the
+KMS work can be exercised there, since Cloud KMS and Cloud Functions both
+require it.
 
 ## The interim backup
 
@@ -107,3 +96,35 @@ Rotation history:
 |---|---|---|---|
 | 2026-09-20 | `catalist-dev` | envelope.ts public fallback | `.env.development.local` |
 | — | `catalist-1` | envelope.ts public fallback | staged, not yet applied |
+
+## KMS migration status (2026-09-20)
+
+The KEK has moved from the browser into Cloud KMS. Sequencing is deliberate
+so no session ever loses decryption:
+
+| Step | State |
+|---|---|
+| 1. KMS key `europe/catalist/field-kek` created | **Done** |
+| 2. Functions `unwrapGroupDek` / `wrapGroupDek` deployed to prod | **Done** |
+| 3. KMS IAM granted to the functions service account | **Done** |
+| 4. Client understands both v1 and v2 wrapping | **Built, NOT deployed** |
+| 5. Migrate prod group DEKs v1 → v2 | **Not run** |
+| 6. Delete the v1 path and `VITE_FIELD_KEK_SEED` | Not started |
+
+**Steps 4 and 5 must happen in that order**, and step 5 must not run first —
+a browser on the old bundle cannot unwrap a v2 DEK.
+
+```bash
+npm run deploy:prod                                              # step 4
+node scripts/migrate-kek-to-kms.mjs --project catalist-1         # dry run
+node scripts/migrate-kek-to-kms.mjs --project catalist-1 --apply # step 5
+```
+
+If step 5 goes wrong, back it out — the DEK is recoverable either way:
+
+```bash
+node scripts/migrate-kek-to-kms.mjs --project catalist-1 --rollback --apply
+```
+
+The production backup taken on 2026-09-20 also holds every `wrappedDek` in
+its original v1 form, so the data keys survive even total loss of the KMS key.

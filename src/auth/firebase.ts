@@ -6,6 +6,7 @@
 // with separate, unsynchronised auth instances.
 
 import { initializeApp, type FirebaseApp } from 'firebase/app';
+import { getFunctions, type Functions } from 'firebase/functions';
 import {
   getAuth,
   setPersistence,
@@ -64,6 +65,10 @@ if (appCheckKey) {
 
 export const auth: Auth = getAuth(app);
 export const db: Firestore = getFirestore(app);
+
+// Callable Cloud Functions. The region must match `setGlobalOptions` in
+// functions/src/index.ts — a mismatch fails at call time, not build time.
+export const functions: Functions = getFunctions(app, 'europe-west1');
 
 // Persistence is set later by the auth gate based on the "shared device"
 // toggle. Default to local (survives browser restarts) until told otherwise.

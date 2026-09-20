@@ -16,15 +16,25 @@
 //     Cloud KMS. A Cloud Function exposes wrap/unwrap as authenticated calls.
 //     The browser never sees the KEK material — it only ever sees wrapped
 //     DEKs and plaintext content.
-//   - **Current state:** the KEK is derived from `VITE_FIELD_KEK_SEED`, an
-//     environment variable shipped in the bundle. This is a deliberate
-//     stepping stone: the architecture is in place (per-group DEK, versioned
-//     envelope, KEK isolation), and swapping to KMS later means replacing
-//     `getKek` / `wrapDek` / `unwrapDek` only. Until that swap, an attacker
-//     who can read the JS bundle can also decrypt content — so the threat
-//     model the current setup defends against is database-only breaches
-//     (stolen backup, misconfigured rules export, Firestore-side incident),
-//     not full-stack breaches.
+//   - **Current state (since 2026-09-20):** the KEK lives in Cloud KMS. The
+//     browser calls the `unwrapGroupDek` Cloud Function, which verifies
+//     membership server-side and asks KMS to decrypt. KEK material never
+//     reaches the client, so a database-only breach (stolen backup, rules
+//     bug, Firestore-side incident) yields ciphertext and nothing else.
+//     Every unwrap is recorded in Cloud Audit Logs and the key can be
+//     disabled to revoke access to all content at once.
+//
+//     The DEK still reaches the browser of an authenticated member, because
+//     the client does the decryption. A compromised member session still
+//     exposes that group's data; closing that needs server-side decryption
+//     on every read or true E2EE (Path B, deliberately not chosen).
+//
+//   - **Legacy v1 wrapping:** before the above, the KEK was derived in the
+//     browser from `VITE_FIELD_KEK_SEED`, which Vite inlines into the public
+//     bundle — so it protected nothing against anyone who read the JS. That
+//     path is retained ONLY to unwrap groups that have not yet been migrated
+//     (see scripts/migrate-kek-to-kms.mjs). Once every group reports v2,
+//     delete `getKek`, `FALLBACK_SEED`, `unwrapLocalV1` and the env var.
 //
 // Versioned ciphertext format:
 //   Encrypted fields are stored as a single base64url-encoded JSON string:
@@ -38,15 +48,19 @@
 //   stronger algorithms without losing access to data encrypted under v1.
 //   `decryptField` dispatches on `v`. New writes always use the latest version.
 
-import {
-  doc,
-  getDoc,
-  setDoc,
-  serverTimestamp,
-} from 'firebase/firestore';
-import { db } from './firebase';
+import { doc, getDoc } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from './firebase';
 
+// Version of the *field* ciphertext format. Changing this invalidates every
+// encrypted field, so it is deliberately independent of the wrapping version.
 const ENVELOPE_VERSION = 1;
+
+// Version of the *wrappedDek* stored on the group document.
+//   v1 — AES-GCM under a PBKDF2 key derived in this bundle. Legacy.
+//   v2 — Cloud KMS ciphertext; unwrapped only by the Cloud Function.
+const WRAPPED_DEK_V1_LOCAL = 1;
+const WRAPPED_DEK_V2_KMS = 2;
 
 // 32 bytes of seed. Public-but-not-trivially-guessable; used only when the
 // env var is not set, so that a fresh dev clone boots without manual setup.
@@ -74,6 +88,8 @@ function b64ToBytes(b64: string): Uint8Array {
   return out;
 }
 
+// LEGACY (v1 only). Derives the old browser-side KEK. Delete once every
+// group has been migrated to KMS wrapping.
 async function getKek(): Promise<CryptoKey> {
   if (cachedKek) return cachedKek;
   const enc = new TextEncoder();
@@ -99,9 +115,29 @@ async function getKek(): Promise<CryptoKey> {
 
 interface WrappedDek {
   v: number;
-  n: string; // base64 12-byte nonce
-  c: string; // base64 wrapped DEK bytes (raw + auth tag)
-  k: string; // a short id for this DEK so we can rotate later
+  n?: string; // base64 12-byte nonce — v1 only; KMS manages its own
+  c: string;  // base64 wrapped DEK bytes
+  k: string;  // a short id for this DEK so we can rotate later
+}
+
+const callUnwrapGroupDek = httpsCallable<{ groupId: string }, { dekB64: string; dekId: string }>(
+  functions,
+  'unwrapGroupDek',
+);
+
+const callWrapGroupDek = httpsCallable<{ groupId: string; dekB64: string; dekId: string }, { ok: boolean }>(
+  functions,
+  'wrapGroupDek',
+);
+
+function importDek(raw: ArrayBuffer | Uint8Array): Promise<CryptoKey> {
+  return crypto.subtle.importKey(
+    'raw',
+    raw as unknown as BufferSource,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
 }
 
 async function generateDek(): Promise<{ key: CryptoKey; id: string }> {
@@ -114,42 +150,41 @@ async function generateDek(): Promise<{ key: CryptoKey; id: string }> {
   return { key, id: bufToB64(idBytes).replace(/[+/=]/g, '').slice(0, 8) };
 }
 
-async function wrapDek(key: CryptoKey, id: string): Promise<WrappedDek> {
-  const kek = await getKek();
+// Wrapping now happens server-side: the client hands the raw DEK to the
+// `wrapGroupDek` function, which encrypts it with the KMS key and writes it
+// onto the group document. The function refuses to overwrite an existing
+// wrappedDek, which is what stops a client orphaning encrypted content.
+async function wrapDekViaKms(key: CryptoKey, id: string, groupId: string): Promise<void> {
   const raw = await crypto.subtle.exportKey('raw', key);
-  const nonce = crypto.getRandomValues(new Uint8Array(12));
-  const cipher = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: nonce as unknown as BufferSource },
-    kek,
-    raw
-  );
-  return {
-    v: ENVELOPE_VERSION,
-    n: bufToB64(nonce),
-    c: bufToB64(cipher),
-    k: id,
-  };
+  const dekB64 = bufToB64(raw);
+  await callWrapGroupDek({ groupId, dekB64, dekId: id });
 }
 
-async function unwrapDek(w: WrappedDek): Promise<CryptoKey> {
-  if (w.v !== ENVELOPE_VERSION) {
-    throw new Error(`unsupported wrapped DEK version: ${w.v}`);
-  }
+// LEGACY (v1 only). Unwraps a DEK that was wrapped by the old browser-side
+// KEK. Delete along with getKek once every group reports v2.
+async function unwrapLocalV1(w: WrappedDek): Promise<CryptoKey> {
   const kek = await getKek();
-  const nonce = b64ToBytes(w.n);
+  const nonce = b64ToBytes(String(w.n));
   const cipher = b64ToBytes(w.c);
   const raw = await crypto.subtle.decrypt(
     { name: 'AES-GCM', iv: nonce as unknown as BufferSource },
     kek,
     cipher as unknown as BufferSource
   );
-  return crypto.subtle.importKey(
-    'raw',
-    raw,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt']
-  );
+  return importDek(raw);
+}
+
+// Dispatches on the wrapping version so a half-migrated estate keeps working:
+// v1 groups unwrap in the browser, v2 groups go through KMS.
+async function unwrapDek(w: WrappedDek, groupId: string): Promise<CryptoKey> {
+  if (w.v === WRAPPED_DEK_V2_KMS) {
+    const res = await callUnwrapGroupDek({ groupId });
+    return importDek(b64ToBytes(res.data.dekB64));
+  }
+  if (w.v === WRAPPED_DEK_V1_LOCAL) {
+    return unwrapLocalV1(w);
+  }
+  throw new Error(`unsupported wrapped DEK version: ${w.v}`);
 }
 
 // Activate the group's DEK: fetch the wrappedDek from the group doc; if
@@ -169,7 +204,7 @@ export async function activateGroup(groupId: string): Promise<void> {
   }
   if (wrapped) {
     try {
-      currentDek = await unwrapDek(wrapped);
+      currentDek = await unwrapDek(wrapped, groupId);
       currentDekId = wrapped.k;
       activeGroupId = groupId;
       return;
@@ -189,16 +224,10 @@ export async function activateGroup(groupId: string): Promise<void> {
   // an admin must open the app once to seed the DEK before encrypted reads
   // become available to other members.
   const fresh = await generateDek();
-  const newWrapped = await wrapDek(fresh.key, fresh.id);
   try {
-    await setDoc(
-      ref,
-      {
-        wrappedDek: newWrapped,
-        wrappedDekUpdatedAt: serverTimestamp(),
-      },
-      { merge: true }
-    );
+    // The function writes the group document itself, so the client never
+    // needs write access to wrappedDek — and cannot clobber an existing one.
+    await wrapDekViaKms(fresh.key, fresh.id, groupId);
   } catch (err) {
     console.warn('[envelope] could not persist wrappedDek (likely a non-admin opening a group that has none yet); falling back to plaintext writes for now', err);
     // Don't activate — the next admin to open will seed.
