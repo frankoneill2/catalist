@@ -10,3 +10,6 @@ notes.json
 .DS_Store
 .firebase/
 .claude/
+
+# Firestore exports — real clinical data, never commit
+backups/

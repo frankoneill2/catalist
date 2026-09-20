@@ -14,10 +14,10 @@ GCP project configuration.
 |---|---|
 | Authorisation | Server-side via Firestore rules — three collections still un-scoped |
 | Dependencies | Lean; 3 advisories, none reachable from the browser |
-| Secrets | **Encryption key is a hardcoded fallback, published in the bundle** |
+| Secrets | Dev rotated off the shared fallback; **prod still on it, and the key is public either way** |
 | Input handling | Strong server-side validation; one live XSS; encryption fails open |
 | Authentication | **Mandatory** email verification + TOTP MFA; invite-only workspaces |
-| Backup & recovery | **None exist** — no backups, no PITR, no delete protection |
+| Backup & recovery | Delete protection on; manual exports working; **managed backups blocked on billing** |
 
 ## 1. Authorisation — server-side
 
@@ -60,13 +60,25 @@ Build-time environment variables; no secrets manager. `.env.development` and
 design, and the key was rotated and restricted by referrer/API after the
 February 2026 exposure notice. Real secrets belong in gitignored `.env.*.local`.
 
-**Critical:** `VITE_FIELD_KEK_SEED` is blank in `.env.production`, so
-`envelope.ts` falls back to the literal
-`'catalist-dev-kek-fallback-not-for-production-use'` — present in the live
-bundle, and shared with dev. Note that *any* `VITE_` variable is inlined into
-the client bundle, so a browser-held KEK cannot be confidential; filling the
-variable in separates environments but does not make the key private. The real
-fix is the planned Cloud KMS + Cloud Function wrap/unwrap (Phase 7).
+**Critical.** `VITE_FIELD_KEK_SEED` was blank in both environments, so
+`envelope.ts` fell back to the literal
+`'catalist-dev-kek-fallback-not-for-production-use'`. This was confirmed
+empirically, not inferred: the dev KEK rotation on 2026-09-20 successfully
+unwrapped the live DEK using that fallback.
+
+*Dev* has since been rotated onto a distinct 32-byte random seed in
+`.env.development.local` and redeployed; the fallback no longer appears in the
+dev bundle. *Production is still on the fallback* — rotation is staged but
+requires a coordinated deploy (see
+[backup-and-recovery.md](backup-and-recovery.md#key-rotation)).
+
+Rotating does **not** make the key secret. Any `VITE_` variable is inlined
+into the public bundle by Vite, so whatever seed is set is downloadable by
+anyone who opens the site. Rotation buys environment separation, removes a
+shared well-known default, and proves the rotation machinery works — it does
+not deliver confidentiality. Only moving the KEK behind Cloud KMS and an
+authenticated Cloud Function (Phase 7) does that, and that in turn needs
+billing enabled.
 
 Also unset: `VITE_SENTRY_DSN` (error tracking dormant) and
 `VITE_APP_CHECK_RECAPTCHA_KEY` (App Check not enforcing).
@@ -101,17 +113,39 @@ approval, and an append-only per-user auth event log.
 
 ## 6. Backup and recovery
 
-**None.** Verified on `catalist-1`:
+Was: nothing at all. Now: partially addressed, with one blocker outside the
+codebase. Full detail and runbook in
+[backup-and-recovery.md](backup-and-recovery.md).
 
-```
-pointInTimeRecoveryEnablement: POINT_IN_TIME_RECOVERY_DISABLED
-deleteProtectionState:         DELETE_PROTECTION_DISABLED
-backups schedules list:        Listed 0 items.
-backups list:                  Listed 0 items.
-```
+- **Delete protection: enabled** on both projects (2026-09-20). The database
+  can no longer be deleted by accident.
+- **Point-in-time recovery and scheduled backups: still absent**, because they
+  require billing and `catalist-1` is on the free tier
+  (`gcloud billing projects describe catalist-1` → `billingEnabled: False`).
+  This is also why the Cloud Functions in Q1 have never been deployed.
+- **Manual JSON export: working.** `npm run backup:prod` walks every
+  collection and subcollection over the REST API. First production backup taken
+  2026-09-20 — 1,120 documents. `backups/` is gitignored.
+- **Rehearsed** 2026-09-20 against `catalist-dev`, including a full KEK
+  rotation round-trip.
 
-`security-rebuild-plan.md` specifies scheduled exports with a rehearsed
-restore; none was implemented. Nothing has been tested because nothing exists.
+The export is a snapshot taken by hand, not a schedule. Enabling billing and
+turning on PITR is still the real fix.
+
+### Legacy data still in production
+
+The export surfaced something the rules comment gets wrong. `firestore.rules`
+states that legacy top-level data "has been deleted from production". It has
+not. Production still holds **73 top-level `cases`** with 203 tasks, 32 ward
+notes and 5 notes, plus 535 `updates`. The rules deny all access, so the app
+cannot reach it — but the documents exist, and they are encrypted under the
+retired shared-passphrase scheme (12-byte `iv` arrays), so nothing in the
+current app can decrypt them either.
+
+That is retained patient data that is unreachable, undecryptable and
+undocumented — a GDPR retention question rather than an access-control one.
+Decide deliberately whether to delete it (`scripts/delete-legacy-cases.mjs`
+exists) or to record why it is kept.
 
 The *application* is recoverable — Firebase Hosting keeps prior releases, and
 source is tagged (`archive/*`, `prod/D70QT7Ok`). Patient data is not.

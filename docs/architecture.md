@@ -27,8 +27,16 @@ npm run build && ls dist/assets/
 ```
 
 The hashes should match. As of the `prod/D70QT7Ok` tag they do, byte for byte
-(`sha256 c44793b2…7aea6`). If they ever diverge again, something was deployed
-from an uncommitted tree — which is the failure this whole document describes.
+(`sha256 c44793b2…7aea6`). If they ever diverge, something was deployed from an
+uncommitted tree — which is the failure this whole document describes.
+
+**One expected exception.** If `.env.production.local` exists on your machine,
+Vite bakes its `VITE_FIELD_KEK_SEED` into the build and the hash will
+legitimately differ from the deployed bundle — that file holds the rotated
+encryption key, which production has not moved to yet. To reproduce the
+deployed artifact exactly, build with that file temporarily renamed. See
+[backup-and-recovery.md](backup-and-recovery.md#key-rotation) for where that
+rotation stands.
 
 ## The two-layer design
 

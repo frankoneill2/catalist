@@ -6,6 +6,8 @@ This folder is the canonical reference for how the project is built, hosted, and
 
 - **[architecture.md](architecture.md)** — **Start here.** What is actually deployed, how the React auth layer and the vanilla clinical UI share a page, and how to verify the running bundle against this tree.
 
+- **[backup-and-recovery.md](backup-and-recovery.md)** — What backups exist, the billing blocker on managed backups, the manual export runbook, and how to rotate the encryption key without data loss.
+
 - **[security-overview.md](security-overview.md)** — Current security posture: authorisation, dependencies, secrets, input handling, authentication, backup and recovery.
 
 - **[security-rebuild-plan.md](security-rebuild-plan.md)** — The multi-phase plan that took the app from the shared-passphrase model to per-user accounts, groups, encrypted data, audit logging, and GDPR posture. Includes the strategic decisions (server-side encryption vs E2EE, jurisdiction, etc.) and the supporting infrastructure work.

@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "deploy:dev": "npm run build:dev && firebase deploy --only hosting --project catalist-dev",
     "deploy:prod": "npm run build && firebase deploy --only hosting --project catalist-1",
-    "rules:check": "bash scripts/check-rules-parity.sh"
+    "rules:check": "bash scripts/check-rules-parity.sh",
+    "backup:prod": "node scripts/backup-firestore.mjs --project catalist-1 --out backups",
+    "backup:dev": "node scripts/backup-firestore.mjs --project catalist-dev --out backups"
   },
   "dependencies": {
     "@sentry/browser": "^10.51.0",
