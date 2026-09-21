@@ -14,7 +14,7 @@ GCP project configuration.
 |---|---|
 | Authorisation | Server-side via Firestore rules — three collections still un-scoped |
 | Dependencies | Lean; 3 advisories, none reachable from the browser |
-| Secrets | KEK moved into Cloud KMS — key never reaches the browser (client deploy + migration pending) |
+| Secrets | **Resolved** — KEK lives in Cloud KMS and never reaches the browser |
 | Input handling | Strong server-side validation; one live XSS; encryption fails open |
 | Authentication | **Mandatory** email verification + TOTP MFA; invite-only workspaces |
 | Backup & recovery | **Resolved** — PITR, daily + weekly managed backups, delete protection, manual exports |
@@ -93,10 +93,11 @@ authenticated member, because the client decrypts. A compromised member
 session still exposes that group's patients. Closing that needs server-side
 decryption on every read, or true E2EE (Path B, deliberately not chosen).
 
-**Status:** KMS key, functions and IAM are live. The client that uses them is
-built but **not yet deployed**, and no group has been migrated — so production
-is still reading v1 wrapping under the public fallback until those two steps
-run. See [backup-and-recovery.md](backup-and-recovery.md#kms-migration-status-2026-09-20).
+**Status: live as of 2026-09-21.** The client is deployed
+(`index-BEKj6mTG.js`, tag `prod/BEKj6mTG`) and the production group's key is
+wrapped by KMS. The legacy v1 path is retained only because `catalist-dev` is
+still free-tier and has no KMS; see
+[backup-and-recovery.md](backup-and-recovery.md#kms-migration-status-2026-09-20).
 
 Also unset: `VITE_SENTRY_DSN` (error tracking dormant) and
 `VITE_APP_CHECK_RECAPTCHA_KEY` (App Check not enforcing).
@@ -178,8 +179,9 @@ multi-region.
    protection on both projects, plus a manual export script.
 2. ~~Rotate `VITE_FIELD_KEK_SEED`~~ **Superseded** — moved to Cloud KMS
    instead, which is the real fix rather than a different public string.
-3. **Finish the KMS cutover**: deploy the client, then run the migration.
-   Key, functions and IAM are already live.
+3. ~~Finish the KMS cutover~~ **Done 2026-09-21.** Remaining tail: enable
+   billing on `catalist-dev`, migrate it, then delete the v1 path and
+   `VITE_FIELD_KEK_SEED` so the legacy seed leaves the bundle entirely.
 4. Group-scope `/updates`, `/locations`, `/tags` (the write side especially).
    Needs a client change too — the deployed client writes to the top-level
    paths, so tightening the rules alone would break it.

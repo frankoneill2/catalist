@@ -107,18 +107,22 @@ so no session ever loses decryption:
 | 1. KMS key `europe/catalist/field-kek` created | **Done** |
 | 2. Functions `unwrapGroupDek` / `wrapGroupDek` deployed to prod | **Done** |
 | 3. KMS IAM granted to the functions service account | **Done** |
-| 4. Client understands both v1 and v2 wrapping | **Built, NOT deployed** |
-| 5. Migrate prod group DEKs v1 → v2 | **Not run** |
-| 6. Delete the v1 path and `VITE_FIELD_KEK_SEED` | Not started |
+| 4. Client understanding both v1 and v2 deployed | **Done** 2026-09-21 |
+| 5. Prod group DEKs migrated v1 → v2 | **Done** 2026-09-21 |
+| 6. Delete the v1 path and `VITE_FIELD_KEK_SEED` | **Blocked on dev** |
 
-**Steps 4 and 5 must happen in that order**, and step 5 must not run first —
-a browser on the old bundle cannot unwrap a v2 DEK.
+Production runs `index-BEKj6mTG.js` (tag `prod/BEKj6mTG`), byte-identical to
+this repo's `dist/`. The one production group is wrapped by KMS.
 
-```bash
-npm run deploy:prod                                              # step 4
-node scripts/migrate-kek-to-kms.mjs --project catalist-1         # dry run
-node scripts/migrate-kek-to-kms.mjs --project catalist-1 --apply # step 5
-```
+Step 6 is deliberately not done. `catalist-dev` is still on the free tier, so
+it has no KMS and its group is still v1 under a local seed. Removing the v1
+path now would break dev. Enable billing on `catalist-dev`, migrate it the
+same way, then delete `getKek`, `unwrapLocalV1`, `FALLBACK_SEED` and the env
+var from `src/auth/envelope.ts`.
+
+Until then the legacy fallback seed is still present in the production bundle.
+It is inert there — the only prod group is v2, and new groups bootstrap
+straight to v2 via `wrapGroupDek` — but it should not linger.
 
 If step 5 goes wrong, back it out — the DEK is recoverable either way:
 
