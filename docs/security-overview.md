@@ -15,7 +15,7 @@ GCP project configuration.
 | Authorisation | Server-side via Firestore rules — three collections still un-scoped |
 | Dependencies | Lean; 3 advisories, none reachable from the browser |
 | Secrets | **Resolved** — KEK lives in Cloud KMS and never reaches the browser |
-| Input handling | Strong server-side validation; one live XSS; encryption fails open |
+| Input handling | Strong server-side validation; output escaped; failures now reported |
 | Authentication | **Mandatory** email verification + TOTP MFA; invite-only workspaces |
 | Backup & recovery | **Resolved** — PITR, daily + weekly managed backups, delete protection, manual exports |
 
@@ -106,16 +106,48 @@ Also unset: `VITE_SENTRY_DSN` (error tracking dormant) and
 
 Rules validate the *shape* of sensitive writes, not just the writer:
 `membershipUnchanged`, `adminAdditiveOnly`, `isSelfLeaving`,
-`envelopeKeyImmutable`, `isClaimedValidInvite`, and uid-tagged audit events.
+`envelopeKeyImmutable`, `isClaimedValidInvite` (which re-fetches the invite
+server-side rather than trusting a claim), and uid-tagged audit events. The
+Cloud Functions repeat the membership and email-verification checks, since
+rules cannot gate a function call.
 
-Client-side: 380 `textContent` against 60 `innerHTML`, and no escaping helper
-exists anywhere. `src/script.js:6982-6984` interpolates a user-controlled
-display name into `innerHTML` via the assignee filter — a **stored XSS**
-exploitable by one workspace member against another.
+**Sanitisation — fixed 2026-09-21.** An audit of every HTML sink (60
+`innerHTML` assignments, 3 `document.write` calls, and the React layer) found
+two that took user data: the Updates user filter, which interpolated a
+username into both an attribute and element text, and the task list header,
+which interpolated a colleague's display name. Both now build DOM nodes with
+`textContent`. A shared `escapeHtml()` exists for the cases where a string of
+HTML is unavoidable — its absence was what made this a category rather than a
+one-off. Ward notes and print windows were already safe: they build DOM with
+`textContent` and serialise.
 
-Two fail-open paths: `encryptText()` writes **plaintext** to Firestore if
-encryption throws (documented as intentional so edits aren't lost), and
-`audit.ts` swallows write failures to `console.warn`. Both are silent.
+Severity note, because the first assessment overstated this: the live CSP
+carries no `'unsafe-inline'` on `script-src`, so inline handlers were already
+refused execution. These were real bugs sitting behind a working second layer,
+not open script execution.
+
+The five remaining interpolating sinks are closed sets — a hardcoded label
+map, the platform modifier key, and the Carbon icon helper, which looks up a
+fixed table and returns `''` for anything unknown.
+
+**Error handling — improved 2026-09-21.** Three silent paths were made loud:
+
+- `encryptText` falling back to a plaintext write was a `console.warn`. It is
+  now an error, a Sentry report and a user-facing toast. The fail-open
+  behaviour is deliberate — losing a ward note mid-round is a real clinical
+  harm — but it is no longer invisible, and affected records stay identifiable
+  by their empty `iv`.
+- `audit.ts` and `dataAudit.ts` swallowed write failures; both now report.
+- `MfaEnroll` asserted TOTP was disabled on the project for *any* enrolment
+  failure, which was usually wrong and misdirected a real investigation in
+  June. It now leads with the mapped error.
+
+**Validation.** Clinical text is bounded at `encryptText`, the single
+chokepoint every field passes through: 100,000 characters against a largest
+real document of ~18KB, capped rather than refused, with the user told and the
+event reported. Firestore's own 1MB document limit remains the hard backstop.
+
+Note that all of the above reporting is inert until `VITE_SENTRY_DSN` is set.
 
 ## 5. Authentication
 
@@ -185,14 +217,12 @@ Reassessed 2026-09-21.
 3. **Group-scope `/updates`, `/locations`, `/tags`.** Cross-workspace read and
    write. Needs rules + client + migration together — the deployed client
    writes to the top-level paths.
-3. **Fix the assignee-name XSS; add a shared `escapeHtml()`.**
-4. **Finish the KMS tail.** Billing on `catalist-dev`, migrate it, then delete
+3. **Finish the KMS tail.** Billing on `catalist-dev`, migrate it, then delete
    `getKek` / `unwrapLocalV1` / `FALLBACK_SEED` / `VITE_FIELD_KEK_SEED`.
-5. **Wire or gate the Cloud Functions.** Deployed but unused; any member can
+4. **Wire or gate the Cloud Functions.** Deployed but unused; any member can
    still delete a case.
-6. **Make the plaintext fallback loud** rather than a `console.warn`.
-7. **Rehearse a managed-backup restore** into a scratch database.
-8. Loose ends: the retained legacy `/cases` data, App Check, `npm audit fix`.
+5. **Rehearse a managed-backup restore** into a scratch database.
+6. Loose ends: the retained legacy `/cases` data, App Check, `npm audit fix`.
 
 ### Resolved
 
@@ -203,6 +233,8 @@ Reassessed 2026-09-21.
   every `VITE_` variable into the public bundle.
 - ~~Cloud Functions never deployed~~ — all four live in europe-west1, though
   two remain unwired (see 6).
+- ~~Output escaping / silent failures~~ — two XSS sinks fixed, `escapeHtml()`
+  added, encryption and audit failures now reported, input bounded. 2026-09-21.
 - ~~Rules drift~~ — repo, dev and prod byte-identical; `npm run rules:check`.
 - ~~KMS path unverified~~ — confirmed 2026-09-21: six successful
   `unwrapGroupDek` unwraps logged in production, no errors. A real signed-in
