@@ -174,27 +174,25 @@ multi-region.
 
 ## Priorities
 
-Reassessed 2026-09-21. Full write-up with evidence:
-https://claude.ai/artifact/Uxjk3anGWYfnwADdJG3ywS
+Reassessed 2026-09-21.
 
-1. **Confirm decryption works for a real signed-in session.** The KMS path has
-   never run for a real user — `unwrapGroupDek` has logged no successful
-   unwrap. If it fails, case titles render as `…` and `encryptText()` silently
-   writes plaintext. Back out with
-   `node scripts/migrate-kek-to-kms.mjs --project catalist-1 --rollback --apply`.
-2. **Set `VITE_SENTRY_DSN`.** Already wired, needs one value. It is what would
+- Technical posture, with evidence: https://claude.ai/artifact/Uxjk3anGWYfnwADdJG3ywS
+- Plain-language explanation of the whole model, and how to answer a security
+  reviewer: https://claude.ai/artifact/7iydhcSxF4E9S8zVCobhTi
+
+1. **Set `VITE_SENTRY_DSN`.** Already wired, needs one value. It is what would
    surface a KMS failure, an audit-write failure, or the plaintext fallback.
 3. **Group-scope `/updates`, `/locations`, `/tags`.** Cross-workspace read and
    write. Needs rules + client + migration together — the deployed client
    writes to the top-level paths.
-4. **Fix the assignee-name XSS; add a shared `escapeHtml()`.**
-5. **Finish the KMS tail.** Billing on `catalist-dev`, migrate it, then delete
+3. **Fix the assignee-name XSS; add a shared `escapeHtml()`.**
+4. **Finish the KMS tail.** Billing on `catalist-dev`, migrate it, then delete
    `getKek` / `unwrapLocalV1` / `FALLBACK_SEED` / `VITE_FIELD_KEK_SEED`.
-6. **Wire or gate the Cloud Functions.** Deployed but unused; any member can
+5. **Wire or gate the Cloud Functions.** Deployed but unused; any member can
    still delete a case.
-7. **Make the plaintext fallback loud** rather than a `console.warn`.
-8. **Rehearse a managed-backup restore** into a scratch database.
-9. Loose ends: the retained legacy `/cases` data, App Check, `npm audit fix`.
+6. **Make the plaintext fallback loud** rather than a `console.warn`.
+7. **Rehearse a managed-backup restore** into a scratch database.
+8. Loose ends: the retained legacy `/cases` data, App Check, `npm audit fix`.
 
 ### Resolved
 
@@ -206,3 +204,6 @@ https://claude.ai/artifact/Uxjk3anGWYfnwADdJG3ywS
 - ~~Cloud Functions never deployed~~ — all four live in europe-west1, though
   two remain unwired (see 6).
 - ~~Rules drift~~ — repo, dev and prod byte-identical; `npm run rules:check`.
+- ~~KMS path unverified~~ — confirmed 2026-09-21: six successful
+  `unwrapGroupDek` unwraps logged in production, no errors. A real signed-in
+  session decrypts through Cloud KMS end to end.
