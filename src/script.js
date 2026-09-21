@@ -134,6 +134,37 @@ let currentUserSort = 'none';
 // Cache user tasks per username to reuse between tab switches
 // Cache My Tasks by assignee filter key (me|all|unassigned|name:<user>)
 let userTasksCacheByKey = new Map(); // key -> { perCase: Map, titles: Map }
+// Drives printing of a document.write'd window from the opener, so the new
+// window needs no inline <script> of its own (the CSP has no 'unsafe-inline').
+function printWhenReady(w) {
+  const go = () => { try { w.focus(); w.print(); } catch { /* window closed */ } };
+  try {
+    if (w.document.readyState === 'complete') setTimeout(go, 50);
+    else w.addEventListener('load', () => setTimeout(go, 50), { once: true });
+  } catch { /* cross-origin or closed */ }
+}
+
+// --- Output safety --------------------------------------------------------
+// Almost all of this UI builds DOM nodes and sets textContent, which escapes
+// by construction and is the preferred approach. Where a template literal has
+// to produce HTML, any value originating from a user — display names, free
+// text, anything read back from Firestore — must pass through escapeHtml
+// first. Prefer building nodes; reach for this only when a string of HTML is
+// genuinely unavoidable.
+//
+// Escaping belongs at the point of output, not at input: the correct encoding
+// depends on where the value lands (HTML text, attribute, URL), which is only
+// known here.
+function escapeHtml(value) {
+  if (value == null) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 let currentAssigneeFilter = 'me'; // 'me' | 'all' | 'unassigned' | 'name:<user>'
 // Edit locks to prevent list rerenders while typing
 let caseTasksEditing = false;
@@ -968,14 +999,56 @@ function envelopeReady() {
   return !!(window.__envelope && window.__envelope.isReady());
 }
 
+// --- Input bounds ---------------------------------------------------------
+// Every piece of clinical text is written through encryptText, which makes it
+// the one place worth bounding. Firestore already refuses documents over 1MB,
+// but that limit surfaces as an opaque failure deep in a write, so this cap
+// sits well below it and explains itself.
+//
+// 100,000 characters is roughly 25,000 words. No ward note reaches that by
+// typing — the largest real document in production is about 18KB in total —
+// so this only fires on a paste accident, a bug, or deliberate abuse. It is
+// deliberately generous: refusing a clinician's work outright would be worse
+// than storing it, so the text is capped, the user is told plainly, and the
+// event is reported rather than passing unnoticed.
+const MAX_FIELD_CHARS = 100000;
+
 async function encryptText(text) {
-  const s = text == null ? '' : String(text);
+  let s = text == null ? '' : String(text);
+  if (s.length > MAX_FIELD_CHARS) {
+    const original = s.length;
+    s = s.slice(0, MAX_FIELD_CHARS);
+    console.error('[input] field exceeded MAX_FIELD_CHARS; truncated', { original, kept: s.length });
+    try {
+      window.__sentry && window.__sentry.reportError(new Error('field exceeded MAX_FIELD_CHARS'), {
+        where: 'encryptText', original, kept: s.length,
+      });
+    } catch { /* reporting must never break the write */ }
+    try { showToast('That entry was too long and has been shortened before saving.'); } catch {}
+  }
   if (s && envelopeReady()) {
     try {
       const blob = await window.__envelope.encryptField(s);
       return { cipher: blob, iv: [1] };
     } catch (err) {
-      console.warn('[crypto] envelope.encryptField failed; falling back to plaintext write', err);
+      // Deliberate fail-open: losing a clinician's note mid-round is a real
+      // clinical harm, so the write proceeds unencrypted rather than failing.
+      // That trade is only defensible if it is *visible*, which it previously
+      // was not — this was a console.warn nobody would ever see.
+      //
+      // Affected records remain identifiable after the fact: an encrypted
+      // field carries iv [1], a plaintext one an empty iv, so the documents
+      // written during an outage can be found and re-encrypted later.
+      console.error('[crypto] envelope.encryptField failed; writing PLAINTEXT', err);
+      try {
+        window.__sentry && window.__sentry.reportError(err, {
+          where: 'encryptText',
+          consequence: 'clinical text written unencrypted',
+          length: s.length,
+        });
+      } catch { /* reporting must never break the write */ }
+      try { showToast('Saved, but encryption was unavailable — please tell your administrator.'); } catch {}
+      return { cipher: s, iv: [] };
     }
   }
   return { cipher: s, iv: [] };
@@ -2299,7 +2372,20 @@ function startRealtimeUpdates() {
       // Populate user filter options from usersCache
       if (updatesUserFilterEl) {
         const prev = updatesUserFilterEl.value;
-        updatesUserFilterEl.innerHTML = '<option value="">All users</option>' + (usersCache||[]).map(u=>`<option value="${u.username}">${u.username}</option>`).join('');
+        // Usernames are user-supplied, so these are built as nodes rather than
+        // interpolated into HTML — the value also lands in an attribute, where
+        // a stray quote would break out of the markup.
+        updatesUserFilterEl.replaceChildren();
+        const allUsersOpt = document.createElement('option');
+        allUsersOpt.value = '';
+        allUsersOpt.textContent = 'All users';
+        updatesUserFilterEl.appendChild(allUsersOpt);
+        for (const u of (usersCache || [])) {
+          const opt = document.createElement('option');
+          opt.value = u && u.username != null ? String(u.username) : '';
+          opt.textContent = opt.value;
+          updatesUserFilterEl.appendChild(opt);
+        }
         updatesUserFilterEl.value = prev || '';
       }
       renderUpdatesList();
@@ -4625,9 +4711,8 @@ function openWardNotesPrintWindow({ start, end, notes, autoPrint }) {
     ? notes.map(buildWardNotePrintItemHtml).join('')
     : `<div class="update-empty" style="padding:12px;">No ward notes found for this date range.</div>`;
 
-  const autoPrintScript = autoPrint
-    ? `<script>window.addEventListener('load',function(){ setTimeout(function(){ window.print(); }, 50); });</script>`
-    : '';
+  // Printing is triggered from this window via printWhenReady() below rather
+  // than by an inline <script> here — the CSP has no 'unsafe-inline'.
 
   const html = `<!doctype html>
 <html>
@@ -4653,7 +4738,6 @@ function openWardNotesPrintWindow({ start, end, notes, autoPrint }) {
       <button class="btn print-btn" type="button" onclick="window.print()">Print</button>
     </div>
     <div class="ward-notes-print">${itemsHtml}</div>
-    ${autoPrintScript}
   </body>
 </html>`;
 
@@ -4662,6 +4746,7 @@ function openWardNotesPrintWindow({ start, end, notes, autoPrint }) {
   w.document.open();
   w.document.write(html);
   w.document.close();
+  if (autoPrint) printWhenReady(w);
 }
 
 function openWardNotesRangeModal() {
@@ -6206,26 +6291,26 @@ whenAuthAndDomReady(async (authedUser) => {
   loadTagFilterState();
   try { showDischargedCases = localStorage.getItem('table.showDischargedCases') === '1'; } catch { showDischargedCases = false; }
   // Print action in header
+  // Print action: open a new window in print mode and print.
+  //
+  // There were two click handlers registered here, so every print opened two
+  // windows. Only one remains.
+  //
+  // The window's content is `tableRoot.innerHTML` — a serialisation of DOM the
+  // app has already built with textContent, so patient text is escaped on the
+  // way out. Printing is driven from this window rather than an inline
+  // <script> in the new one: the app's CSP carries no 'unsafe-inline', and
+  // depending on inline script inside a document.write'd window is fragile.
   if (printOpenBtn) {
     printOpenBtn.addEventListener('click', () => {
       const ts = new Date().toLocaleString(undefined, { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-      const html = `<!doctype html><html><head><meta charset=\"utf-8\"><title>Print Table</title><link rel=\"stylesheet\" href=\"style.css\"></head><body class=\"print-mode\"><div class=\"print-header\">Printed ${ts}</div><section id=\"table-section\">${tableRoot ? tableRoot.innerHTML : ''}</section><script>window.addEventListener('load',function(){ setTimeout(function(){ window.print(); }, 50); });</script></body></html>`;
+      const html = `<!doctype html><html><head><meta charset="utf-8"><title>Print Table</title><link rel="stylesheet" href="style.css"></head><body class="print-mode"><div class="print-header">Printed ${escapeHtml(ts)}</div><section id="table-section">${tableRoot ? tableRoot.innerHTML : ''}</section></body></html>`;
       const w = window.open('', '_blank');
       if (!w) { showToast('Pop-up blocked. Allow pop-ups to print.'); return; }
       w.document.open();
       w.document.write(html);
       w.document.close();
-    });
-  }
-  // Print action: open new window in print mode and print
-  if (printOpenBtn) {
-    printOpenBtn.addEventListener('click', () => {
-      const html = `<!doctype html><html><head><meta charset="utf-8"><title>Print Table</title><link rel="stylesheet" href="style.css"></head><body class="print-mode"><section id="table-section">${tableRoot ? tableRoot.innerHTML : ''}</section><script>window.addEventListener('load',function(){ setTimeout(function(){ window.print(); }, 50); });</script></body></html>`;
-      const w = window.open('', '_blank');
-      if (!w) { showToast('Pop-up blocked. Allow pop-ups to print.'); return; }
-      w.document.open();
-      w.document.write(html);
-      w.document.close();
+      printWhenReady(w);
     });
   }
   backBtn.addEventListener('click', () => {
@@ -6981,7 +7066,22 @@ function setUserHeader() {
   let sub = '';
   if (currentAssigneeFilter === 'unassigned') sub = ' · Unassigned';
   else if (currentAssigneeFilter.startsWith('name:')) sub = ` · ${currentAssigneeFilter.slice(5)}`;
-  userTitleEl.innerHTML = `Task list<span class="task-list-sub">${sub}</span> <button id="change-user-link" class="change-user-link" type="button">(Change user)</button>`;
+  // `sub` can contain a colleague's display name, which is user-supplied.
+  // Building the nodes keeps it as text; the resulting structure is identical
+  // to the markup this replaced, so #change-user-link is still found below.
+  userTitleEl.replaceChildren();
+  userTitleEl.appendChild(document.createTextNode('Task list'));
+  const subEl = document.createElement('span');
+  subEl.className = 'task-list-sub';
+  subEl.textContent = sub;
+  userTitleEl.appendChild(subEl);
+  userTitleEl.appendChild(document.createTextNode(' '));
+  const changeUserBtn = document.createElement('button');
+  changeUserBtn.id = 'change-user-link';
+  changeUserBtn.className = 'change-user-link';
+  changeUserBtn.type = 'button';
+  changeUserBtn.textContent = '(Change user)';
+  userTitleEl.appendChild(changeUserBtn);
   syncTaskListModeToggle();
 }
 

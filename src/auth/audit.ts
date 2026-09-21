@@ -11,6 +11,7 @@ import type { AuthEvent } from './types';
 import { getDeviceId } from './device';
 
 import { auth } from './firebase';
+import { reportError } from '../sentry';
 
 export async function logAuthEvent(
   uid: string,
@@ -44,7 +45,11 @@ export async function logAuthEvent(
       clientCreatedAt: Date.now(),
     });
   } catch (err) {
-    // Audit log failures must not block auth flows. Surface to console only.
-    console.warn('[audit] failed to log', type, err);
+    // Audit log failures must not block auth flows — a clinician should never
+    // be locked out because a log write failed. But a gap in a tamper-evident
+    // log is itself worth knowing about, so it is reported rather than left in
+    // the console where nobody would see it.
+    console.error('[audit] failed to log', type, err);
+    reportError(err, { where: 'audit.log', type, consequence: 'gap in audit trail' });
   }
 }

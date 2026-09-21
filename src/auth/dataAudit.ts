@@ -34,6 +34,7 @@
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import { getCurrentGroupId } from './groupContext';
+import { reportError } from '../sentry';
 
 export type DataAuditAction =
   | 'case.create'
@@ -96,7 +97,8 @@ export async function logDataEvent(event: DataAuditEvent): Promise<void> {
       clientCreatedAt: Date.now(),
     });
   } catch (err) {
-    console.warn('[data-audit] failed to log', event.action, err);
+    console.error('[data-audit] failed to log', event.action, err);
+    reportError(err, { where: 'dataAudit.log', action: event.action, consequence: 'gap in audit trail' });
   }
 }
 

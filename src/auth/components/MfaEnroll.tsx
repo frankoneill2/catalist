@@ -70,11 +70,21 @@ export const MfaEnroll: React.FC<MfaEnrollProps> = ({ user, onEnrolled, onSignOu
     return (
       <Shell
         title="Two-factor setup unavailable"
-        subtitle="wardround.app needs TOTP enabled in the Firebase project before you can finish setup."
+        subtitle="We couldn't start two-factor setup just now."
       >
+        {/*
+          This screen used to assert that TOTP was disabled on the Firebase
+          project, for *any* enrolment failure. That was wrong far more often
+          than it was right — the usual cause is a sign-in that has gone stale,
+          and the misleading heading sent a real investigation down the wrong
+          path. The mapped error text is the only claim we can actually stand
+          behind, so it leads now.
+        */}
         <p className="ag-paragraph">{setupError}</p>
         <p className="ag-paragraph ag-muted">
-          Once it's enabled, sign out and back in to complete enrollment.
+          Signing out and back in resolves most cases, because enrolling a
+          second factor requires a recent sign-in. If it keeps happening, send
+          your administrator the message above.
         </p>
         <button type="button" className="ag-btn ag-btn-ghost" onClick={onSignOut}>
           Sign out
